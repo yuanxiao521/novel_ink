@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="ink" data-mood="suspense">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>概览 · 墨卷</title>
+  <link rel="stylesheet" href="css/tokens.css" />
+  <link rel="stylesheet" href="css/app.css" />
+  <link rel="stylesheet" href="css/dashboard.css" />
+</head>
+<body class="dashboard-page">
+  <div class="app-shell">
+    <!-- 左侧边栏 -->
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <span class="brand-seal">墨</span>
+        <span class="brand-name">墨卷</span>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="section-label">书架</div>
+        <div class="book-list">
+          <a class="book-item active" href="#">
+            <span class="book-init">雨</span>
+            <div class="book-meta">
+              <div class="book-title">雨夜书房</div>
+              <div class="book-sub">悬疑 · 23 章</div>
+            </div>
+          </a>
+          <a class="book-item" href="#">
+            <span class="book-init">星</span>
+            <div class="book-meta">
+              <div class="book-title">星辰邮局</div>
+              <div class="book-sub">温情 · 8 章</div>
+            </div>
+          </a>
+          <a class="book-item" href="#">
+            <span class="book-init">剑</span>
+            <div class="book-meta">
+              <div class="book-title">剑雪归藏</div>
+              <div class="book-sub">武侠 · 草稿</div>
+            </div>
+          </a>
+        </div>
+        <button class="new-book-btn">
+          <span class="plus-icon">+</span>
+          <span>新书</span>
+        </button>
+      </div>
+
+      <div class="sidebar-divider"></div>
+
+      <div class="sidebar-section nav-section">
+        <div class="section-label">本书工作区</div>
+        <nav class="nav-list">
+          <a class="nav-item active" href="dashboard.html">
+            <span class="nav-icon">◉</span>
+            <span class="nav-text">概览</span>
+          </a>
+          <a class="nav-item" href="#">
+            <span class="nav-icon">☷</span>
+            <span class="nav-text">设定</span>
+          </a>
+          <a class="nav-item" href="#">
+            <span class="nav-icon">☺</span>
+            <span class="nav-text">人物</span>
+          </a>
+          <a class="nav-item" href="#">
+            <span class="nav-icon">☷</span>
+            <span class="nav-text">大纲</span>
+          </a>
+          <a class="nav-item" href="#">
+            <span class="nav-icon">⟡</span>
+            <span class="nav-text">伏笔</span>
+          </a>
+          <a class="nav-item" href="#">
+            <span class="nav-icon">☰</span>
+            <span class="nav-text">章节</span>
+          </a>
+          <a class="nav-item" href="#">
+            <span class="nav-icon">▦</span>
+            <span class="nav-text">记忆包</span>
+          </a>
+          <a class="nav-item" href="#">
+            <span class="nav-icon">♥</span>
+            <span class="nav-text">体检</span>
+          </a>
+        </nav>
+      </div>
+
+      <div class="sidebar-footer">
+        <a class="nav-item" href="#">
+          <span class="nav-icon">⚙</span>
+          <span class="nav-text">全局设置</span>
+        </a>
+      </div>
+    </aside>
+
+    <!-- 主区域 -->
+    <div class="main-col">
+      <!-- 顶部栏 -->
+      <header class="top-header">
+        <div class="header-left">
+          <h1 class="book-title-main">雨夜书房</h1>
+          <span class="genre-tag">悬疑 · 中篇</span>
+        </div>
+        <div class="header-search">
+          <span class="search-icon">⌕</span>
+          <input type="text" placeholder="跨书搜索角色、伏笔、章节…" />
+        </div>
+        <div class="header-right">
+          <button class="btn-primary" onclick="location.href='index.html'">
+            <span>进入导演台</span>
+          </button>
+          <span class="health-badge warn">
+            <span class="health-dot"></span>
+            健康分 82
+          </span>
+          <button class="theme-toggle" id="theme-toggle" title="切换纸墨主题">
+            <span class="theme-icon">☯</span>
+            <span class="theme-label" id="theme-label">墨</span>
+          </button>
+          <div class="user-avatar">作</div>
+        </div>
+      </header>
+
+      <!-- 内容区 -->
+      <div class="content-area">
+        <main class="main-content">
+          <!-- KPI 卡片 -->
+          <section class="kpi-section">
+            <div class="kpi-grid">
+              <div class="kpi-card">
+                <div class="kpi-icon success">
+                  <span>✓</span>
+                </div>
+                <div class="kpi-body">
+                  <div class="kpi-value">7 <span class="kpi-unit">/ 23</span></div>
+                  <div class="kpi-label">已定稿章数</div>
+                </div>
+              </div>
+              <div class="kpi-card">
+                <div class="kpi-icon info">
+                  <span>✎</span>
+                </div>
+                <div class="kpi-body">
+                  <div class="kpi-value">3.2<span class="kpi-unit-small"> 万字</span></div>
+                  <div class="kpi-label">总字数</div>
+                </div>
+              </div>
+              <div class="kpi-card">
+                <div class="kpi-icon warning">
+                  <span>⟡</span>
+                </div>
+                <div class="kpi-body">
+                  <div class="kpi-value">5</div>
+                  <div class="kpi-label">待回收伏笔</div>
+                </div>
+              </div>
+              <div class="kpi-card health-card">
+                <div class="kpi-body">
+                  <div class="kpi-value health-num">82</div>
+                  <div class="kpi-label">健康分</div>
+                </div>
+                <svg class="kpi-ring" viewBox="0 0 44 44">
+                  <circle class="kpi-ring-bg" cx="22" cy="22" r="18" fill="none" stroke-width="4"></circle>
+                  <circle class="kpi-ring-fill" cx="22" cy="22" r="18" fill="none" stroke-width="4" stroke-linecap="round" stroke-dasharray="82,100" pathLength="100"></circle>
+                </svg>
+              </div>
+            </div>
+          </section>
+
+          <!-- 章节时间线 -->
+          <section class="section-block">
+            <div class="section-header">
+              <h2 class="section-title"><span class="title-icon">⊙</span>章节时间线</h2>
+              <a class="section-link" href="#">查看全部 →</a>
+            </div>
+            <div class="timeline-vertical">
+              <div class="tl-node done">
+                <div class="tl-dot"></div>
+                <div class="tl-card">
+                  <div class="tl-chapter">第 1 章</div>
+                  <div class="tl-title">雨夜归家</div>
+                  <div class="tl-desc">陈默回到老宅，发现书房的门虚掩着。</div>
+                  <span class="status-badge done">已定稿</span>
+                </div>
+              </div>
+              <div class="tl-node done">
+                <div class="tl-dot"></div>
+                <div class="tl-card">
+                  <div class="tl-chapter">第 2 章</div>
+                  <div class="tl-title">书房初遇</div>
+                  <div class="tl-desc">陈默与李文在书房碰面，气氛微妙。</div>
+                  <span class="status-badge done">已定稿</span>
+                </div>
+              </div>
+              <div class="tl-node done">
+                <div class="tl-dot"></div>
+                <div class="tl-card">
+                  <div class="tl-chapter">第 3 章</div>
+                  <div class="tl-title">周婶送茶</div>
+                  <div class="tl-desc">周婶端茶上来，撞见两人对峙。</div>
+                  <span class="status-badge done">已定稿</span>
+                </div>
+              </div>
+              <div class="tl-node done">
+                <div class="tl-dot"></div>
+                <div class="tl-card">
+                  <div class="tl-chapter">第 4 章</div>
+                  <div class="tl-title">保险柜疑云</div>
+                  <div class="tl-desc">陈默发现保险柜被动过，疑心渐起。</div>
+                  <span class="status-badge done">已定稿</span>
+                </div>
+              </div>
+              <div class="tl-node current">
+                <div class="tl-dot"></div>
+                <div class="tl-card current-card">
+                  <div class="tl-chapter">第 5 章</div>
+                  <div class="tl-title">沉默对峙</div>
+                  <div class="tl-desc">陈默与李文在沉默中互相试探。</div>
+                  <span class="status-badge draft">导演中</span>
+                </div>
+              </div>
+              <div class="tl-node planned">
+                <div class="tl-dot"></div>
+                <div class="tl-card">
+                  <div class="tl-chapter">第 6 章</div>
+                  <div class="tl-title">文件异动</div>
+                  <div class="tl-desc">一份神秘文件从书架上消失。</div>
+                  <span class="status-badge planned">规划中</span>
+                </div>
+              </div>
+              <div class="tl-node planned next">
+                <div class="tl-dot"></div>
+                <div class="tl-card">
+                  <div class="tl-chapter">第 7 章</div>
+                  <div class="tl-title">雨夜的试探</div>
+                  <div class="tl-desc">下一章大纲目标：李文主动出击试探陈默底线。</div>
+                  <span class="status-badge next-badge">下章目标</span>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- 近期待办 -->
+          <section class="section-block">
+            <div class="section-header">
+              <h2 class="section-title"><span class="title-icon">☑</span>近期待办</h2>
+            </div>
+            <div class="todo-list">
+              <div class="todo-item">
+                <div class="todo-icon primary">
+                  <span>◎</span>
+                </div>
+                <div class="todo-body">
+                  <div class="todo-title">下一章大纲目标</div>
+                  <div class="todo-desc">第 7 章 · 雨夜的试探：李文决定主动出击，试探陈默到底知道多少</div>
+                </div>
+              </div>
+              <div class="todo-item warning">
+                <div class="todo-icon warn">
+                  <span>!</span>
+                </div>
+                <div class="todo-body">
+                  <div class="todo-title">逾期伏笔提醒</div>
+                  <div class="todo-desc danger">「保险柜里的信」计划第五章回收，当前已进入第七章</div>
+                </div>
+              </div>
+              <div class="todo-item">
+                <div class="todo-icon info">
+                  <span>✎</span>
+                </div>
+                <div class="todo-body">
+                  <div class="todo-title">人物信念待确认</div>
+                  <div class="todo-desc">陈默的"李文是无辜的"这一条信念与证据冲突，建议导演介入</div>
+                </div>
+              </div>
+              <div class="todo-item">
+                <div class="todo-icon success">
+                  <span>✓</span>
+                </div>
+                <div class="todo-body">
+                  <div class="todo-title">体检报告</div>
+                  <div class="todo-desc">目前没有严重一致性问题，2 条轻微警告已列出</div>
+                </div>
+              </div>
+            </div>
+          </section>
+        </main>
+
+        <!-- 右侧栏 -->
+        <aside class="right-rail">
+          <div class="rail-card">
+            <div class="rail-title"><span>❝</span> 金句池</div>
+            <div class="quote-list">
+              <div class="quote-item">
+                <p class="quote-text">"逻辑我不懂，但人类的考核标准多变。"</p>
+                <span class="quote-author">—— 李文</span>
+              </div>
+              <div class="quote-item">
+                <p class="quote-text">"雨下得越久，藏在雨里的东西就越清楚。"</p>
+                <span class="quote-author">—— 陈默独白</span>
+              </div>
+              <div class="quote-item">
+                <p class="quote-text">"有些门虚掩着，不是为了让人进去，是为了让人起疑。"</p>
+                <span class="quote-author">—— 旁白</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="rail-card">
+            <div class="rail-title"><span>✦</span> 近 7 日写作热力</div>
+            <div class="heat-grid">
+              <div class="heat-cell" style="opacity: 0.15"></div>
+              <div class="heat-cell" style="opacity: 0.4"></div>
+              <div class="heat-cell" style="opacity: 0.75"></div>
+              <div class="heat-cell" style="opacity: 0.3"></div>
+              <div class="heat-cell" style="opacity: 0.85"></div>
+              <div class="heat-cell" style="opacity: 0.55"></div>
+              <div class="heat-cell" style="opacity: 0.2"></div>
+              <div class="heat-cell" style="opacity: 0.5"></div>
+              <div class="heat-cell" style="opacity: 0.25"></div>
+              <div class="heat-cell" style="opacity: 0.65"></div>
+              <div class="heat-cell" style="opacity: 0.4"></div>
+              <div class="heat-cell" style="opacity: 0.8"></div>
+              <div class="heat-cell" style="opacity: 0.35"></div>
+              <div class="heat-cell" style="opacity: 0.6"></div>
+              <div class="heat-cell" style="opacity: 0.7"></div>
+              <div class="heat-cell" style="opacity: 0.2"></div>
+              <div class="heat-cell" style="opacity: 0.45"></div>
+              <div class="heat-cell" style="opacity: 0.9"></div>
+              <div class="heat-cell" style="opacity: 0.55"></div>
+              <div class="heat-cell" style="opacity: 0.3"></div>
+              <div class="heat-cell" style="opacity: 0.65"></div>
+              <div class="heat-cell" style="opacity: 0.15"></div>
+              <div class="heat-cell" style="opacity: 0.5"></div>
+              <div class="heat-cell" style="opacity: 0.4"></div>
+              <div class="heat-cell" style="opacity: 0.75"></div>
+              <div class="heat-cell" style="opacity: 0.35"></div>
+              <div class="heat-cell" style="opacity: 0.6"></div>
+              <div class="heat-cell" style="opacity: 0.25"></div>
+            </div>
+            <div class="heat-labels">
+              <span>少</span>
+              <span>多</span>
+            </div>
+          </div>
+
+          <div class="rail-card">
+            <div class="rail-title"><span>☷</span> 快速操作</div>
+            <div class="quick-actions">
+              <button class="quick-btn" onclick="location.href='index.html'">
+                <span class="quick-icon">▶</span>
+                <span>继续导演</span>
+              </button>
+              <button class="quick-btn">
+                <span class="quick-icon">✎</span>
+                <span>新建章节</span>
+              </button>
+              <button class="quick-btn">
+                <span class="quick-icon">✦</span>
+                <span>生成记忆包</span>
+              </button>
+              <button class="quick-btn">
+                <span class="quick-icon">☑</span>
+                <span>跑一次体检</span>
+              </button>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/dashboard.js"></script>
+</body>
+</html>

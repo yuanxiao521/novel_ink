@@ -1,0 +1,27 @@
+# env（含密码/密钥），不提交
+.env
+*.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.venv-run/
+venv/
+
+# Node / 前端
+node_modules/
+dist/
+*.tsbuildinfo
+*.tsbuildinfo.json
+
+# 数据/本地产物
+*.sqlite3
+*.db
+.pytest_cache/
+.workbuddy/
+
+# 备份目录（可回滚的本地快照，不必进版本库）
+webapp_backup_*/

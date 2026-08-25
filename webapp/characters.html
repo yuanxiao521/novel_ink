@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="ink" data-mood="suspense">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>人物 · 墨卷</title>
+  <link rel="stylesheet" href="css/tokens.css" />
+  <link rel="stylesheet" href="css/app.css" />
+  <link rel="stylesheet" href="css/dashboard.css" />
+  <link rel="stylesheet" href="css/characters.css" />
+</head>
+<body class="dashboard-page">
+  <div class="app-shell">
+    <!-- 左侧边栏（复用量级，高亮"人物"） -->
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <span class="brand-seal">墨</span>
+        <span class="brand-name">墨卷</span>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="section-label">书架</div>
+        <div class="book-list">
+          <a class="book-item active" href="#">
+            <span class="book-init">雨</span>
+            <div class="book-meta">
+              <div class="book-title">雨夜书房</div>
+              <div class="book-sub">悬疑 · 23 章</div>
+            </div>
+          </a>
+        </div>
+        <button class="new-book-btn">
+          <span class="plus-icon">+</span>
+          <span>新书</span>
+        </button>
+      </div>
+
+      <div class="sidebar-divider"></div>
+
+      <div class="sidebar-section nav-section">
+        <div class="section-label">本书工作区</div>
+        <nav class="nav-list">
+          <a class="nav-item" href="dashboard.html">
+            <span class="nav-icon">◉</span>
+            <span class="nav-text">概览</span>
+          </a>
+          <a class="nav-item" href="#">
+            <span class="nav-icon">☷</span>
+            <span class="nav-text">设定</span>
+          </a>
+          <a class="nav-item active" href="characters.html">
+            <span class="nav-icon">☺</span>
+            <span class="nav-text">人物</span>
+          </a>
+          <a class="nav-item" href="#">
+            <span class="nav-icon">☷</span>
+            <span class="nav-text">大纲</span>
+          </a>
+          <a class="nav-item" href="#">
+            <span class="nav-icon">⟡</span>
+            <span class="nav-text">伏笔</span>
+          </a>
+          <a class="nav-item" href="#">
+            <span class="nav-icon">☰</span>
+            <span class="nav-text">章节</span>
+          </a>
+          <a class="nav-item" href="#">
+            <span class="nav-icon">▦</span>
+            <span class="nav-text">记忆包</span>
+          </a>
+          <a class="nav-item" href="#">
+            <span class="nav-icon">♥</span>
+            <span class="nav-text">体检</span>
+          </a>
+        </nav>
+      </div>
+
+      <div class="sidebar-footer">
+        <a class="nav-item" href="#">
+          <span class="nav-icon">⚙</span>
+          <span class="nav-text">全局设置</span>
+        </a>
+      </div>
+    </aside>
+
+    <!-- 主区域 -->
+    <div class="main-col">
+      <!-- 顶部栏 -->
+      <header class="top-header">
+        <div class="header-left">
+          <h1 class="book-title-main">人物管理</h1>
+          <span class="genre-tag">3 位登场角色</span>
+        </div>
+        <div class="header-search">
+          <span class="search-icon">⌕</span>
+          <input type="text" placeholder="搜索角色名、信念、记忆…" />
+        </div>
+        <div class="header-right">
+          <button class="btn-primary" onclick="location.href='index.html'">
+            <span>进入导演台</span>
+          </button>
+          <button class="theme-toggle" id="theme-toggle" title="切换纸墨主题">
+            <span class="theme-icon">☯</span>
+            <span class="theme-label" id="theme-label">墨</span>
+          </button>
+          <div class="user-avatar">作</div>
+        </div>
+      </header>
+
+      <!-- 人物内容区：左列表 + 右详情 -->
+      <div class="char-page-body">
+        <!-- 角色列表 -->
+        <aside class="char-list-panel">
+          <div class="panel-header">
+            <span class="panel-title">角色列表</span>
+            <button class="add-char-btn" id="addCharBtn">
+              <span>+</span>
+            </button>
+          </div>
+          <div class="char-list">
+            <!-- 陈默 -->
+            <div class="char-list-item active" data-char="chenmo">
+              <img class="char-list-avatar" src="assets/portrait-chenmo.png" alt="陈默" />
+              <div class="char-list-info">
+                <div class="char-list-name">陈默</div>
+                <div class="char-list-role">主角 · 大学讲师</div>
+              </div>
+              <span class="char-list-count">12 信念 · 28 记忆</span>
+            </div>
+            <!-- 李文 -->
+            <div class="char-list-item" data-char="liwen">
+              <img class="char-list-avatar" src="assets/portrait-liwen.png" alt="李文" />
+              <div class="char-list-info">
+                <div class="char-list-name">李文</div>
+                <div class="char-list-role">配角 · 研究员</div>
+              </div>
+              <span class="char-list-count">9 信念 · 21 记忆</span>
+            </div>
+            <!-- 周婶 -->
+            <div class="char-list-item" data-char="zhoushen">
+              <img class="char-list-avatar" src="assets/portrait-zhoushen.png" alt="周婶" />
+              <div class="char-list-info">
+                <div class="char-list-name">周婶</div>
+                <div class="char-list-role">配角 · 管家</div>
+              </div>
+              <span class="char-list-count">6 信念 · 14 记忆</span>
+            </div>
+          </div>
+          <div class="char-list-footer">
+            <button class="relation-overview-btn">
+              <span>🕸</span> 关系总览
+            </button>
+          </div>
+        </aside>
+
+        <!-- 角色详情 -->
+        <main class="char-detail-panel">
+          <!-- 角色头部 -->
+          <div class="char-detail-header">
+            <div class="char-portrait-large">
+              <img src="assets/portrait-chenmo.png" alt="陈默立绘" />
+              <span class="char-role-badge">主角</span>
+            </div>
+            <div class="char-basic-info">
+              <h2 class="char-name-large">陈默</h2>
+              <p class="char-tagline">「沉默的观察者，真相的追寻者。」</p>
+              <div class="char-meta-row">
+                <span class="char-meta-item"><strong>身份：</strong>大学讲师 / 业余侦探</span>
+                <span class="char-meta-item"><strong>年龄：</strong>32 岁</span>
+                <span class="char-meta-item"><strong>性格：</strong>沉稳、敏锐、固执</span>
+              </div>
+              <div class="char-meta-row">
+                <span class="char-meta-item"><strong>核心目标：</strong>查明保险柜背后的真相</span>
+                <span class="char-meta-item"><strong>人物弧光：</strong>从旁观者到入局者</span>
+              </div>
+            </div>
+            <div class="char-stats-col">
+              <div class="char-stat">
+                <div class="char-stat-num">12</div>
+                <div class="char-stat-label">信念</div>
+              </div>
+              <div class="char-stat">
+                <div class="char-stat-num">28</div>
+                <div class="char-stat-label">记忆</div>
+              </div>
+              <div class="char-stat">
+                <div class="char-stat-num">5</div>
+                <div class="char-stat-label">关系</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tab 切换 -->
+          <div class="char-tabs">
+            <button class="char-tab active" data-tab="basic">基本设定</button>
+            <button class="char-tab" data-tab="belief">信念账本</button>
+            <button class="char-tab" data-tab="memory">记忆卡片</button>
+            <button class="char-tab" data-tab="relation">关系网</button>
+          </div>
+
+          <!-- Tab 内容 -->
+          <div class="char-tab-content">
+            <!-- 基本设定 -->
+            <div class="tab-pane active" data-pane="basic">
+              <div class="info-grid">
+                <div class="info-card">
+                  <div class="info-card-title">外貌描写</div>
+                  <div class="info-card-body">
+                    <p>身形清瘦，常穿深色衬衫，戴一副细框眼镜。眼神沉静，看人时总像是在测量什么。左手食指有一道旧伤疤，从不解释来源。</p>
+                  </div>
+                </div>
+                <div class="info-card">
+                  <div class="info-card-title">背景故事</div>
+                  <div class="info-card-body">
+                    <p>曾是大学里最年轻的逻辑学讲师，三年前因故离开学术界。现在靠翻译侦探小说维生，偶尔帮朋友处理一些"逻辑上的小问题"。</p>
+                  </div>
+                </div>
+                <div class="info-card">
+                  <div class="info-card-title">行为习惯</div>
+                  <div class="info-card-body">
+                    <ul class="info-list">
+                      <li>思考时会无意识地转动左手食指上的戒指</li>
+                      <li>说话语速偏慢，习惯先停顿再开口</li>
+                      <li>每天固定下午三点喝一杯黑咖啡</li>
+                      <li>对秩序感有近乎偏执的要求</li>
+                    </ul>
+                  </div>
+                </div>
+                <div class="info-card">
+                  <div class="info-card-title">人物弧光</div>
+                  <div class="info-card-body">
+                    <div class="arc-stage">
+                      <div class="arc-label">开端</div>
+                      <div class="arc-desc">冷静的旁观者，认为真相是可以被逻辑推导的</div>
+                    </div>
+                    <div class="arc-arrow">↓</div>
+                    <div class="arc-stage">
+                      <div class="arc-label">转折</div>
+                      <div class="arc-desc">发现自己也在局中，逻辑开始失效</div>
+                    </div>
+                    <div class="arc-arrow">↓</div>
+                    <div class="arc-stage">
+                      <div class="arc-label">终局</div>
+                      <div class="arc-desc">接受真相的模糊性，选择相信而非证明</div>
+                    </div>
+                  </div>
+                </div>
+                <div class="info-card full-width">
+                  <div class="info-card-title">口头禅 / 标志性台词</div>
+                  <div class="info-card-body">
+                    <div class="quote-row">
+                      <span class="quote-mark">「</span>
+                      <span class="quote-content">雨下得越久，藏在雨里的东西就越清楚。</span>
+                      <span class="quote-mark">」</span>
+                    </div>
+                    <div class="quote-row">
+                      <span class="quote-mark">「</span>
+                      <span class="quote-content">逻辑我不懂，但人类的考核标准多变。</span>
+                      <span class="quote-mark">」</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 信念账本 -->
+            <div class="tab-pane" data-pane="belief">
+              <div class="belief-toolbar">
+                <div class="belief-filter">
+                  <span class="filter-chip active" data-filter="all">全部 12</span>
+                  <span class="filter-chip" data-filter="witness">亲见 4</span>
+                  <span class="filter-chip" data-filter="infer">推测 5</span>
+                  <span class="filter-chip" data-filter="told">被告知 2</span>
+                  <span class="filter-chip" data-filter="doubt">存疑 1</span>
+                </div>
+                <button class="add-belief-btn">
+                  <span>+</span> 新增信念
+                </button>
+              </div>
+
+              <div class="belief-list">
+                <div class="belief-card witness">
+                  <div class="belief-card-head">
+                    <span class="belief-tag tag-witness">亲见</span>
+                    <span class="belief-source">第 4 章 · 书房</span>
+                  </div>
+                  <div class="belief-text">保险柜的门半开着，锁孔有新鲜划痕</div>
+                  <div class="belief-card-foot">
+                    <span class="belief-certainty">确信度 95%</span>
+                    <div class="belief-actions">
+                      <button class="belief-action">编辑</button>
+                      <button class="belief-action danger">删除</button>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="belief-card infer">
+                  <div class="belief-card-head">
+                    <span class="belief-tag tag-infer">推测</span>
+                    <span class="belief-source">第 5 章 · 对峙后</span>
+                  </div>
+                  <div class="belief-text">李文知道保险柜里装的是什么</div>
+                  <div class="belief-card-foot">
+                    <span class="belief-certainty">确信度 70%</span>
+                    <div class="belief-actions">
+                      <button class="belief-action">编辑</button>
+                      <button class="belief-action danger">删除</button>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="belief-card infer">
+                  <div class="belief-card-head">
+                    <span class="belief-tag tag-infer">推测</span>
+                    <span class="belief-source">第 3 章 · 送茶</span>
+                  </div>
+                  <div class="belief-text">周婶在这个宅子里的时间比她自己说的要长</div>
+                  <div class="belief-card-foot">
+                    <span class="belief-certainty">确信度 55%</span>
+                    <div class="belief-actions">
+                      <button class="belief-action">编辑</button>
+                      <button class="belief-action danger">删除</button>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="belief-card told">
+                  <div class="belief-card-head">
+                    <span class="belief-tag tag-told">被告知</span>
+                    <span class="belief-source">第 2 章 · 李文口述</span>
+                  </div>
+                  <div class="belief-text">保险柜里是已故先生的研究手稿</div>
+                  <div class="belief-card-foot">
+                    <span class="belief-certainty">确信度 40%</span>
+                    <div class="belief-actions">
+                      <button class="belief-action">编辑</button>
+                      <button class="belief-action danger">删除</button>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="belief-card witness">
+                  <div class="belief-card-head">
+                    <span class="belief-tag tag-witness">亲见</span>
+                    <span class="belief-source">第 1 章 · 雨夜归家</span>
+                  </div>
+                  <div class="belief-text">书房的门虚掩着，但出门时明明锁好了</div>
+                  <div class="belief-card-foot">
+                    <span class="belief-certainty">确信度 100%</span>
+                    <div class="belief-actions">
+                      <button class="belief-action">编辑</button>
+                      <button class="belief-action danger">删除</button>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="belief-card doubt">
+                  <div class="belief-card-head">
+                    <span class="belief-tag tag-doubt">存疑</span>
+                    <span class="belief-source">第 6 章 · 异常</span>
+                  </div>
+                  <div class="belief-text">书架第三层的书被动过——但不确定是谁、什么时候</div>
+                  <div class="belief-card-foot">
+                    <span class="belief-certainty">确信度 30%</span>
+                    <div class="belief-actions">
+                      <button class="belief-action">编辑</button>
+                      <button class="belief-action danger">删除</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 记忆卡片 -->
+            <div class="tab-pane" data-pane="memory">
+              <div class="memory-toolbar">
+                <div class="memory-filter">
+                  <span class="filter-chip active">全部 28</span>
+                  <span class="filter-chip">关键事件 8</span>
+                  <span class="filter-chip">对话 12</span>
+                  <span class="filter-chip">观察 5</span>
+                  <span class="filter-chip">情感 3</span>
+                </div>
+                <button class="add-memory-btn">
+                  <span>+</span> 新增记忆
+                </button>
+              </div>
+
+              <div class="memory-timeline">
+                <div class="mem-group">
+                  <div class="mem-group-label">第 6 章 · 文件异动</div>
+                  <div class="mem-cards-row">
+                    <div class="mem-card type-event">
+                      <div class="mem-card-tag">关键事件</div>
+                      <div class="mem-card-title">发现文件不在原位</div>
+                      <div class="mem-card-desc">书架第三层的那份手稿，位置偏移了大约两厘米。</div>
+                      <div class="mem-card-foot">
+                        <span class="mem-time">T-06</span>
+                        <span class="mem-impact high">影响：高</span>
+                      </div>
+                    </div>
+                    <div class="mem-card type-dialogue">
+                      <div class="mem-card-tag">对话</div>
+                      <div class="mem-card-title">李文的解释</div>
+                      <div class="mem-card-desc">「我找东西的时候碰过一下，可能没放齐。」</div>
+                      <div class="mem-card-foot">
+                        <span class="mem-time">T-06</span>
+                        <span class="mem-impact mid">影响：中</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="mem-group">
+                  <div class="mem-group-label">第 5 章 · 沉默对峙</div>
+                  <div class="mem-cards-row">
+                    <div class="mem-card type-emotion">
+                      <div class="mem-card-tag">情感</div>
+                      <div class="mem-card-title">李文的眼神</div>
+                      <div class="mem-card-desc">李文看自己的眼神里，有恐惧，也有某种别的东西。</div>
+                      <div class="mem-card-foot">
+                        <span class="mem-time">T-05</span>
+                        <span class="mem-impact high">影响：高</span>
+                      </div>
+                    </div>
+                    <div class="mem-card type-event">
+                      <div class="mem-card-tag">关键事件</div>
+                      <div class="mem-card-title">沉默的三分钟</div>
+                      <div class="mem-card-desc">两人在书房里对视了整整三分钟，谁都没先开口。</div>
+                      <div class="mem-card-foot">
+                        <span class="mem-time">T-05</span>
+                        <span class="mem-impact mid">影响：中</span>
+                      </div>
+                    </div>
+                    <div class="mem-card type-observe">
+                      <div class="mem-card-tag">观察</div>
+                      <div class="mem-card-title">李文的手指</div>
+                      <div class="mem-card-desc">李文右手食指有微小的颤抖，但被她很快控制住了。</div>
+                      <div class="mem-card-foot">
+                        <span class="mem-time">T-05</span>
+                        <span class="mem-impact low">影响：低</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="mem-group">
+                  <div class="mem-group-label">第 4 章 · 保险柜疑云</div>
+                  <div class="mem-cards-row">
+                    <div class="mem-card type-event">
+                      <div class="mem-card-tag">关键事件</div>
+                      <div class="mem-card-title">保险柜门半开</div>
+                      <div class="mem-card-desc">锁孔周围有新鲜的划痕，像是用错了钥匙。</div>
+                      <div class="mem-card-foot">
+                        <span class="mem-time">T-04</span>
+                        <span class="mem-impact high">影响：高</span>
+                      </div>
+                    </div>
+                    <div class="mem-card type-observe">
+                      <div class="mem-card-tag">观察</div>
+                      <div class="mem-card-title">周婶的表情</div>
+                      <div class="mem-card-desc">提到保险柜时，周婶的嘴角有极微的抽动。</div>
+                      <div class="mem-card-foot">
+                        <span class="mem-time">T-04</span>
+                        <span class="mem-impact mid">影响：中</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 关系网 -->
+            <div class="tab-pane" data-pane="relation">
+              <div class="relation-layout">
+                <div class="relation-list-col">
+                  <div class="section-subtitle">陈默的关系</div>
+                  <div class="relation-list">
+                    <div class="relation-item">
+                      <img class="relation-avatar" src="assets/portrait-liwen.png" alt="李文" />
+                      <div class="relation-info">
+                        <div class="relation-name">李文</div>
+                        <div class="relation-type type-strange">
+                          <span class="rel-dot"></span> 互相试探
+                        </div>
+                        <div class="relation-desc">陈默怀疑李文知道真相，李文则害怕被看穿</div>
+                      </div>
+                      <div class="relation-strength">
+                        <div class="strength-bar"><div class="strength-fill" style="width: 60%"></div></div>
+                        <span class="strength-label">张力 60%</span>
+                      </div>
+                    </div>
+
+                    <div class="relation-item">
+                      <img class="relation-avatar" src="assets/portrait-zhoushen.png" alt="周婶" />
+                      <div class="relation-info">
+                        <div class="relation-name">周婶</div>
+                        <div class="relation-type type-neutral">
+                          <span class="rel-dot"></span> 主仆
+                        </div>
+                        <div class="relation-desc">表面是管家与雇主的关系，陈默隐约觉得周婶知道更多</div>
+                      </div>
+                      <div class="relation-strength">
+                        <div class="strength-bar"><div class="strength-fill" style="width: 30%"></div></div>
+                        <span class="strength-label">张力 30%</span>
+                      </div>
+                    </div>
+
+                    <div class="relation-item">
+                      <div class="relation-avatar placeholder">先</div>
+                      <div class="relation-info">
+                        <div class="relation-name">先生（已故）</div>
+                        <div class="relation-type type-respect">
+                          <span class="rel-dot"></span> 敬仰
+                        </div>
+                        <div class="relation-desc">陈默的恩师，三年前去世，死因存疑</div>
+                      </div>
+                      <div class="relation-strength">
+                        <div class="strength-bar"><div class="strength-fill" style="width: 85%"></div></div>
+                        <span class="strength-label">羁绊 85%</span>
+                      </div>
+                    </div>
+
+                    <div class="relation-item">
+                      <div class="relation-avatar placeholder">警</div>
+                      <div class="relation-info">
+                        <div class="relation-name">老赵（警官）</div>
+                        <div class="relation-type type-allies">
+                          <span class="rel-dot"></span> 盟友
+                        </div>
+                        <div class="relation-desc">旧识，偶尔提供一些"非正式"的信息</div>
+                      </div>
+                      <div class="relation-strength">
+                        <div class="strength-bar"><div class="strength-fill" style="width: 70%"></div></div>
+                        <span class="strength-label">信任 70%</span>
+                      </div>
+                    </div>
+                  </div>
+                  <button class="add-relation-btn">
+                    <span>+</span> 添加关系
+                  </button>
+                </div>
+
+                <div class="relation-viz-col">
+                  <div class="section-subtitle">关系示意</div>
+                  <div class="relation-graph">
+                    <div class="graph-center">
+                      <div class="graph-node center">
+                        <img src="assets/portrait-chenmo.png" alt="陈默" />
+                        <span>陈默</span>
+                      </div>
+                    </div>
+                    <div class="graph-node top">
+                      <img src="assets/portrait-liwen.png" alt="李文" />
+                      <span>李文</span>
+                      <span class="graph-edge edge-strange">互相试探</span>
+                    </div>
+                    <div class="graph-node right">
+                      <img src="assets/portrait-zhoushen.png" alt="周婶" />
+                      <span>周婶</span>
+                      <span class="graph-edge edge-neutral">主仆</span>
+                    </div>
+                    <div class="graph-node bottom-left">
+                      <div class="graph-avatar placeholder">先</div>
+                      <span>先生</span>
+                      <span class="graph-edge edge-respect">敬仰</span>
+                    </div>
+                    <div class="graph-node bottom-right">
+                      <div class="graph-avatar placeholder">警</div>
+                      <span>老赵</span>
+                      <span class="graph-edge edge-allies">盟友</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/characters.js"></script>
+</body>
+</html>

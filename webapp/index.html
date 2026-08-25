@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="ink" data-mood="suspense">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>背叛之夜 · 涌现式小说 Agent</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/tokens.css" />
+  <link rel="stylesheet" href="css/app.css" />
+</head>
+<body>
+  <div class="app-shell">
+
+    <!-- ==================== 视图 1：作者工作台 ==================== -->
+    <div class="view workbench active" id="view-workbench">
+
+      <!-- 顶栏 -->
+      <header class="topbar">
+        <div class="brand-group">
+          <span class="brand-dot"></span>
+          <span class="brand-title">背叛之夜</span>
+          <svg class="brand-caret" viewBox="0 0 10 10" fill="none">
+            <path d="M2 3.5L5 6.5L8 3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <div class="scene-group">
+          <span class="scene-label">场景：书房夜谈</span>
+          <span class="turn-divider"></span>
+          <span class="turn-label">回合 T-07</span>
+        </div>
+        <div class="right-group">
+          <button class="mood-tag" id="mood-toggle" title="切换场景 mood">
+            <span class="mood-dot"></span>
+            <span class="mood-text">悬疑</span>
+          </button>
+          <div class="run-tag">
+            <span class="run-dot"></span>
+            <span class="run-text">运行中</span>
+          </div>
+          <button class="theme-toggle" id="theme-toggle" title="切换纸墨主题">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13zM8 3.5v9a4.5 4.5 0 0 0 0-9z" fill="currentColor"/>
+            </svg>
+            <span class="theme-label" id="theme-label">墨</span>
+          </button>
+        </div>
+      </header>
+
+      <!-- 主体三栏 -->
+      <div class="workbench-body">
+
+        <!-- 左侧角色栏 -->
+        <aside class="char-rail">
+          <div class="rail-header">
+            <span class="rail-title">角色</span>
+            <button class="view-switch">
+              全局视角
+              <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
+                <path d="M1.5 2.5L4 5L6.5 2.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+          </div>
+          <div class="char-cards">
+            <!-- 陈默 -->
+            <div class="char-card selected" data-char-id="chenmo">
+              <div class="char-card-head">
+                <img class="char-portrait" src="assets/portrait-chenmo.png" alt="陈默立绘" />
+                <div class="char-name-col">
+                  <span class="char-name">陈默</span>
+                  <span class="char-mood">警觉</span>
+                </div>
+              </div>
+              <div class="char-goal-row">
+                <span class="char-goal">查明真相</span>
+                <span class="char-weight">0.7</span>
+              </div>
+              <!-- 情绪条 -->
+              <div class="char-emotion">
+                <div class="emotion-label-row">
+                  <span class="emotion-label-text">情绪水位</span>
+                  <span class="emotion-val">75%</span>
+                </div>
+                <div class="emotion-track">
+                  <div class="emotion-fill" style="width: 75%"></div>
+                </div>
+                <div class="emotion-scale">
+                  <span>平静</span>
+                  <span>爆发</span>
+                </div>
+              </div>
+              <!-- 信念账本 -->
+              <div class="char-belief-section">
+                <div class="belief-header">
+                  <span class="belief-title">信念账本</span>
+                  <span class="belief-count">12 条</span>
+                </div>
+                <div class="belief-items">
+                  <div class="belief-item">
+                    <span class="belief-tag tag-witness">亲见</span>
+                    <span class="belief-text">保险柜被动过</span>
+                  </div>
+                  <div class="belief-item">
+                    <span class="belief-tag tag-infer">推测</span>
+                    <span class="belief-text">李文有事隐瞒</span>
+                  </div>
+                  <div class="belief-item">
+                    <span class="belief-tag tag-told">被告知</span>
+                    <span class="belief-text">周婶十点送茶</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <!-- 李文 -->
+            <div class="char-card" data-char-id="liwen">
+              <div class="char-card-head">
+                <img class="char-portrait" src="assets/portrait-liwen.png" alt="李文立绘" />
+                <div class="char-name-col">
+                  <span class="char-name">李文</span>
+                  <span class="char-mood" style="color: var(--accent-red)">紧张</span>
+                </div>
+              </div>
+              <div class="char-goal-row">
+                <span class="char-goal">自保</span>
+                <span class="char-weight">0.8</span>
+              </div>
+              <!-- 情绪条 -->
+              <div class="char-emotion">
+                <div class="emotion-label-row">
+                  <span class="emotion-label-text">情绪水位</span>
+                  <span class="emotion-val">65%</span>
+                </div>
+                <div class="emotion-track">
+                  <div class="emotion-fill" style="width: 65%"></div>
+                </div>
+                <div class="emotion-scale">
+                  <span>平静</span>
+                  <span>爆发</span>
+                </div>
+              </div>
+              <!-- 信念账本 -->
+              <div class="char-belief-section">
+                <div class="belief-header">
+                  <span class="belief-title">信念账本</span>
+                  <span class="belief-count">9 条</span>
+                </div>
+                <div class="belief-items">
+                  <div class="belief-item">
+                    <span class="belief-tag tag-witness">亲见</span>
+                    <span class="belief-text">陈默发现文件</span>
+                  </div>
+                  <div class="belief-item">
+                    <span class="belief-tag tag-infer">推测</span>
+                    <span class="belief-text">陈默起疑了</span>
+                  </div>
+                  <div class="belief-item">
+                    <span class="belief-tag tag-told">被告知</span>
+                    <span class="belief-text">周婶在楼下</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <!-- 周婶 -->
+            <div class="char-card" data-char-id="zhoushen">
+              <div class="char-card-head">
+                <img class="char-portrait" src="assets/portrait-zhoushen.png" alt="周婶立绘" />
+                <div class="char-name-col">
+                  <span class="char-name">周婶</span>
+                  <span class="char-mood" style="color: var(--accent-green)">平静</span>
+                </div>
+              </div>
+              <div class="char-goal-row">
+                <span class="char-goal">守住家宅</span>
+                <span class="char-weight">0.4</span>
+              </div>
+              <!-- 情绪条 -->
+              <div class="char-emotion">
+                <div class="emotion-label-row">
+                  <span class="emotion-label-text">情绪水位</span>
+                  <span class="emotion-val">25%</span>
+                </div>
+                <div class="emotion-track">
+                  <div class="emotion-fill" style="width: 25%"></div>
+                </div>
+                <div class="emotion-scale">
+                  <span>平静</span>
+                  <span>爆发</span>
+                </div>
+              </div>
+              <!-- 信念账本 -->
+              <div class="char-belief-section">
+                <div class="belief-header">
+                  <span class="belief-title">信念账本</span>
+                  <span class="belief-count">6 条</span>
+                </div>
+                <div class="belief-items">
+                  <div class="belief-item">
+                    <span class="belief-tag tag-witness">亲见</span>
+                    <span class="belief-text">两人在书房</span>
+                  </div>
+                  <div class="belief-item">
+                    <span class="belief-tag tag-infer">推测</span>
+                    <span class="belief-text">气氛不对</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        <!-- 中央主舞台区 -->
+        <main class="center-stage">
+          <div class="stage-header">
+            <div class="stage-title">
+              <svg class="stage-icon" viewBox="0 0 16 16" fill="none">
+                <path d="M2 12.5L6 4.5L9 10.5L11.5 6.5L14 12.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              <span class="stage-name">陈默书房 · 夜 · 雨</span>
+            </div>
+            <div class="tab-switch">
+              <button class="tab active" data-stage-tab="blackboard">世界黑板</button>
+              <button class="tab" data-stage-tab="prose">成文</button>
+            </div>
+          </div>
+
+          <div class="blackboard stage-pane active" data-pane="blackboard">
+            <!-- 环境事实 -->
+            <div class="env-section">
+              <div class="section-title blue">环境事实</div>
+              <div class="env-row">
+                <span class="env-dot"></span>
+                <span class="env-text">窗外下着雨，雨声渐密</span>
+                <span class="env-vis">陈默✓ 李文✓ 周婶✓</span>
+              </div>
+              <div class="env-row">
+                <span class="env-dot"></span>
+                <span class="env-text">保险柜门半开，锁孔有新鲜划痕</span>
+                <span class="env-vis">陈默✓ 李文✓ 周婶✗</span>
+              </div>
+            </div>
+            <!-- 当前回合事件 -->
+            <div class="event-section">
+              <div class="section-title cyan">当前回合事件</div>
+              <div class="event-card">
+                <div class="event-meta">
+                  <span class="event-type-tag"><span class="event-type">对话</span></span>
+                  <span class="event-id">E-042</span>
+                </div>
+                <div class="event-quote">「默哥，这文件……你什么时候放的？」</div>
+                <div class="event-source">李文 说 —— 陈默感知 ✓  周婶感知 ✗</div>
+              </div>
+            </div>
+            <!-- 角色状态摘要 -->
+            <div class="char-summary">
+              <div class="section-title muted">角色状态摘要</div>
+              <div class="summary-row">
+                <span class="summary-name">陈默</span>
+                <span class="summary-text">警觉 —— 他注意到李文的语气不对</span>
+              </div>
+              <div class="summary-row">
+                <span class="summary-name">李文</span>
+                <span class="summary-text">紧张 —— 她在试探保险柜的事</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 成文视图 -->
+          <div class="prose-view stage-pane" data-pane="prose">
+            <div class="prose-header">
+              <span class="prose-chapter-label">第七章</span>
+              <span class="prose-word-count">1,284 字</span>
+            </div>
+            <div class="prose-content">
+              <h2 class="prose-title">雨夜的试探</h2>
+
+              <p class="prose-paragraph">窗外的雨越下越密，敲打着窗棂，像某种不安的节拍。陈默坐在书桌后，目光落在那杯早已凉透的茶上，却没有端起来的意思。</p>
+
+              <p class="prose-paragraph">李文站在桌前，手指无意识地绞着衣角。沉默了几秒，她终于开口——</p>
+
+              <div class="prose-dialogue">
+                <img class="prose-dialogue-avatar" src="assets/portrait-liwen.png" alt="李文" />
+                <div class="prose-dialogue-body">
+                  <div class="prose-dialogue-name">李文</div>
+                  <div class="prose-dialogue-text">「默哥，这文件……你什么时候放的？」</div>
+                </div>
+              </div>
+
+              <p class="prose-paragraph">陈默抬起眼，没有直接回答，只是缓缓问——</p>
+
+              <div class="prose-dialogue">
+                <img class="prose-dialogue-avatar" src="assets/portrait-chenmo.png" alt="陈默" />
+                <div class="prose-dialogue-body">
+                  <div class="prose-dialogue-name">陈默</div>
+                  <div class="prose-dialogue-text">「你怎么会问这个？」</div>
+                </div>
+              </div>
+
+              <p class="prose-paragraph">李文的手指停住了。她望着陈默，那眼神里有试探，也有某种更深的、几乎要溢出来的东西。雨声忽然变得很响，像要把什么东西盖住。</p>
+            </div>
+            <div class="prose-footer">
+              <button class="prose-nav-btn">上一章</button>
+              <span class="prose-progress">第 7 章 / 共 23 章</span>
+              <button class="prose-nav-btn">下一章</button>
+            </div>
+          </div>
+        </main>
+
+        <!-- 右侧导演控制台 -->
+        <aside class="director-console">
+          <div class="console-header">
+            <span class="console-title">导演控制台</span>
+            <span class="console-lamp"></span>
+          </div>
+
+          <!-- 张力指数 -->
+          <div class="console-panel">
+            <div class="tension-head">
+              <span class="tension-label">张力指数</span>
+              <span class="tension-val">68%</span>
+            </div>
+            <div class="tension-track">
+              <div class="tension-fill"></div>
+            </div>
+            <div class="tension-trend">上升中 · 距上次冲突 3 回合</div>
+          </div>
+
+          <!-- 导演提示 -->
+          <div class="console-panel director-panel">
+            <div class="panel-title">本回合导演提示</div>
+            <div class="hint">舞台提示：让李文先开口试探</div>
+            <div class="hint">感知曝光：保险柜 → 陈默可见</div>
+            <div class="hint gold">目标权重：李文·自保 +0.2（因：陈默起疑）</div>
+          </div>
+
+          <!-- 介入工具 -->
+          <div class="console-panel">
+            <div class="panel-title">介入工具</div>
+            <div class="intervene-btns">
+              <button class="intervene-btn">注入事件</button>
+              <button class="intervene-btn">信息曝光</button>
+              <button class="intervene-btn">调整权重</button>
+            </div>
+          </div>
+
+          <!-- 举手请求 -->
+          <div class="raise-card hidden">
+            <div class="raise-head">
+              <span class="raise-lamp"></span>
+              <span class="raise-title">导演请求介入</span>
+            </div>
+            <div class="raise-reason">分叉点 —— 李文是否坦白，将决定剧情走向</div>
+            <div class="raise-btns">
+              <button class="raise-btn agree">同意</button>
+              <button class="raise-btn reject">驳回</button>
+            </div>
+          </div>
+
+          <!-- 护栏状态 -->
+          <div class="console-panel guard-panel">
+            <div class="panel-title">护栏状态</div>
+            <div class="guard-rows">
+              <div class="guard-row">
+                <span class="guard-name">世界事实</span>
+                <span class="guard-status">
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                    <circle cx="6" cy="6" r="6" fill="var(--accent-green)" fill-opacity="0.2"/>
+                    <path d="M3.5 6.2L5.2 7.9L8.5 4.4" stroke="var(--accent-green)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                  <span class="pass">通过</span>
+                </span>
+              </div>
+              <div class="guard-row">
+                <span class="guard-name">人设一致</span>
+                <span class="guard-status">
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                    <circle cx="6" cy="6" r="6" fill="var(--accent-green)" fill-opacity="0.2"/>
+                    <path d="M3.5 6.2L5.2 7.9L8.5 4.4" stroke="var(--accent-green)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                  <span class="pass">通过</span>
+                </span>
+              </div>
+              <div class="guard-row">
+                <span class="guard-name">记忆 RAG</span>
+                <span class="guard-status">
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                    <circle cx="6" cy="6" r="6" fill="var(--text-muted)"/>
+                    <rect x="3" y="5.4" width="6" height="1.2" rx="0.6" fill="var(--text-secondary)"/>
+                  </svg>
+                  <span class="pending">二阶段</span>
+                </span>
+              </div>
+            </div>
+            <div class="guard-foot">
+              <span class="guard-foot-left">本回合拦截 0 次</span>
+              <span class="guard-foot-right">熔断 0/2</span>
+            </div>
+          </div>
+        </aside>
+      </div>
+
+      <!-- 底部时间线 -->
+      <footer class="timeline">
+        <div class="tl-top">
+          <div class="tl-controls">
+            <button class="tl-btn" title="跳到开头">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path d="M11 10.5L7 7L3 10.5V3.5h8V10.5z" fill="currentColor"/>
+              </svg>
+            </button>
+            <button class="tl-btn" title="上一回合">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path d="M9.5 3.5L5.5 7L9.5 10.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+            <button class="tl-btn play" title="播放/暂停">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path d="M4 3L4 11L11 7L4 3Z" fill="currentColor"/>
+              </svg>
+            </button>
+            <button class="tl-btn" title="下一回合">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path d="M4.5 3.5L8.5 7L4.5 10.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+            <button class="tl-btn" title="跳到末尾">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path d="M3 10.5L7 7L11 10.5V3.5H3V10.5z" fill="currentColor"/>
+              </svg>
+            </button>
+            <div class="live-tag">
+              <span class="live-dot"></span>
+              <span class="live-text">实时模式</span>
+            </div>
+          </div>
+          <div class="tl-meta">
+            <span>速度 1x</span>
+            <span>共 7 回合 / 23 事件</span>
+          </div>
+          <div class="tl-legend">
+            <span class="legend-item"><span class="legend-dot type-action"></span>行动</span>
+            <span class="legend-item"><span class="legend-dot type-dialogue"></span>对话</span>
+            <span class="legend-item"><span class="legend-dot type-conflict"></span>冲突</span>
+            <span class="legend-item"><span class="legend-dot type-info"></span>信息</span>
+          </div>
+        </div>
+        <div class="tl-track">
+          <div class="turn-node type-action"><span class="turn-dot"></span><span class="turn-label">T-01</span><span class="turn-desc">雨夜归家</span></div>
+          <div class="turn-node type-dialogue"><span class="turn-dot"></span><span class="turn-label">T-02</span><span class="turn-desc">书房初遇</span></div>
+          <div class="turn-node type-info"><span class="turn-dot"></span><span class="turn-label">T-03</span><span class="turn-desc">周婶送茶</span></div>
+          <div class="turn-node type-conflict"><span class="turn-dot"></span><span class="turn-label">T-04</span><span class="turn-desc">保险柜疑云</span></div>
+          <div class="turn-node type-dialogue"><span class="turn-dot"></span><span class="turn-label">T-05</span><span class="turn-desc">沉默对峙</span></div>
+          <div class="turn-node type-action"><span class="turn-dot"></span><span class="turn-label">T-06</span><span class="turn-desc">文件异动</span></div>
+          <div class="turn-node current type-dialogue"><span class="turn-dot"></span><span class="turn-label">T-07</span><span class="turn-desc">李文试探</span></div>
+        </div>
+      </footer>
+    </div>
+
+    <!-- ==================== 视图 2：读者阅读台（沉浸模式） ==================== -->
+    <div class="view reader" id="view-reader">
+      <header class="reader-topbar">
+        <div class="reader-back">
+          <svg class="reader-back-icon" viewBox="0 0 16 16" fill="none">
+            <path d="M10 3L5 8L10 13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span class="reader-back-text">返回</span>
+        </div>
+        <span class="reader-top-title">背叛之夜</span>
+        <div class="reader-top-right">
+          <span class="reader-chapter">第七章</span>
+          <svg class="reader-immersive-icon" viewBox="0 0 18 18" fill="none">
+            <path d="M2 5V2h3M13 2h3v3M16 13v3h-3M5 16H2v-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+      </header>
+
+      <div class="reader-body">
+        <div style="display:flex;flex-direction:column;align-items:center;width:100%;">
+          <article class="reader-paper">
+            <h1 class="reader-chapter-title">第七章  雨夜的试探</h1>
+            <p class="reader-paragraph">窗外的雨越下越密，敲打着窗棂，像某种不安的节拍。陈默坐在书桌后，目光落在那杯早已凉透的茶上，却没有端起来的意思。</p>
+            <p class="reader-paragraph">李文站在桌前，手指无意识地绞着衣角。沉默了几秒，她终于开口：</p>
+            <div class="reader-dialogue">
+              <img class="reader-avatar" src="assets/portrait-liwen.png" alt="李文" />
+              <span class="reader-quote">「默哥，这文件……你什么时候放的？」</span>
+            </div>
+            <p class="reader-paragraph">陈默抬起眼，没有直接回答，只是缓缓问：</p>
+            <div class="reader-dialogue">
+              <img class="reader-avatar" src="assets/portrait-chenmo.png" alt="陈默" />
+              <span class="reader-quote">「你怎么会问这个？」</span>
+            </div>
+            <p class="reader-paragraph">李文的手指停住了。她望着陈默，那眼神里有试探，也有某种更深的、几乎要溢出来的东西。</p>
+          </article>
+          <div class="reader-footer">
+            <div class="reader-nav">
+              <svg viewBox="0 0 14 14" fill="none"><path d="M8.5 3L4.5 7L8.5 11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              上一章
+            </div>
+            <span class="reader-progress">7 / 23</span>
+            <div class="reader-nav">
+              下一章
+              <svg viewBox="0 0 14 14" fill="none"><path d="M5.5 3L9.5 7L5.5 11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="reader-progress-bar">
+        <div class="reader-progress-fill"></div>
+      </div>
+    </div>
+
+    <!-- 视图切换浮层 -->
+    <div class="view-switcher">
+      <button class="active" data-view="workbench">作者工作台</button>
+      <button data-view="reader">读者阅读台</button>
+    </div>
+  </div>
+
+  <script src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,137 @@
+/* ==========================================================================
+   Design Tokens —— 纸墨双主题体系
+   外层：data-theme="ink"（墨模式 / 深色）| "paper"（宣纸模式 / 浅色）
+   内层：data-mood="suspense|tension|warmth|serene"（场景氛围）
+   ========================================================================== */
+
+:root {
+  /* 结构参数（不随主题变化） */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
+  --radius-pill: 999px;
+
+  /* 字体栈 */
+  --font-ui: "Noto Sans SC", system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-reader: "Noto Serif SC", Georgia, "Songti SC", "SimSun", serif;
+  --font-mono: "JetBrains Mono", "SF Mono", Consolas, "Courier New", monospace;
+}
+
+/* ===== 墨模式（深色 · 深夜批阅） ===== */
+[data-theme="ink"],
+[data-theme="dark"] {
+  --bg-page: #0D0F14;
+  --bg-panel: #151922;
+  --bg-elevated: #1C2130;
+  --bg-surface: #293042;
+  --border: #232836;
+  --border-light: #2D3446;
+  --text-primary: #C9CDD6;
+  --text-secondary: #7A8194;
+  --text-muted: #4A5166;
+  --text-highlight: #EDEFF2;
+
+  /* 主色：暗金（印泥金） */
+  --accent-primary: #E8B860;
+  --accent-primary-hover: #F0C878;
+  --accent-primary-light: rgba(232, 184, 96, 0.12);
+
+  /* 状态色 */
+  --accent-red: #D96A6A;       /* 朱砂 */
+  --accent-red-light: rgba(217, 106, 106, 0.12);
+  --accent-cyan: #6AB5C9;      /* 石青 */
+  --accent-cyan-light: rgba(106, 181, 201, 0.12);
+  --accent-green: #7CB87C;     /* 石绿 */
+  --accent-green-light: rgba(124, 184, 124, 0.12);
+  --accent-blue: #7C9CD4;      /* 花青 */
+  --accent-blue-light: rgba(124, 156, 212, 0.12);
+  --accent-gold: #E8B860;      /* 赭金 */
+  --accent-gold-light: rgba(232, 184, 96, 0.12);
+
+  --on-accent: #1A1815;        /* 主色按钮上的文字 */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+/* ===== 宣纸模式（浅色 · 白昼批阅） ===== */
+[data-theme="paper"],
+[data-theme="light"] {
+  --bg-page: #F5EFE0;          /* 宣纸米黄 */
+  --bg-panel: #FAF6EA;         /* 更亮的纸色 */
+  --bg-elevated: #FDFAF0;      /* 最浅的纸 */
+  --bg-surface: #EDE5D0;       /* 按压态 */
+  --border: #D9CFB8;           /* 淡墨线 */
+  --border-light: #E8DFC8;     /* 更浅的线 */
+  --text-primary: #2B2925;     /* 墨色 */
+  --text-secondary: #6B6458;   /* 淡墨 */
+  --text-muted: #A89E8A;       /* 极淡墨 */
+  --text-highlight: #1A1815;   /* 浓墨 */
+
+  /* 主色：朱砂红（印泥色） */
+  --accent-primary: #B5452E;
+  --accent-primary-hover: #C95A42;
+  --accent-primary-light: rgba(181, 69, 46, 0.10);
+
+  /* 状态色（传统矿物颜料色系） */
+  --accent-red: #B5452E;       /* 朱砂 */
+  --accent-red-light: rgba(181, 69, 46, 0.10);
+  --accent-cyan: #2E7D8F;      /* 石青 */
+  --accent-cyan-light: rgba(46, 125, 143, 0.10);
+  --accent-green: #3D8B5E;     /* 石绿 */
+  --accent-green-light: rgba(61, 139, 94, 0.10);
+  --accent-blue: #4A6FCF;      /* 花青 */
+  --accent-blue-light: rgba(74, 111, 207, 0.10);
+  --accent-gold: #C77D23;      /* 赭石 */
+  --accent-gold-light: rgba(199, 125, 35, 0.10);
+
+  --on-accent: #FFFFFF;
+  --shadow-sm: 0 1px 2px rgba(43, 41, 37, 0.06);
+  --shadow-md: 0 4px 12px rgba(43, 41, 37, 0.07);
+  --shadow-lg: 0 8px 24px rgba(43, 41, 37, 0.10);
+}
+
+/* ===== 场景级 Mood 色板 —— 叠加在基础主题之上 ===== */
+/* 悬疑 */
+[data-mood="suspense"] {
+  --mood-primary: #4A5B8A;
+  --mood-secondary: #2A3A5C;
+  --mood-light: rgba(74, 91, 138, 0.12);
+}
+/* 紧张 */
+[data-mood="tension"] {
+  --mood-primary: #8B3A3A;
+  --mood-secondary: #5C1A1A;
+  --mood-light: rgba(139, 58, 58, 0.12);
+}
+/* 温情 */
+[data-mood="warmth"] {
+  --mood-primary: #C47B5A;
+  --mood-secondary: #8B5A3C;
+  --mood-light: rgba(196, 123, 90, 0.12);
+}
+/* 宁静 */
+[data-mood="serene"] {
+  --mood-primary: #5A8A7B;
+  --mood-secondary: #3A5A4C;
+  --mood-light: rgba(90, 138, 123, 0.12);
+}
+
+/* 宣纸模式下 mood 色稍亮，确保在浅底上可读 */
+[data-theme="paper"][data-mood="suspense"] {
+  --mood-primary: #3A4E82;
+  --mood-light: rgba(58, 78, 130, 0.10);
+}
+[data-theme="paper"][data-mood="tension"] {
+  --mood-primary: #9B2E2E;
+  --mood-light: rgba(155, 46, 46, 0.10);
+}
+[data-theme="paper"][data-mood="warmth"] {
+  --mood-primary: #B86B4A;
+  --mood-light: rgba(184, 107, 74, 0.10);
+}
+[data-theme="paper"][data-mood="serene"] {
+  --mood-primary: #4A7A6B;
+  --mood-light: rgba(74, 122, 107, 0.10);
+}
