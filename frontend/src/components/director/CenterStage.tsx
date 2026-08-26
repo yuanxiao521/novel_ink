@@ -4,8 +4,29 @@ import chenImg from '../../assets/portrait-chenmo.png';
 import liwImg from '../../assets/portrait-liwen.png';
 import type { SimUIState } from '../../hooks/useDirectorSim';
 
-export function CenterStage({ state }: { state: SimUIState }) {
+const TYPE_LABEL: Record<string, string> = { conflict: '冲突', dialogue: '对话', action: '行动', info: '信息' };
+
+export function CenterStage({ state, playing }: { state: SimUIState; playing: boolean }) {
   const [tab, setTab] = useState<'blackboard' | 'prose'>('blackboard');
+  const viewing = state.viewing;
+
+  // 推演中：根据当前事件判断阶段
+  const runningStatus = (() => {
+    if (!playing) return null;
+    // 有角色正在感知
+    const perceiving = Object.entries(state.overrides).find(([, o]) => o.perceiving);
+    if (perceiving) return { label: `${charName(perceiving[0])} 正在感知环境…`, phase: 'perceive' };
+    // 有角色正在思考
+    const thinking = Object.entries(state.overrides).find(([, o]) => o.thought && !o.action);
+    if (thinking) return { label: `${charName(thinking[0])} 正在思考…`, phase: 'think' };
+    // 有成文在追加
+    if (state.prose.length > 0 && state.current) return { label: '正在生成正文…', phase: 'prose' };
+    // 导演调度中
+    if (state.hints.length > 0) return { label: '导演调度中…', phase: 'director' };
+    // 默认：回合进行中
+    if (state.current) return { label: `回合 T-${String(state.current.turn).padStart(2, '0')} 推演中…`, phase: 'turn' };
+    return null;
+  })();
 
   return (
     <main className="center-stage">
@@ -14,7 +35,7 @@ export function CenterStage({ state }: { state: SimUIState }) {
           <svg className="stage-icon" viewBox="0 0 16 16" fill="none">
             <path d="M2 12.5L6 4.5L9 10.5L11.5 6.5L14 12.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
-          <span className="stage-name">陈默书房 · 夜 · 雨</span>
+          <span className="stage-name">{viewing ? `历史回合 T-${viewing.turn} · 张力 ${viewing.tension}%` : '陈默书房 · 夜 · 雨'}</span>
         </div>
         <div className="tab-switch">
           <button className={`tab ${tab === 'blackboard' ? 'active' : ''}`} data-stage-tab="blackboard" onClick={() => setTab('blackboard')}>
@@ -26,8 +47,66 @@ export function CenterStage({ state }: { state: SimUIState }) {
         </div>
       </div>
 
-      <div className={`blackboard stage-pane ${tab === 'blackboard' ? 'active' : ''}`} data-pane="blackboard">
-        <div className="env-section">
+      {/* 场景收束长程汇报（S3） */}
+      {state.closeReport && !viewing && (
+        <div className="close-report">
+          <div className="close-report-head">📋 导演长程汇报 · 本场收束</div>
+          <div className="close-report-body">
+            {state.closeReport.scene_summary && (
+              <div className="close-report-summary">{state.closeReport.scene_summary}</div>
+            )}
+            {(state.closeReport.foreshadow_updates?.length ?? 0) > 0 && (
+              <div className="close-report-tags">
+                伏笔推进 {(state.closeReport.foreshadow_updates ?? []).filter((f) => f.status === 'in_progress').length} 条 · 回收 {(state.closeReport.foreshadow_updates ?? []).filter((f) => f.status === 'closed').length} 条
+              </div>
+            )}
+            {state.closeReport.next_scene_hint && (
+              <div className="close-report-hint">下一场提示：{state.closeReport.next_scene_hint}</div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 推演中状态指示器 */}
+      {runningStatus && !viewing && (
+        <div className="running-status">
+          <span className="running-spinner"></span>
+          <span className="running-text">{runningStatus.label}</span>
+        </div>
+      )}
+
+      {viewing ? (
+        /* ---- 历史回合查看模式：展示该回的成文 + 事件 ---- */
+        <div className="history-view">
+          <div className="history-banner">
+            <span>历史回合 T-{viewing.turn}</span>
+            <span className="history-summary">{viewing.summary}</span>
+          </div>
+          <div className="history-pane">
+            {viewing.prose && <div className="history-prose">{viewing.prose}</div>}
+            {viewing.events.length > 0 ? (
+              <div className="history-events">
+                {viewing.events.map((ev, i) => (
+                  <div className={`event-card type-${ev.kind}`} key={`h-${i}`}>
+                    <div className="event-meta">
+                      <span className="event-type-tag">
+                        <span className={`event-type type-${ev.kind}`}>{TYPE_LABEL[ev.kind] || '信息'}</span>
+                      </span>
+                      <span className="event-id">{charName(ev.actor)}</span>
+                    </div>
+                    <div className="event-quote">{ev.text}</div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="history-empty">这一回合没有记录角色行动。</div>
+            )}
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className={`blackboard stage-pane ${tab === 'blackboard' ? 'active' : ''}`} data-pane="blackboard">
+            <div className="env-section">
           <div className="section-title blue">环境事实</div>
           <div className="env-row">
             <span className="env-dot"></span>
@@ -125,6 +204,8 @@ export function CenterStage({ state }: { state: SimUIState }) {
           <button className="prose-nav-btn">下一章</button>
         </div>
       </div>
+        </>
+      )}
     </main>
   );
 }

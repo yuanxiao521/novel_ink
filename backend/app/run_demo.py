@@ -1,4 +1,4 @@
-"""run_demo：无 LLM Key 跑最小导演台闭环。
+"""run_demo：无 LLM Key 跑最小导演台闭环（async 版）。
 
 用法（在 backend/ 下）：
   uv run python -m app.run_demo            # 完整回合循环
@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 
 from app.scenarios.betrayal_night import betrayal_night
 from app.services.engine.graph import build_graph
@@ -14,7 +15,7 @@ from app.schemas import models
 from app.config import settings
 
 
-def main() -> None:
+async def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--turns", type=int, default=0, help="跑固定回合数(0=至收束/举手/上限)")
     args = ap.parse_args()
@@ -33,11 +34,11 @@ def main() -> None:
                         settings.guard_retry_max, settings.max_turns)
 
     target = args.turns or settings.max_turns
-    print(f"=== 涌现式小说 Agent · 最小导演台闭环 ===")
+    print("=== 涌现式小说 Agent · 最小导演台闭环 ===")
     print(f"场景：背叛之夜 · 角色：{', '.join(sim.characters)}")
 
     for i in range(1, target + 1):
-        graph.invoke({"sim": sim})
+        await graph.ainvoke({"sim": sim})
         t = sim.world.turn
         d = sim.director
         n_events = len(sim.events)
@@ -73,4 +74,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

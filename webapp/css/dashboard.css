@@ -385,6 +385,31 @@
   gap: 0;
 }
 
+/* ===== 主笔共创工作台视图（嵌入 maestro） ===== */
+.maestro-view {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--maestro-bg);
+}
+
+/* 覆盖 maestro.css 的全屏布局，改为填满主内容区 */
+.maestro-view .maestro-workbench {
+  height: 100%;
+  width: 100%;
+}
+
+/* 让三栏在嵌入后正确填满剩余高度 */
+.maestro-view .maestro-body {
+  min-height: 0;
+}
+
+/* 覆盖 .panel-title 等与 dashboard 样式库的冲突，限定在 workbench 内 */
+.maestro-workbench .panel-title {
+  color: var(--maestro-text);
+}
+
 .main-content {
   flex: 1;
   min-width: 0;

@@ -1,11 +1,15 @@
+import { useState } from 'react';
 import type { SimUIState } from '../../hooks/useDirectorSim';
+import { useDirectorChat } from '../../hooks/useDirectorChat';
 
 export function DirectorPanel({
   state,
+  simId,
   onAgree,
   onReject,
 }: {
   state: SimUIState;
+  simId: string | null;
   onAgree: () => void;
   onReject: () => void;
 }) {
@@ -20,6 +24,17 @@ export function DirectorPanel({
 
   const raisePending = state.raise?.pending;
   const totalFuse = state.guard?.fuse ?? 0;
+
+  // 作者↔导演 共创对话（逐 token 流式）
+  const chat = useDirectorChat(simId);
+  const [draft, setDraft] = useState('');
+
+  const submitChat = () => {
+    const text = draft;
+    if (!text.trim()) return;
+    setDraft('');
+    void chat.send(text);
+  };
 
   return (
     <aside className="director-console">
@@ -114,6 +129,60 @@ export function DirectorPanel({
         <div className="guard-foot">
           <span className="guard-foot-left">本回合拦截 {state.guard?.blocks ?? 0} 次</span>
           <span className="guard-foot-right">熔断 {totalFuse} 次</span>
+        </div>
+      </div>
+
+      <div className="console-panel chat-panel">
+        <div className="panel-title">与导演共创</div>
+        <div className="chat-list">
+          {chat.messages.length === 0 && (
+            <div className="chat-empty">
+              {simId ? '问导演：下一步怎么走、该曝光什么、让谁先动摇。' : '模拟未就绪，稍等…'}
+            </div>
+          )}
+          {chat.messages.map((m) => (
+            <div key={m.id} className={`chat-msg ${m.role}`}>
+              <div className="chat-bubble">
+                {m.error ? (
+                  <span className="chat-error">{m.error}</span>
+                ) : (
+                  <span>
+                    {m.text}
+                    {m.streaming && <span className="chat-caret"></span>}
+                  </span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="chat-input-row">
+          <input
+            className="chat-input"
+            placeholder={chat.busy ? '导演思考中…（可停止）' : '对导演说…'}
+            value={draft}
+            disabled={chat.busy}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                submitChat();
+              }
+            }}
+          />
+          {chat.busy ? (
+            <button className="chat-btn stop" title="停止对话" onClick={chat.stop}>
+              ■
+            </button>
+          ) : (
+            <button
+              className="chat-btn send"
+              title="发送"
+              onClick={submitChat}
+              disabled={!draft.trim()}
+            >
+              →
+            </button>
+          )}
         </div>
       </div>
     </aside>

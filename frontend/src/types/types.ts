@@ -31,11 +31,13 @@ export interface GuardState {
 }
 
 export interface SimState {
+  turn: number;
   tension: number;
   tension_trend?: string;
   characters?: unknown[];
   beliefs?: Record<string, Belief[]>;
   guard?: GuardState;
+  paused?: boolean;
 }
 
 export interface RaiseRequest {

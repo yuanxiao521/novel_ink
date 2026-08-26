@@ -28,7 +28,7 @@ body {
   width: 100vw;
   height: 100vh;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   overflow: hidden;
   position: relative;
 }
@@ -837,6 +837,146 @@ body {
   color: var(--accent-green);
 }
 
+/* --- 作者↔导演 共创对话（逐 token 流式） --- */
+.chat-panel {
+  flex: 1;
+  min-height: 160px;
+  gap: 8px;
+}
+
+.chat-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  overflow-y: auto;
+  min-height: 96px;
+  max-height: 260px;
+  padding-right: 2px;
+}
+
+.chat-empty {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 8px 2px;
+}
+
+.chat-msg {
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-msg.author {
+  align-items: flex-end;
+}
+
+.chat-msg.director {
+  align-items: flex-start;
+}
+
+.chat-bubble {
+  max-width: 92%;
+  padding: 7px 10px;
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 1.55;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.chat-msg.author .chat-bubble {
+  background: rgba(232, 184, 96, 0.14);
+  border: 1px solid rgba(232, 184, 96, 0.35);
+  color: var(--text-primary);
+}
+
+.chat-msg.director .chat-bubble {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+}
+
+.chat-error {
+  color: var(--accent-red);
+}
+
+/* 流式光标：导演正在"打字" */
+.chat-caret {
+  display: inline-block;
+  width: 2px;
+  height: 12px;
+  margin-left: 3px;
+  vertical-align: -2px;
+  background: var(--accent-gold);
+  animation: blink 0.8s step-end infinite;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.chat-input-row {
+  display: flex;
+  gap: 6px;
+}
+
+.chat-input {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 6px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.chat-input:focus {
+  border-color: var(--accent-gold);
+}
+
+.chat-input::placeholder {
+  color: var(--text-muted);
+}
+
+.chat-btn {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  border: none;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.chat-btn.send {
+  background: var(--accent-gold);
+  color: var(--on-accent);
+  font-weight: 700;
+}
+
+.chat-btn.send:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.chat-btn.stop {
+  background: var(--bg-surface);
+  border: 1px solid var(--accent-red);
+  color: var(--accent-red);
+}
+
+[data-theme="paper"] .chat-msg.director .chat-bubble {
+  background: var(--bg-surface);
+}
+
 /* --- 底部时间线（176px） --- */
 .timeline {
   flex: none;
@@ -1563,6 +1703,45 @@ body {
   margin-right: 4px;
 }
 
+/* 思考默认折叠：最多 2 行，点击展开 */
+.char-thought {
+  cursor: pointer;
+}
+
+.char-thought .thought-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.char-thought.open .thought-text {
+  display: block;
+}
+
+.thought-more {
+  display: block;
+  color: var(--accent-cyan);
+  font-style: normal;
+  font-size: 10px;
+  margin-top: 2px;
+}
+
+/* 感知态：回合开始"正在感知"的灯亮呼吸效果 */
+.char-thought.perceiving {
+  background: rgba(232, 184, 96, 0.1);
+  border-left-color: var(--accent-gold);
+  color: var(--text-secondary);
+}
+
+.char-thought.perceiving .thought-arrow {
+  color: var(--accent-gold);
+}
+
+.char-thought.perceiving {
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
 /* 角色卡内：最新行动/台词小行（character_act） */
 .char-action {
   margin-top: 2px;
@@ -1622,3 +1801,118 @@ body {
   .timeline { height: 140px; }
   .reader-paper { padding: 32px 28px; }
 }
+
+/* ==========================================================================
+   历史回合：时间线节点可点击查看 / 回退（turn_archives）
+   ========================================================================== */
+.turn-node { position: relative; cursor: pointer; }
+.turn-node.viewing .turn-dot {
+  background: var(--accent-gold);
+  box-shadow: 0 0 8px rgba(232, 184, 96, 0.8);
+}
+.turn-node.viewing .turn-label { color: var(--accent-gold); }
+
+/* 重放按钮：跟随播放/暂停旁边（一圈箭头） */
+.tl-btn.replay {
+  color: var(--accent-gold, #e8b860);
+}
+.tl-btn.replay:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  color: var(--text-muted);
+}
+.tl-btn.replay:hover:not(:disabled) {
+  background: rgba(232, 184, 96, 0.15);
+}
+
+/* 推演中状态指示器（舞台中央） */
+.running-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  margin: 8px 20px 0;
+  background: rgba(100, 180, 255, 0.08);
+  border: 1px solid rgba(100, 180, 255, 0.2);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--accent-cyan, #64b4ff);
+}
+.running-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(100, 180, 255, 0.25);
+  border-top-color: var(--accent-cyan, #64b4ff);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+.running-text {
+  font-weight: 500;
+}
+
+/* 历史查看：中央舞台替换板 */
+.history-view {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.history-banner {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(232, 184, 96, 0.1);
+  border-left: 3px solid var(--accent-gold);
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+.history-summary {
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--text-secondary);
+  flex: 1;
+}
+.history-pane { display: flex; flex-direction: column; gap: 10px; }
+.history-prose {
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elevated, rgba(255, 255, 255, 0.7));
+  font-size: 13px;
+  line-height: 1.8;
+  color: var(--text-primary);
+}
+.history-events { display: flex; flex-direction: column; gap: 8px; }
+.history-empty {
+  padding: 20px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+/* 场景切换下拉（S1.3 顶部接真） */
+.scene-switch {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  padding: 4px 8px;
+  max-width: 280px;
+}
+
+/* 场景收束长程汇报（S3） */
+.close-report { margin: 10px 16px 0; padding: 12px 14px; border: 1px solid var(--accent-gold, #E8B860); border-radius: 10px; background: rgba(232, 184, 96, 0.08); display: flex; flex-direction: column; gap: 6px; }
+.close-report-head { font-size: 12px; font-weight: 600; color: var(--accent-gold, #E8B860); }
+.close-report-summary { font-size: 13px; color: var(--text-primary); line-height: 1.6; }
+.close-report-tags { font-size: 12px; color: var(--text-secondary); }
+.close-report-hint { font-size: 12px; color: var(--text-secondary); }

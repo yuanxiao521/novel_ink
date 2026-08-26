@@ -74,8 +74,8 @@ class Fact(BaseModel):
 
 
 class WorldState(BaseModel):
-    scene_id: str
-    title: str
+    scene_id: str = ""
+    title: str = ""
     turn: int = 0
     settings: dict[str, Any] = Field(default_factory=dict)  # 初始世界观(静态)
     env_conds: list[str] = Field(default_factory=list)      # 环境条件(天气/时局)
@@ -94,6 +94,9 @@ class Event(BaseModel):
     world_snapshot: dict[str, Any] = Field(default_factory=dict)  # 回放基线
     guard_flags: list[str] = Field(default_factory=list)  # 命中护栏层/熔断标记
     ts: int = 0
+    # ---- 因果字段（OpenNovel 借鉴，收束时批量补，回合内不填） ----
+    caused_by: str = ""                        # 前置事件 id（因果链）
+    causal_pressure: float = 0.5               # 因果压强 0-1（高=影响后续多）
 
 
 # --------------------------------------------------------------------------- 4.4 角色信念账本
@@ -155,11 +158,28 @@ class GuardStats(BaseModel):
 
 
 # --------------------------------------------------------------------------- 顶层黑板（编排器持有）
+class TurnArchive(BaseModel):
+    """单回合归档：回退查看任意回合所需的最小快照。"""
+
+    turn: int
+    tension: float = 0.0
+    tension_trend: str = "flat"
+    cls: str = "type-info"
+    summary: str = ""
+    prose: str = ""
+    events: list[dict[str, Any]] = Field(default_factory=list)  # 本回合事件（轻量 dict）
+
+
 class SimulationState(BaseModel):
     """回合循环的"黑板"对象。LangGraph State 里用单个 `sim` 字段持有它，
     节点内原地修改(blackboard 模式)，避免 reducer 合并复杂度。"""
 
     scenario: str = ""
+    # ---- 四层 id 骨架：book → chapter → scene → sim（快照留档，运行时不再回查源表）----
+    book_id: str = ""
+    chapter_id: str = ""
+    scene_id: str = ""
+    last_main_actor: str = ""                       # 上回合主戏角色(回合间轮换记忆)
     world: WorldState = Field(default_factory=WorldState)
     characters: dict[str, CharacterCard] = Field(default_factory=dict)
     beliefs: dict[str, list[Belief]] = Field(default_factory=dict)  # char_id -> []
@@ -167,9 +187,12 @@ class SimulationState(BaseModel):
     director: DirectorState = Field(default_factory=DirectorState)
     guard: GuardStats = Field(default_factory=GuardStats)
     action_order: list[str] = Field(default_factory=list)  # 本回合主动权顺序
+    # ---- 回合归档（回退/查看历史回合；随整份快照持久化）----
+    turn_archives: list[TurnArchive] = Field(default_factory=list)
     # ---- 思考/决策中间产物（角色思考层写入，供 SSE 与护栏临时读取，非持久化终态）----
     scratch: dict[str, Any] = Field(default_factory=dict)
     ended: bool = False
+    paused: bool = False  # 事件暂停（回合边界暂停，resume 后从下一回合继续）
 
     def next_event_id(self) -> str:
         return f"E-{len(self.events) + 1:03d}"

@@ -1,39 +1,46 @@
-import { Link } from 'react-router-dom';
-
-const BOOKS = [
-  {
-    id: 'rain',
-    title: '雨夜书房',
-    genre: '悬疑',
-    chapters: 23,
-    status: '写作中',
-    cover: '雨',
-    progress: 65,
-    lastUpdate: '2 小时前',
-  },
-  {
-    id: 'star',
-    title: '星辰邮局',
-    genre: '温情',
-    chapters: 8,
-    status: '写作中',
-    cover: '星',
-    progress: 40,
-    lastUpdate: '昨天',
-  },
-  {
-    id: 'sword',
-    title: '剑雪归藏',
-    genre: '武侠',
-    chapters: 0,
-    status: '草稿',
-    cover: '剑',
-    progress: 0,
-    lastUpdate: '3 天前',
-  },
-];
+import { useEffect, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { listBooks, fetchBookTree, type BookMeta, type BookTree } from '../api/novel';
 
 export function HomePage() {
+  const navigate = useNavigate();
+  const [books, setBooks] = useState<BookMeta[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [tree, setTree] = useState<BookTree | null>(null); // 选中的书籍树（章→场景）
+  const [selectedChapter, setSelectedChapter] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const bs = await listBooks();
+        if (!cancelled) setBooks(bs);
+      } catch (e) {
+        console.warn('[书架] 拉取书籍失败：', e);
+        setBooks([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const openBook = async (bookId: string) => {
+    try {
+      const t = await fetchBookTree(bookId);
+      setTree(t);
+      setSelectedChapter(t.chapters[0]?.id ?? null);
+    } catch (e) {
+      console.warn('[书架] 拉取书籍树失败：', e);
+    }
+  };
+
+  const enterScene = (bookId: string, chapterId: string, sceneId: string) => {
+    navigate(`/director/${sceneId}`, { state: { book_id: bookId, chapter_id: chapterId, scene_id: sceneId } });
+  };
+
   return (
     <div className="app-shell home-shell">
       <div className="home-container">
@@ -61,34 +68,73 @@ export function HomePage() {
             </button>
           </div>
 
-          <div className="book-grid">
-            {BOOKS.map((book) => (
-              <Link to="/dashboard" className="book-card" key={book.id}>
-                <div className="book-cover">
-                  <span className="book-cover-init">{book.cover}</span>
-                </div>
-                <div className="book-card-body">
-                  <div className="book-card-title">{book.title}</div>
-                  <div className="book-card-meta">
-                    <span className="book-card-genre">{book.genre}</span>
-                    <span className="book-card-chapters">{book.chapters} 章</span>
+          {loading ? (
+            <div className="home-hint">加载书架中…</div>
+          ) : books.length === 0 ? (
+            <div className="home-hint">书架为空（后端未 seed？运行 uv run python -m app.db.seed）</div>
+          ) : (
+            <div className="book-grid">
+              {books.map((book) => (
+                <div className="book-card" key={book.id} role="button" tabIndex={0} onClick={() => openBook(book.id)}>
+                  <div className="book-cover">
+                    <span className="book-cover-init">{book.cover_init || '墨'}</span>
                   </div>
-                  {book.progress > 0 && (
-                    <div className="book-progress">
-                      <div className="book-progress-bar">
-                        <div className="book-progress-fill" style={{ width: `${book.progress}%` }}></div>
-                      </div>
-                      <span className="book-progress-text">{book.progress}%</span>
+                  <div className="book-card-body">
+                    <div className="book-card-title">{book.title}</div>
+                    <div className="book-card-meta">
+                      <span className="book-card-genre">{book.genre}</span>
+                      <span className="book-card-chapters">{book.chapter_count} 章</span>
                     </div>
-                  )}
-                  <div className="book-card-status">
-                    <span className={`status-dot ${book.status === '写作中' ? 'active' : ''}`}></span>
-                    {book.status} · {book.lastUpdate}
+                    <div className="book-card-status">
+                      <span className={`status-dot ${book.status === 'writing' ? 'active' : ''}`}></span>
+                      {book.status === 'writing' ? '写作中' : book.status}
+                    </div>
                   </div>
                 </div>
-              </Link>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
+
+          {tree && (
+            <div className="book-tree-panel">
+              <div className="book-tree-header">
+                <span className="book-tree-title">{tree.title} · 场景选择</span>
+                <button className="book-tree-close" onClick={() => setTree(null)}>
+                  ✕
+                </button>
+              </div>
+              <div className="chapter-tabs">
+                {tree.chapters.map((ch) => (
+                  <button
+                    key={ch.id}
+                    className={`chapter-tab ${selectedChapter === ch.id ? 'active' : ''}`}
+                    onClick={() => setSelectedChapter(ch.id)}
+                  >
+                    {ch.title || `第 ${ch.order_no} 章`}
+                  </button>
+                ))}
+              </div>
+              <div className="scene-list">
+                {tree.chapters
+                  .find((ch) => ch.id === selectedChapter)
+                  ?.scenes.map((sc) => (
+                    <div className="scene-card" key={sc.id}>
+                      <div className="scene-card-title">{sc.title}</div>
+                      <div className="scene-card-meta">
+                        <span>角色 {sc.characters?.length ?? 0} 位</span>
+                        <span className="scene-card-scenario">{sc.scenario_def}</span>
+                      </div>
+                      <button
+                        className="scene-enter-btn"
+                        onClick={() => enterScene(tree.id, sc.chapter_id, sc.id)}
+                      >
+                        进入导演台 ▶
+                      </button>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          )}
 
           {/* 快速入口 */}
           <div className="home-section-header" style={{ marginTop: 32 }}>

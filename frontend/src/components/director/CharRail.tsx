@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { SimUIState } from '../../hooks/useDirectorSim';
 import { CHANNEL_CLS, CHANNEL_TAG, type Belief } from '../../types/types';
 import { CHARS, type CharSpec } from './characters';
@@ -15,6 +16,7 @@ function BeliefItem({ b }: { b: Belief }) {
 
 function CharCard({ spec, beliefs, ov }: { spec: CharSpec; beliefs: Belief[]; ov?: SimUIState['overrides'][string] }) {
   const moodColor = spec.moodColor;
+  const [thoughtOpen, setThoughtOpen] = useState(false); // 思考区折叠/展开
   return (
     <div className="char-card" data-char-id={spec.id}>
       <div className="char-card-head">
@@ -54,10 +56,21 @@ function CharCard({ spec, beliefs, ov }: { spec: CharSpec; beliefs: Belief[]; ov
           ))}
         </div>
       </div>
+      {ov?.perceiving && ov?.thought == null && (
+        <div className="char-thought perceiving">
+          <span className="thought-arrow">·感知</span>
+          正在感知现场…
+        </div>
+      )}
       {ov?.thought != null && (
-        <div className="char-thought">
+        <div
+          className={`char-thought ${thoughtOpen ? 'open' : ''}`}
+          onClick={() => setThoughtOpen(!thoughtOpen)}
+          title={thoughtOpen ? '收起思考' : '展开思考'}
+        >
           <span className="thought-arrow">·思考</span>
-          {ov.thought}
+          <span className="thought-text">{ov.thought}</span>
+          {!thoughtOpen && <span className="thought-more">展开</span>}
         </div>
       )}
       {ov?.action != null && <div className="char-action">{ov.action}</div>}

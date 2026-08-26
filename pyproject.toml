@@ -13,6 +13,10 @@ dependencies = [
     "psycopg-pool>=3.2",
     "openai>=1.5",
     "charset-normalizer>=3.5.1",
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.29",
+    "pgvector>=0.3",
+    "alembic>=1.13",
 ]
 
 # uv 虚拟项目：不打包成库，纯模块/脚本运行
@@ -25,3 +29,8 @@ dev = [
     "httpx>=0.27",
     "pytest-asyncio>=0.23",
 ]
+
+[tool.pytest.ini_options]
+# 全局单例 AsyncEngine 绑定事件循环；async 测试统一 session 级 loop，避免跨 loop 复用报错
+asyncio_default_test_loop_scope = "session"
+asyncio_default_fixture_loop_scope = "session"

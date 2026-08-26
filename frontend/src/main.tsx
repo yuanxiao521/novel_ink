@@ -8,6 +8,7 @@ import './styles/tokens.css';
 import './styles/app.css';
 import './styles/dashboard.css';
 import './styles/characters.css';
+import './styles/maestro.css';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

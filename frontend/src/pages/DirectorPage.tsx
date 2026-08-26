@@ -1,7 +1,10 @@
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useTheme } from '../theme/ThemeContext';
 import { useDirectorSim } from '../hooks/useDirectorSim';
+import { fetchBookTree } from '../api/novel';
+import type { BookTree } from '../api/novel';
+import { API_BASE } from '../types/types';
 import { CharRail } from '../components/director/CharRail';
 import { CenterStage } from '../components/director/CenterStage';
 import { DirectorPanel } from '../components/director/DirectorPanel';
@@ -14,8 +17,44 @@ function pad(n: number): string {
 
 export function DirectorPage() {
   const { moodLabel, theme, toggleTheme, cycleMood } = useTheme();
-  const { state, agreeRaise, rejectRaise } = useDirectorSim();
+  const { sceneId } = useParams();
+  const location = useLocation();
+  const nav = useNavigate();
+  // 路由 state 携带 book_id/chapter_id（从规划页/书架进入时传入）
+  const navState = (location.state ?? {}) as { book_id?: string; chapter_id?: string };
+  const { state, playing, simId, play, pause, step, viewTurn, exitView, rewindTo, agreeRaise, rejectRaise } = useDirectorSim(
+    sceneId,
+    navState.book_id,
+    navState.chapter_id,
+  );
   const [view, setView] = useState<'workbench' | 'reader'>('workbench');
+  const [tree, setTree] = useState<BookTree | null>(null);
+
+  // 顶部接真：反查书树（优先路由 state 的 book_id；没有则按 scene → chapter → book 反查）
+  useEffect(() => {
+    let cancel = false;
+    (async () => {
+      try {
+        let bid = navState.book_id;
+        if (!bid && sceneId) {
+          const sc = await fetch(`${API_BASE}/api/v1/scenes/${sceneId}`).then((r) => r.json());
+          if (sc && sc.chapter_id) {
+            const ch = await fetch(`${API_BASE}/api/v1/chapters/${sc.chapter_id}`).then((r) => r.json());
+            bid = ch && ch.book_id;
+          }
+        }
+        if (!bid) return;
+        const t = await fetchBookTree(bid);
+        if (!cancel) setTree(t);
+      } catch {
+        /* 静态兜底，保留默认标题 */
+      }
+    })();
+    return () => { cancel = true; };
+  }, [sceneId, navState.book_id]);
+
+  const curScene = tree?.chapters.flatMap((c) => c.scenes).find((s) => s.id === sceneId);
+  const bookTitle = tree?.title ?? '背叛之夜';
 
   const runDotOk = state.runOk;
   const runClass = runDotOk ? 'var(--accent-green)' : 'var(--accent-gold)';
@@ -27,14 +66,33 @@ export function DirectorPage() {
           <div className="brand-group">
             <span className="brand-dot"></span>
             <Link className="brand-title" to="/dashboard" style={{ textDecoration: 'none' }}>
-              背叛之夜
+              {bookTitle}
             </Link>
             <svg className="brand-caret" viewBox="0 0 10 10" fill="none">
               <path d="M2 3.5L5 6.5L8 3.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </div>
           <div className="scene-group">
-            <span className="scene-label">场景：书房夜谈</span>
+            {tree ? (
+              <select
+                className="scene-switch"
+                value={sceneId}
+                title="切换章节/场景"
+                onChange={(e) => nav(`/director/${e.target.value}`)}
+              >
+                {tree.chapters.map((c) => (
+                  <optgroup key={c.id} label={c.title}>
+                    {c.scenes.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.title}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            ) : (
+              <span className="scene-label">场景：{curScene?.title ?? (sceneId ? '加载中…' : '书房夜谈')}</span>
+            )}
             <span className="turn-divider"></span>
             <span className="turn-label">回合 T-{state.turn ? pad(state.turn) : '07'}</span>
           </div>
@@ -58,11 +116,11 @@ export function DirectorPage() {
 
         <div className="workbench-body">
           <CharRail state={state} />
-          <CenterStage state={state} />
-          <DirectorPanel state={state} onAgree={agreeRaise} onReject={rejectRaise} />
+          <CenterStage state={state} playing={playing} />
+          <DirectorPanel state={state} simId={simId} onAgree={agreeRaise} onReject={rejectRaise} />
         </div>
 
-        <TimelineBar state={state} />
+        <TimelineBar state={state} playing={playing} onPlay={play} onPause={pause} onStep={step} onViewTurn={viewTurn} onRewind={rewindTo} onExitView={exitView} />
       </div>
 
       {view === 'reader' && <ReaderView />}

@@ -109,8 +109,9 @@ def betrayal_night() -> dict:
         return {"actor": "chenmo", "kind": "dialogue", "text": "雨声里，两人沉默地对峙。"}
 
     def converge_fn(sim: models.SimulationState) -> str:
-        # 启发式结局判定：需要剧情积累（张力足够、回合够多）才收束，避免回合1秒走出结局。
-        if sim.world.turn < 3 or sim.director.tension < 50:
+        # 启发式结局判定：需要剧情积累（张力足够、回合够多）才收束，
+        # 避免回合1秒走出结局（对齐导演 llm_converge 的 MIN_CONVERGE_TURN 护栏）。
+        if sim.world.turn < 5 or sim.director.tension < 50:
             return ""
         liwen_found = any(b.fact_id == "F-4" and b.char_id == "liwen"
                           for b in sim.beliefs.get("liwen", []))

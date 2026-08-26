@@ -1,19 +1,18 @@
-"""Api 层 · 依赖注入：把 Repository / Service 交给 FastAPI 管理。
+"""Api 层 · 依赖注入：把 async Repo / Service 交给 FastAPI 管理。
 
-数据会话来自 `app.data.session.get_db()`（`Depends` 注入，用户明确要求）。
-```
+数据访问统一走 `app.db.repo.Repo`（SQLAlchemy 2.0 异步 ORM），
+DB 未就绪时由 Repo 内部降级内存态兜底（无需显式会话注入）。
 """
 from __future__ import annotations
 
 from fastapi import Depends
 
-from app.data.repo import Repo
-from app.data.session import get_db
+from app.db.repo import Repo
 
 
-def get_repo(db=Depends(get_db)) -> Repo:
-    """数据会话依赖注入 → 实例化 Repo。"""
-    return Repo(db)
+async def get_repo() -> Repo:
+    """实例化 async Repo（每次请求一个，内部共享引擎连接池）。"""
+    return Repo()
 
 
 def get_service(repo: Repo = Depends(get_repo)) -> "SimulationService":

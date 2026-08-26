@@ -13,17 +13,13 @@ if str(_ROOT) not in sys.path:
 
 import pytest  # noqa: E402
 
-from app.data.repo import Repo  # noqa: E402
+from app.db.repo import Repo  # noqa: E402
 from app.scenarios.betrayal_night import betrayal_night  # noqa: E402
 from app.schemas import models  # noqa: E402
 from app.services.engine.character import CharacterEngine  # noqa: E402
 from app.services.engine.director import DirectorEngine  # noqa: E402
 from app.services.engine.world import WorldEngine  # noqa: E402
 from app.services.service import SimulationService  # noqa: E402
-
-# 一个降级的 pseudo-session（无 DB）
-class _FakeSess:
-    ready = False
 
 
 def _make_sim() -> models.SimulationState:
@@ -92,17 +88,18 @@ def test_character_card_prompt_fields_backward_compatible():
 
 
 # ---------------------------------------------------------------- 思考层/决策层（Task 3）
-def test_think_decide_fallback_without_key():
+@pytest.mark.asyncio
+async def test_think_decide_fallback_without_key():
     """无 LLM key 时 think→None 无副作用；decide 回落 decide_fn，产物与直接调脚本一致，scratch 标注 fallback。"""
     sim, spec = _make_sim()
     char_eng = CharacterEngine(sim)
     # think：LLM 不可用 → None，不写 scratch['thoughts']
-    assert char_eng.think("chenmo") is None
+    assert await char_eng.think("chenmo") is None
     assert "thoughts" not in sim.scratch
     # decide：回落决定脚本，产物与 decide_fn(context) 完全一致
     ctx = char_eng.perceive_context("chenmo")
     expected = spec["decide_fn"](ctx)
-    action = char_eng.decide("chenmo", spec["decide_fn"])
+    action = await char_eng.decide("chenmo", spec["decide_fn"])
     assert action == expected
     assert "text" in action
     assert sim.scratch["decisions"]["chenmo"] == {"fallback": True}
@@ -146,7 +143,8 @@ def test_director_goal_adjust_requires_reason():
 
 
 # ---------------------------------------------------------------- 导演 LLM 调度（Task 4）
-def test_director_plan_equals_fallback_without_key():
+@pytest.mark.asyncio
+async def test_director_plan_equals_fallback_without_key():
     """无 key 时 plan() 完全等同 fallback_plan()：hint/injected/举手 与确定性一致。"""
     sim, spec = _make_sim()
     sim.director.tension = 60.0
@@ -155,34 +153,39 @@ def test_director_plan_equals_fallback_without_key():
 
     sim2, _ = _make_sim()
     sim2.director.tension = 60.0
-    DirectorEngine(sim2, spec["plan_cfg"]).plan()  # 无 key → 内部回退 fallback_plan
+    await DirectorEngine(sim2, spec["plan_cfg"]).plan()  # 无 key → 内部回退 fallback_plan
     b = (sim2.director.hint.model_dump(), list(sim2.director.injected_events), sim2.director.raise_request.pending)
     assert a == b
 
 
-def test_director_llm_plan_mocked(monkeypatch):
+@pytest.mark.asyncio
+async def test_director_llm_plan_mocked(monkeypatch):
     """mock call_cheap 返回合法 JSON 时 llm_plan() 产出软引导，并把 GoalAdjust.reason 写回。"""
     from app.services.engine.world import WorldEngine
-    from app.services import llm as llm_mod
 
     sim, spec = _make_sim()
     sim.world.turn = 1
     sim.director.tension = 60.0
     director = DirectorEngine(sim, spec["plan_cfg"])
 
-    def fake_call_cheap(prompt, json_schema=None):
-        assert json_schema is not None  # llm_plan 走结构化输出
-        return {
-            "info_exposures": [{"fact_id": "F-4", "target_char_id": "liwen", "channel": "inferred"}],
-            "goal_adjusts": [{"char_id": "chenmo", "goal_id": "truth", "delta": 0.15,
-                              "reason": "旧文件与划痕相互印证、疑云加深"}],
-            "injected_event": "窗外雨声骤密，一道闪电照亮书页",
-            "stage_prompt": "舞台提示：让陈默先接话，追问文件的来历",
-            "raise_request": {"reason_kind": "", "reason": ""},
-        }
+    class _MockLLM:
+        available = True
 
-    monkeypatch.setattr(llm_mod.client, "call_cheap", fake_call_cheap)
-    assert director.llm_plan() is True
+        async def call_cheap(self, prompt, json_schema=None):
+            assert json_schema is not None  # llm_plan 走结构化输出
+            return {
+                "info_exposures": [{"fact_id": "F-4", "target_char_id": "liwen", "channel": "inferred"}],
+                "goal_adjusts": [{"char_id": "chenmo", "goal_id": "truth", "delta": 0.15,
+                                  "reason": "旧文件与划痕相互印证、疑云加深"}],
+                "injected_event": "窗外雨声骤密，一道闪电照亮书页",
+                "stage_prompt": "舞台提示：让陈默先接话，追问文件的来历",
+                "raise_request": {"reason_kind": "", "reason": ""},
+            }
+
+    import app.services.engine.director as director_mod
+
+    monkeypatch.setattr(director_mod, "llm_client", _MockLLM())
+    assert await director.llm_plan() is True
 
     h = sim.director.hint
     assert h.info_exposures and h.info_exposures[0].fact_id == "F-4"
@@ -198,17 +201,25 @@ def test_director_llm_plan_mocked(monkeypatch):
     assert g.last_adjust_reason == "旧文件与划痕相互印证、疑云加深"
 
 
-def test_director_llm_plan_none_falls_back(monkeypatch):
+@pytest.mark.asyncio
+async def test_director_llm_plan_none_falls_back(monkeypatch):
     """call_cheap 返回 None（LLM 不可用/调用失败）→ llm_plan() False，plan() 回退确定性。"""
-    from app.services import llm as llm_mod
+    import app.services.engine.director as director_mod
 
     sim, spec = _make_sim()
     sim.director.tension = 60.0
     sim.world.turn = 0
-    monkeypatch.setattr(llm_mod.client, "call_cheap", lambda prompt, json_schema=None: None)
+
+    class _NoneLLM:
+        available = True
+
+        async def call_cheap(self, prompt, json_schema=None):
+            return None
+
+    monkeypatch.setattr(director_mod, "llm_client", _NoneLLM())
     director = DirectorEngine(sim, spec["plan_cfg"])
-    assert director.llm_plan() is False
-    director.plan()
+    assert await director.llm_plan() is False
+    await director.plan()
     assert len(sim.director.hint.info_exposures) >= 1  # 已走到确定性曝光
 
 
@@ -236,26 +247,37 @@ def test_guard_fuse_and_no_fact_pollution():
 
 
 # ---------------------------------------------------------------- 服务层闭环（内存态）
-def test_service_start_and_step_in_memory(monkeypatch):
-    from app.data.session import get_db as _  # noqa
-
-    repo = Repo(_FakeSess())
+@pytest.mark.asyncio
+async def test_service_start_and_step_in_memory():
+    """无 DB（use_db=False 强制内存态）时 start/step 闭环可跑、回合递增。"""
+    repo = Repo(use_db=False)
     svc = SimulationService(repo)
-    sid = svc.start("betrayal_night")
-    sim = svc.step(sid, n=1)
+    # 内存态下无 scenes 表 → 直接构造 sim 并落库测试 step
+    spec = betrayal_night()
+    sim = models.SimulationState(
+        scenario="betrayal_night",
+        world=models.WorldState(scene_id="x", title="t"),
+    )
+    sim.characters = spec["characters"]
+    sim.world.facts = list(spec["initial_facts"])
+    sim.director.ending_options = list(spec["plan_cfg"].ending_options)
+    sim.action_order = [c for c in sim.characters]
+    await repo.save("sim-mem-test", sim)
+
+    sim = await svc.step("sim-mem-test", n=1)
     assert sim.world.turn == 1
     assert len(sim.events) >= 1
-    # 再次 step 不报错、回合递增
-    sim2 = svc.step(sid, n=1)
+    sim2 = await svc.step("sim-mem-test", n=1)
     assert sim2.world.turn == 2
 
 
 # ---------------------------------------------------------------- API 依赖注入连通
-def test_api_get_service_via_depends():
-    from app.api.deps import get_repo, get_service
+def test_get_service_injects_repo():
+    """依赖注入链可实例化（repo 默认参数、use_db 由 settings 决定）。"""
+    from app.api.deps import get_service
+    from app.db.repo import Repo
 
-    # 依赖注入链可实例化（DB 降级内存态）
-    repo = get_repo(db=_FakeSess())
+    repo = Repo(use_db=False)
     svc = get_service(repo=repo)
     assert svc.repo is repo
 

@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 
 const NAV_ITEMS = [
   { key: 'dashboard', to: '/dashboard', icon: '◉', text: '概览' },
+  { key: 'maestro', to: '/maestro', icon: '✎', text: '主笔创作' },
   { key: 'settings', icon: '☷', text: '设定' },
   { key: 'characters', to: '/characters', icon: '☺', text: '人物' },
   { key: 'outline', icon: '☷', text: '大纲' },
@@ -11,7 +12,7 @@ const NAV_ITEMS = [
   { key: 'checkup', icon: '♥', text: '体检' },
 ];
 
-export function Sidebar({ active }: { active: 'dashboard' | 'characters' }) {
+export function Sidebar({ active }: { active: 'dashboard' | 'maestro' | 'characters' | 'planning' }) {
   return (
     <aside className="sidebar">
       <div className="sidebar-brand">

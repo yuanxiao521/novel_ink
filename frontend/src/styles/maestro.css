@@ -1,0 +1,963 @@
+/* ==========================================================================
+   Maestro —— 主笔共创工作台样式（React 版，作用域化）
+   源自 webapp/css/maestro.css；所有通用类统一挂 .maestro-workbench 前缀，
+   避免与 app.css 的 .panel-title / .chat-bubble / .genre-tag / .theme-toggle 冲突。
+   主题：--maestro-* 挂 [data-theme]，墨(深)/纸(浅)两套，与 tokens.css 一致。
+   ========================================================================== */
+
+/* 墨模式（深色，与 tokens.css 墨色系协调） */
+[data-theme="ink"] {
+  --maestro-bg: #0d1117;
+  --maestro-surface: #151b23;
+  --maestro-surface-2: #1c2430;
+  --maestro-surface-3: #232d3b;
+  --maestro-border: rgba(212, 168, 83, 0.12);
+  --maestro-border-strong: rgba(212, 168, 83, 0.22);
+  --maestro-text: #f4f1ea;
+  --maestro-text-2: #b8b2a6;
+  --maestro-text-3: #8a8276;
+  --maestro-gold: #d4a853;
+  --maestro-gold-soft: rgba(212, 168, 83, 0.12);
+  --maestro-gold-glow: rgba(212, 168, 83, 0.25);
+  --maestro-cyan: #7db9a8;
+  --maestro-cyan-soft: rgba(125, 185, 168, 0.12);
+  --maestro-red: #c96b6b;
+  --maestro-green: #7aa87d;
+  --maestro-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  --maestro-canvas-grid: rgba(212, 168, 83, 0.08);
+  --maestro-canvas-dot-stroke: rgba(13, 17, 23, 0.9);
+}
+
+/* 纸模式（浅色，与 tokens.css 宣纸色系协调） */
+[data-theme="paper"] {
+  --maestro-bg: #f7f1e2;
+  --maestro-surface: #fdfaf0;
+  --maestro-surface-2: #efe7d2;
+  --maestro-surface-3: #e6dcc0;
+  --maestro-border: rgba(199, 125, 35, 0.14);
+  --maestro-border-strong: rgba(199, 125, 35, 0.28);
+  --maestro-text: #2b2925;
+  --maestro-text-2: #6b6458;
+  --maestro-text-3: #a89e8a;
+  --maestro-gold: #c77d23;
+  --maestro-gold-soft: rgba(199, 125, 35, 0.10);
+  --maestro-gold-glow: rgba(199, 125, 35, 0.20);
+  --maestro-cyan: #2e7d8f;
+  --maestro-cyan-soft: rgba(46, 125, 143, 0.10);
+  --maestro-red: #b5452e;
+  --maestro-green: #3d8b5e;
+  --maestro-shadow: 0 10px 30px rgba(43, 41, 37, 0.10);
+  --maestro-canvas-grid: rgba(199, 125, 35, 0.10);
+  --maestro-canvas-dot-stroke: rgba(43, 41, 37, 0.85);
+}
+
+.maestro-workbench {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  background: var(--maestro-bg);
+  font-family: var(--font-sans);
+  color: var(--maestro-text);
+  overflow: hidden;
+}
+
+/* 顶栏 */
+.maestro-workbench .maestro-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  height: 60px;
+  background: linear-gradient(180deg, var(--maestro-surface) 0%, var(--maestro-bg) 100%);
+  border-bottom: 1px solid var(--maestro-border);
+  flex-shrink: 0;
+  gap: 20px;
+}
+
+.maestro-workbench .topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 200px;
+}
+
+.maestro-workbench .brand-seal {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--maestro-gold);
+  color: var(--maestro-gold);
+  font-family: var(--font-serif);
+  font-weight: 700;
+  font-size: 18px;
+  border-radius: 8px;
+  background: var(--maestro-gold-soft);
+}
+
+.maestro-workbench .book-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.maestro-workbench .book-title {
+  font-family: var(--font-serif);
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--maestro-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 180px;
+}
+
+.maestro-workbench .genre-tags {
+  display: flex;
+  gap: 6px;
+}
+
+.maestro-workbench .genre-tag {
+  font-size: 11px;
+  color: var(--maestro-text-2);
+  background: var(--maestro-surface-2);
+  border: 1px solid var(--maestro-border);
+  padding: 1px 7px;
+  border-radius: 12px;
+}
+
+.maestro-workbench .topbar-center {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  max-width: 720px;
+}
+
+.maestro-workbench .direction-input-group {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  background: var(--maestro-surface);
+  border: 1px solid var(--maestro-border-strong);
+  border-radius: var(--maestro-radius);
+  padding: 0 4px 0 14px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.maestro-workbench .direction-input-group:focus-within {
+  border-color: var(--maestro-gold);
+  box-shadow: 0 0 0 3px var(--maestro-gold-glow);
+}
+
+.maestro-workbench .direction-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--maestro-text);
+  font-size: 14px;
+  height: 38px;
+  outline: none;
+  font-family: var(--font-sans);
+}
+
+.maestro-workbench .direction-input::placeholder {
+  color: var(--maestro-text-3);
+}
+
+.maestro-workbench .direction-expand {
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: var(--maestro-text-2);
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.15s;
+}
+
+.maestro-workbench .direction-expand:hover {
+  background: var(--maestro-surface-2);
+}
+
+.maestro-workbench .btn-ideate {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 38px;
+  padding: 0 18px;
+  border: none;
+  border-radius: var(--maestro-radius);
+  background: linear-gradient(135deg, var(--maestro-gold) 0%, var(--maestro-gold) 100%);
+  color: var(--maestro-on-gold, #1a1205);
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: transform 0.1s, box-shadow 0.2s;
+  font-family: var(--font-sans);
+}
+
+.maestro-workbench .btn-ideate:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px var(--maestro-gold-glow);
+}
+
+.maestro-workbench .btn-ideate:active {
+  transform: translateY(0);
+}
+
+.maestro-workbench .btn-ideate:disabled {
+  opacity: 0.6;
+  cursor: wait;
+  transform: none;
+}
+
+.maestro-workbench .btn-ideate .btn-ico {
+  font-size: 13px;
+}
+
+.maestro-workbench .topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 170px;
+  justify-content: flex-end;
+}
+
+.maestro-workbench .agent-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 20px;
+  background: var(--maestro-surface);
+  border: 1px solid var(--maestro-border);
+  font-size: 13px;
+  color: var(--maestro-text-2);
+}
+
+.maestro-workbench .agent-status .status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--maestro-green);
+}
+
+.maestro-workbench .agent-status[data-state="thinking"] .status-dot {
+  background: var(--maestro-gold);
+  animation: pulse-dot 1.4s ease-in-out infinite;
+}
+
+.maestro-workbench .agent-status[data-state="tool"] .status-dot {
+  background: var(--maestro-cyan);
+  animation: pulse-dot 0.8s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(1.35); }
+}
+
+/* 方向展开面板 */
+.maestro-workbench .direction-panel {
+  background: var(--maestro-surface);
+  border-bottom: 1px solid var(--maestro-border);
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.3s ease, padding 0.3s ease;
+  flex-shrink: 0;
+}
+
+.maestro-workbench .direction-panel.open {
+  max-height: 220px;
+  padding: 16px 20px;
+}
+
+.maestro-workbench .direction-fields {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
+.maestro-workbench .field-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--maestro-text-2);
+}
+
+.maestro-workbench .field-row input {
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--maestro-border);
+  border-radius: 8px;
+  background: var(--maestro-surface-2);
+  color: var(--maestro-text);
+  font-size: 13px;
+  outline: none;
+  font-family: var(--font-sans);
+}
+
+.maestro-workbench .field-row input:focus {
+  border-color: var(--maestro-gold);
+}
+
+/* 三栏主体 */
+.maestro-workbench .maestro-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  gap: 1px;
+  background: var(--maestro-border);
+  min-height: 0;
+}
+
+.maestro-workbench .panel {
+  background: var(--maestro-bg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.maestro-workbench .panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 48px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--maestro-border);
+  background: var(--maestro-surface);
+  flex-shrink: 0;
+}
+
+.maestro-workbench .panel-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-serif);
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--maestro-text);
+}
+
+.maestro-workbench .title-ico {
+  color: var(--maestro-gold);
+  font-size: 13px;
+}
+
+.maestro-workbench .panel-count {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  color: var(--maestro-text-3);
+  background: var(--maestro-surface-2);
+  padding: 1px 7px;
+  border-radius: 10px;
+  margin-left: 4px;
+}
+
+.maestro-workbench .btn-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: 1px solid var(--maestro-border-strong);
+  background: var(--maestro-surface);
+  color: var(--maestro-gold);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+
+.maestro-workbench .btn-icon:hover {
+  background: var(--maestro-surface-2);
+}
+
+.maestro-workbench .btn-text {
+  background: transparent;
+  border: none;
+  color: var(--maestro-text-2);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+.maestro-workbench .btn-text:hover {
+  color: var(--maestro-gold);
+  background: var(--maestro-gold-soft);
+}
+
+.maestro-workbench .outline-actions {
+  display: flex;
+  gap: 4px;
+}
+
+/* 左栏：灵感池 */
+.maestro-workbench .inspiration-panel {
+  width: 280px;
+  min-width: 260px;
+  max-width: 320px;
+}
+
+.maestro-workbench .inspiration-list,
+.maestro-workbench .adopted-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.maestro-workbench .adopted-list {
+  flex: 0 0 auto;
+  max-height: 35%;
+  border-top: 1px solid var(--maestro-border);
+}
+
+.maestro-workbench .adopted-header {
+  padding: 10px 16px 0;
+  font-size: 11px;
+  color: var(--maestro-text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.maestro-workbench .inspiration-card {
+  background: var(--maestro-surface);
+  border: 1px solid var(--maestro-border);
+  border-radius: var(--maestro-radius);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
+  cursor: default;
+}
+
+.maestro-workbench .inspiration-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--maestro-border-strong);
+  box-shadow: var(--maestro-shadow);
+}
+
+.maestro-workbench .inspiration-card.adopted {
+  border-color: var(--maestro-gold);
+  background: linear-gradient(135deg, var(--maestro-gold-soft) 0%, var(--maestro-surface) 100%);
+  opacity: 0.85;
+}
+
+.maestro-workbench .card-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.maestro-workbench .card-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.maestro-workbench .card-icon.plot { background: var(--maestro-gold-soft); }
+.maestro-workbench .card-icon.character { background: var(--maestro-cyan-soft); }
+.maestro-workbench .card-icon.world { background: color-mix(in srgb, #a06ac4 14%, transparent); }
+
+.maestro-workbench .card-title-wrap {
+  flex: 1;
+}
+
+.maestro-workbench .card-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--maestro-text);
+  margin: 0 0 2px;
+}
+
+.maestro-workbench .card-desc {
+  font-size: 12px;
+  color: var(--maestro-text-2);
+  line-height: 1.45;
+  margin: 0;
+}
+
+.maestro-workbench .card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 2px;
+}
+
+.maestro-workbench .type-tag {
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 10px;
+  background: var(--maestro-surface-2);
+  color: var(--maestro-text-3);
+  border: 1px solid var(--maestro-border);
+}
+
+.maestro-workbench .btn-adopt {
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--maestro-border-strong);
+  background: transparent;
+  color: var(--maestro-text-2);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.maestro-workbench .btn-adopt:hover {
+  border-color: var(--maestro-gold);
+  color: var(--maestro-gold);
+  background: var(--maestro-gold-soft);
+}
+
+.maestro-workbench .inspiration-card.adopted .btn-adopt {
+  border-color: var(--maestro-gold);
+  color: var(--maestro-gold);
+}
+
+/* 中栏：骨架树 */
+.maestro-workbench .outline-panel {
+  flex: 1;
+  min-width: 360px;
+}
+
+.maestro-workbench .outline-tree {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 16px;
+}
+
+.maestro-workbench .outline-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  margin-bottom: 4px;
+  border-left: 3px solid transparent;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.maestro-workbench .outline-row:hover {
+  background: var(--maestro-surface);
+}
+
+.maestro-workbench .outline-row.active {
+  background: var(--maestro-gold-soft);
+  border-left-color: var(--maestro-gold);
+}
+
+.maestro-workbench .outline-row.chapter {
+  background: var(--maestro-surface);
+  font-weight: 500;
+}
+
+.maestro-workbench .outline-row.scene {
+  margin-left: 28px;
+  padding: 8px 14px;
+  background: var(--maestro-surface-2);
+}
+
+.maestro-workbench .row-toggle {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  color: var(--maestro-text-3);
+  font-size: 11px;
+  cursor: pointer;
+  border-radius: 4px;
+  border: none;
+  background: transparent;
+}
+
+.maestro-workbench .row-toggle:hover {
+  background: var(--maestro-surface-2);
+  color: var(--maestro-text-2);
+}
+
+.maestro-workbench .row-number {
+  font-family: var(--font-serif);
+  color: var(--maestro-gold);
+  font-size: 13px;
+  min-width: 34px;
+  flex-shrink: 0;
+}
+
+.maestro-workbench .row-title {
+  flex: 1;
+  font-size: 13px;
+  color: var(--maestro-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.maestro-workbench .row-badge {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  flex-shrink: 0;
+}
+
+.maestro-workbench .row-badge.action { background: color-mix(in srgb, var(--maestro-red) 16%, transparent); color: var(--maestro-red); }
+.maestro-workbench .row-badge.tension { background: color-mix(in srgb, var(--maestro-gold) 18%, transparent); color: var(--maestro-gold); }
+.maestro-workbench .row-badge.reveal { background: color-mix(in srgb, var(--maestro-cyan) 18%, transparent); color: var(--maestro-cyan); }
+
+.maestro-workbench .row-wordcount {
+  font-size: 11px;
+  color: var(--maestro-text-3);
+  min-width: 56px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.maestro-workbench .scene-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  overflow: hidden;
+}
+
+.maestro-workbench .scene-stage {
+  font-size: 11px;
+  color: var(--maestro-text-3);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.maestro-workbench .scene-avatars {
+  display: flex;
+  flex-shrink: 0;
+}
+
+.maestro-workbench .scene-avatars .avatar-dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--maestro-bg);
+  margin-left: -6px;
+  background: var(--maestro-gold-soft);
+  color: var(--maestro-gold);
+  font-size: 9px;
+  display: grid;
+  place-items: center;
+}
+
+.maestro-workbench .scene-avatars .avatar-dot:first-child {
+  margin-left: 0;
+}
+
+.maestro-workbench .scene-goal {
+  font-size: 11px;
+  color: var(--maestro-text-2);
+  max-width: 220px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.maestro-workbench .outline-children {
+  overflow: hidden;
+  transition: max-height 0.25s ease;
+}
+
+.maestro-workbench .outline-children.collapsed {
+  max-height: 0;
+}
+
+/* 右栏：对话 */
+.maestro-workbench .chat-panel {
+  width: 360px;
+  min-width: 320px;
+  max-width: 420px;
+}
+
+.maestro-workbench .toggle-skeleton {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--maestro-text-2);
+  cursor: pointer;
+}
+
+.maestro-workbench .toggle-skeleton input {
+  accent-color: var(--maestro-gold);
+}
+
+.maestro-workbench .chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.maestro-workbench .chat-bubble {
+  max-width: 92%;
+  padding: 12px 14px;
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.55;
+  position: relative;
+}
+
+.maestro-workbench .chat-bubble.user {
+  align-self: flex-end;
+  background: var(--maestro-surface-2);
+  border: 1px solid var(--maestro-border-strong);
+  color: var(--maestro-text);
+  border-bottom-right-radius: 4px;
+}
+
+.maestro-workbench .chat-bubble.agent {
+  align-self: flex-start;
+  background: var(--maestro-surface);
+  border: 1px solid var(--maestro-border);
+  color: var(--maestro-text-2);
+  border-bottom-left-radius: 4px;
+}
+
+.maestro-workbench .bubble-sender {
+  font-size: 11px;
+  color: var(--maestro-gold);
+  margin-bottom: 6px;
+  font-weight: 500;
+}
+
+.maestro-workbench .chat-bubble.user .bubble-sender {
+  color: var(--maestro-cyan);
+  text-align: right;
+}
+
+.maestro-workbench .bubble-text {
+  margin: 0;
+}
+
+.maestro-workbench .bubble-text .cursor {
+  display: inline-block;
+  width: 2px;
+  height: 14px;
+  background: var(--maestro-gold);
+  animation: blink 1s step-end infinite;
+  vertical-align: middle;
+  margin-left: 2px;
+}
+
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
+.maestro-workbench .tool-call {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: var(--maestro-surface-2);
+  border: 1px solid var(--maestro-border);
+  font-size: 11px;
+  color: var(--maestro-cyan);
+}
+
+.maestro-workbench .mini-outline {
+  margin-top: 10px;
+  padding: 10px;
+  background: var(--maestro-surface-2);
+  border-radius: 8px;
+  border: 1px solid var(--maestro-border);
+}
+
+.maestro-workbench .mini-outline-title {
+  font-size: 11px;
+  color: var(--maestro-gold);
+  margin-bottom: 8px;
+}
+
+.maestro-workbench .mini-chapter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  font-size: 12px;
+  color: var(--maestro-text-2);
+  border-bottom: 1px solid var(--maestro-border);
+}
+
+.maestro-workbench .mini-chapter:last-child {
+  border-bottom: none;
+}
+
+.maestro-workbench .mini-chapter .num {
+  color: var(--maestro-gold);
+  font-family: var(--font-serif);
+  min-width: 28px;
+}
+
+.maestro-workbench .chat-input-area {
+  padding: 12px 16px 16px;
+  border-top: 1px solid var(--maestro-border);
+  background: var(--maestro-surface);
+}
+
+.maestro-workbench .chat-input-wrap {
+  display: flex;
+  gap: 8px;
+}
+
+.maestro-workbench .chat-input {
+  flex: 1;
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--maestro-border);
+  border-radius: 8px;
+  background: var(--maestro-bg);
+  color: var(--maestro-text);
+  font-size: 13px;
+  outline: none;
+  font-family: var(--font-sans);
+}
+
+.maestro-workbench .chat-input:focus {
+  border-color: var(--maestro-gold);
+}
+
+.maestro-workbench .btn-send {
+  height: 38px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 8px;
+  background: var(--maestro-gold);
+  color: var(--maestro-on-gold, #1a1205);
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.maestro-workbench .btn-send:hover {
+  filter: brightness(1.08);
+}
+
+/* 底部张力曲线 */
+.maestro-workbench .tension-drawer {
+  background: var(--maestro-surface);
+  border-top: 1px solid var(--maestro-border);
+  flex-shrink: 0;
+}
+
+.maestro-workbench .drawer-handle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 38px;
+  padding: 0 16px;
+  cursor: pointer;
+  background: var(--maestro-surface);
+}
+
+.maestro-workbench .handle-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-serif);
+  font-size: 13px;
+  color: var(--maestro-text-2);
+}
+
+.maestro-workbench .btn-icon-sm {
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  color: var(--maestro-text-3);
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.maestro-workbench .btn-icon-sm:hover {
+  background: var(--maestro-surface-2);
+  color: var(--maestro-text);
+}
+
+.maestro-workbench .drawer-body {
+  height: 120px;
+  padding: 12px 20px;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  overflow: hidden;
+  transition: height 0.25s ease, padding 0.25s ease;
+}
+
+.maestro-workbench .tension-drawer.collapsed .drawer-body {
+  height: 0;
+  padding: 0 20px;
+}
+
+.maestro-workbench .tension-drawer.collapsed .btn-icon-sm {
+  transform: rotate(180deg);
+}
+
+.maestro-workbench .tension-canvas-wrap {
+  flex: 1;
+  height: 90px;
+}
+
+.maestro-workbench .tension-canvas-wrap canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.maestro-workbench .tension-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--maestro-text-2);
+  min-width: 90px;
+}
+
+.maestro-workbench .legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.maestro-workbench .legend-item .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.maestro-workbench .legend-item .dot.planted { background: var(--maestro-cyan); }
+.maestro-workbench .legend-item .dot.resolved { background: var(--maestro-gold); }
+
+.maestro-workbench .legend-item .line {
+  width: 14px;
+  height: 2px;
+  background: var(--maestro-red);
+  border-radius: 1px;
+}
