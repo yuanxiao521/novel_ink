@@ -235,6 +235,8 @@ class Repo:
                 "tone": r.tone, "tension_curve": r.tension_curve, "word_target": r.word_target,
             }
 
+        if not self.use_db:
+            return self._mem.get(chapter_id)
         return await self._query_or_mem(_q, None)
 
     async def save_chapter(self, data: dict) -> None:

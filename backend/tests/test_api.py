@@ -88,3 +88,26 @@ def test_sim_stream_sse(client):
     assert "event: director" in text
     assert "event: prose" in text
     assert "event: done" in text
+
+
+def test_chapter_detail_lookup(client):
+    """导演台反查链路：GET /chapters/{id} 应返回章信息（含 book_id 供反查书树）。
+
+    回归 bug：DirectorPage 从 scene → chapter 反查 book 时调用该端点，
+    但后端此前未暴露 → 无 book_id 上下文进入导演台时书标题/树缺失。
+    """
+    # 建书 → 建章
+    r = client.post("/api/v1/books", json={"title": "反查书", "genre": "玄幻"})
+    assert r.status_code == 201, r.text
+    bid = r.json()["id"]
+    r = client.post(f"/api/v1/books/{bid}/chapters", json={"title": "第一章", "order_no": 1})
+    assert r.status_code == 201, r.text
+    cid = r.json()["id"]
+
+    # 核心断言：章节详情端点存在并返回 book_id
+    r = client.get(f"/api/v1/chapters/{cid}")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["id"] == cid
+    assert body["book_id"] == bid
+    assert body["title"] == "第一章"

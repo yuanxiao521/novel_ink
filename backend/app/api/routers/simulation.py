@@ -130,6 +130,15 @@ async def book_tree(book_id: str, svc: SimulationService = Depends(get_service))
     return tree
 
 
+@router.get("/chapters/{chapter_id}")
+async def chapter_detail(chapter_id: str, svc: SimulationService = Depends(get_service)):
+    """章节详情（含 book_id，供导演台 scene→chapter→book 反查书树）。"""
+    ch = await svc.get_chapter(chapter_id)
+    if ch is None:
+        raise HTTPException(status_code=404, detail="未找到章节")
+    return ch
+
+
 @router.get("/chapters/{chapter_id}/scenes")
 async def list_scenes(chapter_id: str, svc: SimulationService = Depends(get_service)):
     return await svc.list_scenes(chapter_id)

@@ -63,6 +63,10 @@ class SimulationService:
     async def list_scenes(self, chapter_id: str) -> list[dict]:
         return await self.repo.list_scenes_by_chapter(chapter_id)
 
+    async def get_chapter(self, chapter_id: str) -> dict | None:
+        """章节详情（含 book_id，供导演台 scene→chapter→book 反查书树）。"""
+        return await self.repo.get_chapter(chapter_id)
+
     async def get_scene(self, scene_id: str) -> dict | None:
         return await self.repo.get_scene(scene_id)
 
