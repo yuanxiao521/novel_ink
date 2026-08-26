@@ -9,10 +9,11 @@ import asyncio
 import json
 import logging
 from typing import AsyncGenerator, Optional
+from urllib.parse import quote as _urlquote
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from app.api.deps import get_service
 from app.config import settings
@@ -130,6 +131,20 @@ async def book_tree(book_id: str, svc: SimulationService = Depends(get_service))
     return tree
 
 
+@router.get("/books/{book_id}/export")
+async def book_export(book_id: str, svc: SimulationService = Depends(get_service)):
+    """全书导出 markdown（仅含已定稿场景），浏览器直接下载 .md 文件。"""
+    md = await svc.export_book_md(book_id)
+    filename = f"{book_id}.md"
+    return Response(
+        content=md,
+        media_type="text/markdown; charset=utf-8",
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{_urlquote(filename)}",
+        },
+    )
+
+
 @router.get("/chapters/{chapter_id}")
 async def chapter_detail(chapter_id: str, svc: SimulationService = Depends(get_service)):
     """章节详情（含 book_id，供导演台 scene→chapter→book 反查书树）。"""
@@ -137,6 +152,15 @@ async def chapter_detail(chapter_id: str, svc: SimulationService = Depends(get_s
     if ch is None:
         raise HTTPException(status_code=404, detail="未找到章节")
     return ch
+
+
+@router.get("/chapters/{chapter_id}/prose")
+async def chapter_prose(chapter_id: str, svc: SimulationService = Depends(get_service)):
+    """章节定稿正文：该章全部场景 final_prose 聚合（阅读台按章渲染）。"""
+    p = await svc.get_chapter_prose(chapter_id)
+    if p is None:
+        raise HTTPException(status_code=404, detail="未找到章节")
+    return p
 
 
 @router.get("/chapters/{chapter_id}/scenes")
@@ -151,6 +175,15 @@ async def scene_detail(scene_id: str, svc: SimulationService = Depends(get_servi
         raise HTTPException(status_code=404, detail="未找到场景")
     scene["characters"] = await svc.get_scene_characters(scene_id)
     return scene
+
+
+@router.get("/scenes/{scene_id}/prose")
+async def scene_prose(scene_id: str, svc: SimulationService = Depends(get_service)):
+    """单场景定稿正文（含字数与 finalized 标记）。"""
+    p = await svc.get_scene_prose(scene_id)
+    if p is None:
+        raise HTTPException(status_code=404, detail="未找到场景")
+    return p
 
 
 # ------------------------------------------------------------------ 四层写接口（S1）
@@ -370,6 +403,12 @@ async def rewind(sim_id: str, turn: int, svc: SimulationService = Depends(get_se
     """回退到指定回合：截断事件与归档，恢复该回合力/张力（可从此重演）。"""
     sim = await svc.rewind(sim_id, turn)
     return await _flatten_state(sim, sim_id)
+
+
+@router.post("/sims/{sim_id}/finalize")
+async def finalize(sim_id: str, svc: SimulationService = Depends(get_service)):
+    """作者手动定稿：聚合该 sim 回合归档的成文 → 写入 scenes.final_prose（幂等覆盖）。"""
+    return await svc.finalize_scene_prose(sim_id)
 
 
 @router.post("/sims/{sim_id}/pause")

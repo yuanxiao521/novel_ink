@@ -1262,6 +1262,20 @@ body {
   height: 14px;
 }
 
+.reader-nav.disabled { cursor: default; opacity: 0.4; }
+
+.reader-export {
+  margin-left: 12px;
+  font-size: 12px;
+  color: var(--accent-gold, #E8B860);
+  text-decoration: none;
+  border: 1px solid var(--accent-gold, #E8B860);
+  border-radius: 8px;
+  padding: 3px 10px;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.reader-export:hover { background: var(--accent-gold, #E8B860); color: #fff; }
+
 .reader-progress {
   font-family: var(--font-mono);
   font-size: 12px;
@@ -1916,3 +1930,17 @@ body {
 .close-report-summary { font-size: 13px; color: var(--text-primary); line-height: 1.6; }
 .close-report-tags { font-size: 12px; color: var(--text-secondary); }
 .close-report-hint { font-size: 12px; color: var(--text-secondary); }
+.close-report-actions { display: flex; justify-content: flex-end; margin-top: 4px; }
+.close-report-finalize-btn {
+  border: 1px solid var(--accent-gold, #E8B860);
+  background: transparent;
+  color: var(--accent-gold, #E8B860);
+  border-radius: 8px;
+  padding: 5px 14px;
+  font-size: 12px;
+  font-family: var(--font-ui);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.close-report-finalize-btn:hover:not(:disabled) { background: var(--accent-gold, #E8B860); color: #fff; }
+.close-report-finalize-btn:disabled { opacity: 0.55; cursor: default; }

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useTheme } from '../theme/ThemeContext';
 import { useDirectorSim } from '../hooks/useDirectorSim';
-import { fetchBookTree } from '../api/novel';
+import { fetchBookTree, finalizeSim } from '../api/novel';
 import type { BookTree } from '../api/novel';
 import { API_BASE } from '../types/types';
 import { CharRail } from '../components/director/CharRail';
@@ -29,6 +29,8 @@ export function DirectorPage() {
   );
   const [view, setView] = useState<'workbench' | 'reader'>('workbench');
   const [tree, setTree] = useState<BookTree | null>(null);
+  const [finalizing, setFinalizing] = useState(false);
+  const [finalized, setFinalized] = useState<{ wordCount: number } | null>(null);
 
   // 顶部接真：反查书树（优先路由 state 的 book_id；没有则按 scene → chapter → book 反查）
   useEffect(() => {
@@ -55,6 +57,27 @@ export function DirectorPage() {
 
   const curScene = tree?.chapters.flatMap((c) => c.scenes).find((s) => s.id === sceneId);
   const bookTitle = tree?.title ?? '背叛之夜';
+  // 当前章：路由 state 优先，其次按场景在书树中反推（阅读台按章读正文）
+  const curChapterId =
+    navState.chapter_id ??
+    tree?.chapters.find((c) => c.scenes.some((s) => s.id === sceneId))?.id;
+
+  // 手动定稿：聚合本场景成文 → scenes.final_prose（幂等覆盖）
+  useEffect(() => {
+    setFinalized(null); // 换场景/换场（sim 变）后重置定稿态
+  }, [simId]);
+
+  const handleFinalize = () => {
+    if (!simId || finalizing) return;
+    setFinalizing(true);
+    finalizeSim(simId)
+      .then((r) => setFinalized({ wordCount: r.word_count }))
+      .catch((e) => {
+        console.warn('[导演台] 定稿失败：', e);
+        setFinalized(null); // 失败复位，可重试（B10 教训：成功/失败都要复位态）
+      })
+      .finally(() => setFinalizing(false));
+  };
 
   const runDotOk = state.runOk;
   const runClass = runDotOk ? 'var(--accent-green)' : 'var(--accent-gold)';
@@ -116,14 +139,25 @@ export function DirectorPage() {
 
         <div className="workbench-body">
           <CharRail state={state} />
-          <CenterStage state={state} playing={playing} />
+          <CenterStage
+            state={state}
+            playing={playing}
+            finalize={{ onFinalize: handleFinalize, finalizing, finalized }}
+          />
           <DirectorPanel state={state} simId={simId} onAgree={agreeRaise} onReject={rejectRaise} />
         </div>
 
         <TimelineBar state={state} playing={playing} onPlay={play} onPause={pause} onStep={step} onViewTurn={viewTurn} onRewind={rewindTo} onExitView={exitView} />
       </div>
 
-      {view === 'reader' && <ReaderView />}
+      {view === 'reader' && (
+        <ReaderView
+          bookTitle={bookTitle}
+          bookId={tree?.id}
+          chapterId={curChapterId}
+          chapters={(tree?.chapters ?? []).map((c) => ({ id: c.id, title: c.title, order_no: c.order_no }))}
+        />
+      )}
 
       <div className="view-switcher">
         <button className={view === 'workbench' ? 'active' : ''} onClick={() => setView('workbench')}>

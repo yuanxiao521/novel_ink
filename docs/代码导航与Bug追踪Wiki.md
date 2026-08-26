@@ -9,6 +9,8 @@
 
 | 版本 | 日期 | 变更摘要 | 作者 |
 |---|---|---|---|
+| **v1.2** | 2026-08-26 | ★正文落库闭环（P0）：`scenes.final_prose`（迁移 0004）+ 手动定稿 `POST /sims/{id}/finalize` + 场景/章正文查询 + 全书 md 导出；阅读台 ReaderView 接真（按章渲染+翻章+导出）；repo 内存态列表查询补齐；测试 test_api 5→8 用例（全套 35 用例全绿） | 主笔 Agent |
+| **v1.1.1** | 2026-08-26 | 导演台反查修复：新增 `GET /chapters/{id}`（路由+service+repo 内存态），回归测试 `test_chapter_detail_lookup`（44 passed）；tag `v1.1.1` | 主笔 Agent |
 | **v1.1** | 2026-08-26 | ★后端补齐：灵感池接口（CRUD+主笔生成+采纳持久化）、主笔共创对话 SSE、灵感→骨架落地、测试补强（43 passed） | 主笔 Agent |
 | **v1.0** | 2026-08-26 | ★前端里程碑：主笔共创工作台（maestro）React 化融合、纸墨双主题统一、导航改版；wiki 体系化成立（版本历史+变更日志） | 主笔 Agent + 作者 |
 | v0.2 | 2026-08-26（早） | S4 玄幻闭环：世界规则 0-token 校验、成文升级、换场续场、伏笔三态 | 主笔 Agent |
@@ -160,7 +162,16 @@ director_plan ─> _apply_guidance(曝光→信念/调权/注入) ─> character
 [POST] /books/{id}/plan/commit -> 落库（章/场景/伏笔/规则；★幂等：按标题命中已存在则跳过不重复）
 ```
 
-> v1.0 前端工作台：灵感池当前是**前端 mock 数据**，骨架树 / plan / commit 走真实 API。"让主笔构思"真实调 LLM 约 60-90s（deepseek 生成长骨架），**前端的 ideating 状态必须在成功/失败分支都复位**（B10）。
+> v1.0 前端工作台："让主笔构思"真实调 LLM 约 60-90s（deepseek 生成长骨架），**前端的 ideating 状态必须在成功/失败分支都复位**（B10）。
+> v1.1 已接真：灵感池（列表/生成/采纳）与主笔共创对话（SSE）走后端 API，mock 仅作 API 不可用时的回退。
+
+### 4.5 导演台书树反查（scene → chapter → book，v1.1.1 补齐）
+
+```
+DirectorPage 挂载 → 优先取路由 state 的 book_id（从书架/规划页进入时携带）
+  无则：GET /scenes/{id} → chapter_id → GET /chapters/{id} → book_id   ← B11 修复点（曾缺端点 405）
+  → GET /books/{id}/tree → 顶栏书标题 + 场景切换下拉（换场景 = 换路由重挂新 sim）
+```
 
 ---
 
@@ -182,9 +193,9 @@ director_plan ─> _apply_guidance(曝光→信念/调权/注入) ─> character
 | 区域 | 内容 | 数据来源 |
 |---|---|---|
 | 顶栏 | 方向输入 + 展开面板 + 「让主笔构思」+ agent 状态 | plan API / mock 回退 |
-| 左栏 | 灵感池（灵感卡⇄已采纳） | ★mock（待后端灵感接口） |
+| 左栏 | 灵感池（灵感卡⇄已采纳） | ★真实 /books/{id}/inspirations（列表/generate/采纳 PATCH，v1.1） |
 | 中栏 | 书籍骨架树（章/场景，可展开折叠） | ★真实 /books/{id}/tree |
-| 右栏 | 主笔共创对话（骨架预览开关/工具角标） | mock 消息（待后端 Chat 接口） |
+| 右栏 | 主笔共创对话（骨架预览开关/工具角标） | ★真实 /books/{id}/chief/chat SSE（v1.1） |
 | 底部 | 全书张力曲线（canvas，★主题跟随 MutationObserver 重绘） | 本地静态数据 |
 
 **导演台组件拆分**（[components/director](file:///e:/novel_desk-agent/frontend/src/components/director)）：
@@ -219,8 +230,8 @@ director_plan ─> _apply_guidance(曝光→信念/调权/注入) ─> character
 | test_scene_hierarchy.py | 章→场景层级 | 快速 |
 | test_world_rules.py | 世界观规则 0-token 校验（negation/exclusive） | 快速 |
 
-> 2026-08-26 基线：**30 passed, 6 skipped**（6 个 skipped = test_db_orm 需 docker）。
-> 全量测试约 6 分钟（部分用例含 sleep），快速迭代可只跑 `pytest -q test_core.py test_world_rules.py`.
+> 2026-08-26 v1.1.1 基线：**44 passed, 6 skipped**（6 个 skipped = test_db_orm 需 docker；test_api 含章节反查回归 `test_chapter_detail_lookup`）。
+> 全量测试约 6 分钟（部分用例含 sleep），快速迭代可只跑 `pytest -q tests/test_core.py tests/test_world_rules.py`.
 > 前端检查：`cd frontend && npx tsc --noEmit`（当前零错误）。
 
 ---
@@ -229,6 +240,7 @@ director_plan ─> _apply_guidance(曝光→信念/调权/注入) ─> character
 
 | # | 状态 | 问题 | 根因/证据 | 修复位置 |
 |---|---|---|---|---|
+| B11 | ✅ 已修 | 无 book_id 直入导演台（URL/刷新）时书标题/树缺失 | 后端未暴露 `GET /chapters/{id}`（405）；repo.get_chapter 内存态缺 `_mem` 分支 | [simulation.py](file:///e:/novel_desk-agent/backend/app/api/routers/simulation.py#L133-L140) 新增路由 + [repo.py](file:///e:/novel_desk-agent/backend/app/db/repo.py) 内存态兜底；回归测试 `test_chapter_detail_lookup`（v1.1.1） |
 | B10 | ✅ 已修 | maestro 工作台「让主笔构思」结束后按钮卡在"主笔构思中…" disabled | 真实 plan API 成功分支漏 `setIdeating(false)`（只有演示回退分支复位） | [MaestroPage.tsx](file:///e:/novel_desk-agent/frontend/src/pages/MaestroPage.tsx#L262-L288) 两分支都复位 |
 | B9 | ✅ 已修 | maestro 固定深色，不随纸墨主题切换 | `--maestro-*` 挂在 `:root` 硬编码墨色 | 拆成 `[data-theme="ink"/"paper"]` 双套 + canvas 读 CSS 变量 + MutationObserver 重绘 |
 | B8 | ✅ 已修 | webapp/ 静态版被错误融合 maestro（应融合 React 版） | 消息歧义：目标文件是 webapp 三件套，真意图是 React frontend | React 建 MaestroPage/style + 路由 + 导航；webapp 保留 .bak 备份 |
@@ -248,7 +260,7 @@ director_plan ─> _apply_guidance(曝光→信念/调权/注入) ─> character
 2. 确认服务三连：`netstat -ano | findstr ":5433"` / `:8000` / `:5173`
 3. 跑最小测试集：`cd backend && .venv\Scripts\python.exe -m pytest -q test_core.py test_world_rules.py`
 4. 前端类型：`cd frontend && npx tsc --noEmit`
-5. 改文件前先备份副本（项目无 git）
+5. 项目已建 git（v1.1 起）：改动及时提交，大改前确认 `git status` 工作区干净
 
 ---
 
@@ -280,7 +292,7 @@ cd backend
 
 ## 9. 改代码铁律（浓缩自项目记忆，长期有效）
 
-- **备份先行**：改/覆盖存量文件（尤其前端页面）先复制 `.bak`（项目无 git，不可逆丢失已踩坑）
+- **版本管理**：项目已建 git（v1.1 起，仓库身份 `lvco`）；改动及时提交、里程碑打 tag（当前 `v1.1.1`），大改前确认工作区干净。历史教训：无 git 时期覆盖 index.html 不可逆丢失
 - **venv 规范**：一律用 `.venv`，不混系统 Python（系统 python 缺 pgvector 等依赖）
 - **测试规范**：pytest 默认 FakeLLM（无网络无消耗）；真 LLM 需 `--live`
 - **DB 约束**：容器必须 `rag-kb-postgres:pg16` + 卷 `novel_ink-data`；密码含 `@` 用 `quote()` 编码
@@ -290,16 +302,31 @@ cd backend
 
 ---
 
-## 10. 后续路线（后端补齐方向 · 待确认）
+## 10. 后续路线（v1.1.1 盘点后 · 下一阶段）
 
-前端 v1.0 已就位，后端待补迭代项：
+**已交付（原 P0 全部完成，v1.1）**：灵感池接口（CRUD + 主笔 generate + 采纳持久化）、主笔共创对话 SSE、灵感→骨架落地（commit 引用已采纳灵感）、前端 MaestroPage 全部接真。
 
-| 优先级建议 | 项 | 现状 → 目标 | 涉及文件 |
+**导演台全流程对齐盘点（2026-08-26 v1.1.1）**：启动/恢复（四层装配）、SSE 事件级流、播放/暂停/单步、举手同意/拒绝、导演对话（token 流式）、时间线查看/回退、收束汇报（director_close）、自动续场（next_scene）、书树反查 + 场景切换 —— **前后端已全部对齐，无缺端点**。
+
+剩余缺口（按"推演 → 成书"闭环排序）：
+
+| 优先级 | 项 | 现状 → 目标 | 涉及文件 |
 |---|---|---|---|
-| P0 | 灵感池接口 | 前端 mock → 后端生成灵感卡（主笔工具调用/作者自建/采纳状态持久化） | 新表 + router + chief_planner |
-| P0 | 主笔共创对话 | 前端 mock 消息 → 实时 Chat SSE（依赖书骨架上下文） | router + service + llm |
-| P1 | 灵感卡→骨架落地 | 采纳的灵感卡融入 plan/commit（reference 字段） | chief_planner + commit_book_plan |
-| P1 | 四层 CRUD 测试补强 | service 幂等逻辑已有 → 补单测 | tests/ |
-| P2 | 前端接真 | 工作台灵感池/对话接 P0 接口 | MaestroPage + api/novel.ts |
+| **P0** | **正文落库/导出** | prose 仅内存展示，收束/换场后不持久化 → 场景收束时定稿正文落库（章节维度聚合），支持导出 markdown | service（收束钩子）+ repo + 新迁移/字段 + 新端点 |
+| P1 | 阅读台接真 | ReaderView 纯静态 → 渲染已落库章节正文 + 翻章 | ReaderView.tsx + 新查询端点 |
+| P1 | 伏笔追踪面板 | 仅收束汇报文字提及 → 独立伏笔面板（三态时间线，`GET /books/{id}/foreshadows` 已有，前端未消费） | 新组件 + DirectorPage/侧边"伏笔"入口 |
+| P1 | 作者自定义介入 | intervene 仅 accept/reject → 支持注入自由指令（如"让陈默突然翻脸"） | simulation.py intervene 扩展 + DirectorPanel |
+| P2 | 角色 CRUD UI | 后端 API 已有（POST/PUT/DELETE /characters）→ 前端增删改查入口 | CharRail / CharactersPage |
+| P2 | 世界规则可视化 | 规则注入后不可见 → 面板展示生效规则与 0-token 校验命中记录 | DirectorPanel + world_rules |
 
-> 下一步：与作者确认 P0/P1 优先拍板后开工。
+> **下一阶段主线建议：「从零写一本玄幻书」端到端闭环**——主笔骨架（maestro）→ 逐场景推演（director）→ **章节成文落库（P0）** → 阅读台阅读 → 导出。P0 正文落库是该闭环的最后一公里，也是目前唯一断点。
+
+---
+
+## 11. 版本与提交记录（git）
+
+| tag | commit | 内容 |
+|---|---|---|
+| `v1.1.1` | `0544f0c` | 导演台章节反查补齐（GET /chapters/{id} + repo 内存态） |
+| `v1.1` | `f1e0e10` | 涌现式小说 Agent 全链路交付（S0-S4 + 前端 v1.0 + 后端 v1.1） |
+| — | `4eda365` | 项目初始化 |

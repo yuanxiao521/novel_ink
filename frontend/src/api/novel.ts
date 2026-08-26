@@ -141,7 +141,54 @@ export async function deleteScene(id: string): Promise<void> {
   return send('DELETE', `/api/v1/scenes/${id}`);
 }
 
-/* ---------- 灵感池 + 主笔共创（后端补齐 v1.1） ---------- */
+/* ---------- 正文落库（P0 · v1.2） ---------- */
+
+export interface FinalizeResult {
+  scene_id: string;
+  chapter_id: string;
+  book_id: string;
+  title: string;
+  word_count: number;
+  prose: string;
+}
+
+export interface SceneProse {
+  scene_id: string;
+  chapter_id: string;
+  title: string;
+  prose: string;
+  word_count: number;
+  finalized: boolean;
+}
+
+export interface ChapterProse {
+  chapter_id: string;
+  book_id: string;
+  title: string;
+  order_no: number;
+  word_count: number;
+  scenes: Array<{ scene_id: string; title: string; prose: string; finalized: boolean }>;
+  prose: string;
+}
+
+/** 作者手动定稿：聚合该 sim 回合成文 → 写入场景 final_prose（幂等覆盖）。 */
+export async function finalizeSim(simId: string): Promise<FinalizeResult> {
+  return send('POST', `/api/v1/sims/${simId}/finalize`);
+}
+
+export async function fetchSceneProse(sceneId: string): Promise<SceneProse> {
+  return getJson<SceneProse>(`${API_BASE}/api/v1/scenes/${sceneId}/prose`);
+}
+
+export async function fetchChapterProse(chapterId: string): Promise<ChapterProse> {
+  return getJson<ChapterProse>(`${API_BASE}/api/v1/chapters/${chapterId}/prose`);
+}
+
+/** 全书导出 markdown 下载地址（浏览器 <a href> 直开下载）。 */
+export function exportBookUrl(bookId: string): string {
+  return `${API_BASE}/api/v1/books/${bookId}/export`;
+}
+
 
 export interface InspirationCard {
   id: string;

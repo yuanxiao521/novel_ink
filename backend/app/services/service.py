@@ -375,6 +375,98 @@ class SimulationService:
         after = [s["title"] for s in scenes if s["id"] != scene_id]
         return after
 
+    # ---------------------------------------------------------------- 正文定稿/落库（P0 · 正文落库）
+    async def finalize_scene_prose(self, sim_id: str) -> dict:
+        """作者手动定稿：聚合该 sim 的 turn_archives.prose（按 turn 排序）→ 写 scenes.final_prose。
+
+        幂等覆盖（rewind 重演后再定稿自然覆盖）；不强制 converged（作者存稿自由）。
+        """
+        sim = await self._load_sim(sim_id)
+        if not sim.scene_id:
+            raise InvalidActionError("该 sim 无场景上下文，无法定稿")
+        prose = "\n\n".join(
+            a.prose for a in sorted(sim.turn_archives, key=lambda x: x.turn) if a.prose
+        )
+        if not prose:
+            raise InvalidActionError("无可定稿正文（尚无成文回合）")
+
+        sc = await self.repo.get_scene(sim.scene_id)
+        if sc is None:
+            raise SceneNotFoundError(f"未找到场景: {sim.scene_id}")
+        await self.repo.save_scene({**sc, "final_prose": prose})
+        return {
+            "scene_id": sim.scene_id,
+            "chapter_id": sim.chapter_id,
+            "book_id": sim.book_id,
+            "title": sc.get("title", ""),
+            "word_count": len(prose),
+            "prose": prose,
+        }
+
+    async def get_scene_prose(self, scene_id: str) -> dict | None:
+        """单场景定稿正文。"""
+        sc = await self.repo.get_scene(scene_id)
+        if sc is None:
+            return None
+        prose = sc.get("final_prose") or ""
+        return {
+            "scene_id": scene_id,
+            "chapter_id": sc.get("chapter_id", ""),
+            "title": sc.get("title", ""),
+            "prose": prose,
+            "word_count": len(prose),
+            "finalized": bool(prose),
+        }
+
+    async def get_chapter_prose(self, chapter_id: str) -> dict | None:
+        """章节正文 = 该章全部场景定稿正文聚合（按 cursor_pos 排序）。"""
+        ch = await self.repo.get_chapter(chapter_id)
+        if ch is None:
+            return None
+        scenes = await self.repo.list_scenes_by_chapter(chapter_id)
+        parts = [s.get("final_prose") or "" for s in scenes]
+        prose = "\n\n".join(p for p in parts if p)
+        return {
+            "chapter_id": chapter_id,
+            "book_id": ch.get("book_id", ""),
+            "title": ch.get("title", ""),
+            "order_no": ch.get("order_no", 0),
+            "word_count": len(prose),
+            "scenes": [
+                {
+                    "scene_id": s["id"], "title": s.get("title", ""),
+                    "prose": s.get("final_prose") or "",
+                    "finalized": bool(s.get("final_prose")),
+                }
+                for s in scenes
+            ],
+            "prose": prose,
+        }
+
+    async def export_book_md(self, book_id: str) -> str:
+        """全书导出 markdown：书名 / 简介 / 各章（order_no）/ 已定稿场景正文。"""
+        book = await self.repo.get_book(book_id)
+        if book is None:
+            raise SceneNotFoundError(f"未找到书: {book_id}")
+        chapters = await self.repo.list_chapters_by_book(book_id)
+
+        lines: list[str] = [f"# {book.get('title', '无题之书')}", ""]
+        if book.get("synopsis"):
+            lines += [f"> {book['synopsis']}", ""]
+        has_prose = False
+        for ch in sorted(chapters, key=lambda c: c.get("order_no") or 0):
+            scenes = await self.repo.list_scenes_by_chapter(ch["id"])
+            finalized = [s for s in scenes if s.get("final_prose")]
+            if not finalized:
+                continue  # 未定稿章节不入书稿
+            has_prose = True
+            lines += [f"## {ch.get('title', '')}", ""]
+            for s in finalized:
+                lines += [s["final_prose"], ""]
+        if not has_prose:
+            raise InvalidActionError("本书尚无已定稿内容，先在导演台定稿再导出")
+        return "\n".join(lines).strip() + "\n"
+
     async def next_scene_seed(self, sim_id: str) -> Optional[dict]:
         """收束后查下一场景（同 chapter，cursor_pos+1）。仅 converged=True 生效。"""
         sim = await self._load_sim(sim_id)

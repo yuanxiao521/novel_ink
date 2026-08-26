@@ -33,6 +33,7 @@ class Scene(TimestampMixin, Base):
     cursor_pos: Mapped[int] = mapped_column(default=0)
     stage_desc: Mapped[str] = mapped_column(Text, default="")   # 舞台布置文本（主笔规划产物，v2 / 0002）
     scene_summary: Mapped[str] = mapped_column(Text, default="")  # 收束分析产出的场景摘要（v2 / 0002）
+    final_prose: Mapped[str] = mapped_column(Text, default="")    # 作者手动定稿的整场正文（0004 · 正文落库 P0）
 
     chapter: Mapped["Chapter"] = relationship(back_populates="scenes")
     characters: Mapped[list["Character"]] = relationship(

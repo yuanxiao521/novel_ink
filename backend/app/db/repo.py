@@ -209,6 +209,11 @@ class Repo:
     # chapters（第二层）
     # ------------------------------------------------------------------
     async def list_chapters_by_book(self, book_id: str) -> list[dict]:
+        if not self.use_db:
+            rows = [v for v in self._mem.values()
+                    if isinstance(v, dict) and v.get("book_id") == book_id and "order_no" in v]
+            return sorted(rows, key=lambda c: c.get("order_no") or 0)
+
         async def _q(session: AsyncSession):
             stmt = (
                 select(Chapter)
@@ -246,6 +251,11 @@ class Repo:
     # scenes（第三层）
     # ------------------------------------------------------------------
     async def list_scenes_by_chapter(self, chapter_id: str) -> list[dict]:
+        if not self.use_db:
+            rows = [v for v in self._mem.values()
+                    if isinstance(v, dict) and v.get("chapter_id") == chapter_id and "cursor_pos" in v]
+            return sorted(rows, key=lambda s: s.get("cursor_pos") or 0)
+
         async def _q(session: AsyncSession):
             stmt = select(Scene).where(Scene.chapter_id == chapter_id).order_by(Scene.cursor_pos)
             rows = (await session.execute(stmt)).scalars().all()
@@ -253,6 +263,7 @@ class Repo:
                 "id": r.id, "chapter_id": r.chapter_id, "title": r.title,
                 "scenario_def": r.scenario_def, "cursor_pos": r.cursor_pos,
                 "stage_desc": r.stage_desc, "scene_summary": r.scene_summary,
+                "final_prose": r.final_prose,
             } for r in rows]
 
         return await self._query_or_mem(_q, [])
@@ -263,8 +274,8 @@ class Repo:
             return self._scene_dict(r) if r else None
 
         if not self.use_db:
-            # 内存态：回退静态场景目录（保证无 DB 也能 start/step）
-            return self._static_scene(scene_id)
+            # 内存态：先查 _mem（收束摘要/定稿正文等 upsert 产物），再回退静态场景目录
+            return self._mem.get(scene_id) or self._static_scene(scene_id)
         return await self._query_or_mem(_q, None)
 
     def _static_scene(self, scene_id: str) -> Optional[dict]:
@@ -296,6 +307,7 @@ class Repo:
             "initial_facts_json": _json.dumps(facts, ensure_ascii=False),
             "plan_cfg_json": _json.dumps(plan, ensure_ascii=False),
             "cursor_pos": 0,
+            "stage_desc": "", "scene_summary": "", "final_prose": "",
         }
 
     async def save_scene(self, data: dict) -> None:
@@ -308,6 +320,7 @@ class Repo:
             "initial_facts_json": r.initial_facts_json,
             "plan_cfg_json": r.plan_cfg_json, "cursor_pos": r.cursor_pos,
             "stage_desc": r.stage_desc, "scene_summary": r.scene_summary,
+            "final_prose": r.final_prose,
         }
 
     # ------------------------------------------------------------------

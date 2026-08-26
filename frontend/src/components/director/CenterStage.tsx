@@ -6,7 +6,14 @@ import type { SimUIState } from '../../hooks/useDirectorSim';
 
 const TYPE_LABEL: Record<string, string> = { conflict: '冲突', dialogue: '对话', action: '行动', info: '信息' };
 
-export function CenterStage({ state, playing }: { state: SimUIState; playing: boolean }) {
+export interface FinalizeProps {
+  /** 点击「定稿入库」：聚合本场景成文写入 scenes.final_prose */
+  onFinalize: () => void;
+  finalizing: boolean;
+  finalized: { wordCount: number } | null;
+}
+
+export function CenterStage({ state, playing, finalize }: { state: SimUIState; playing: boolean; finalize?: FinalizeProps }) {
   const [tab, setTab] = useState<'blackboard' | 'prose'>('blackboard');
   const viewing = state.viewing;
 
@@ -62,6 +69,22 @@ export function CenterStage({ state, playing }: { state: SimUIState; playing: bo
             )}
             {state.closeReport.next_scene_hint && (
               <div className="close-report-hint">下一场提示：{state.closeReport.next_scene_hint}</div>
+            )}
+            {finalize && (
+              <div className="close-report-actions">
+                <button
+                  className="close-report-finalize-btn"
+                  onClick={finalize.onFinalize}
+                  disabled={finalize.finalizing}
+                  title="把本场景成文定稿写入书稿（可重复定稿覆盖）"
+                >
+                  {finalize.finalizing
+                    ? '定稿中…'
+                    : finalize.finalized
+                      ? `✓ 已定稿 · ${finalize.finalized.wordCount} 字 · 点击重新定稿`
+                      : '✒ 定稿入库'}
+                </button>
+              </div>
             )}
           </div>
         </div>
