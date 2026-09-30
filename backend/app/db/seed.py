@@ -59,10 +59,10 @@ async def seed() -> None:
         "plan_cfg_json": json.dumps(plan_cfg, ensure_ascii=False),
         "cursor_pos": 0,
     })
-    # 角色卡（一等实体，含④层字段）
+    # 角色卡（书级 · 全书共享，scene_id 留空）
     for cid, card in spec["characters"].items():
         await repo.save_character({
-            "id": cid, "scene_id": SCENE_ID, "name": card.name,
+            "id": cid, "book_id": BOOK_ID, "name": card.name,
             "spec_json": card.model_dump_json(),
         })
 

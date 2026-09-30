@@ -19,6 +19,7 @@ from app.db.base import Base, TimestampMixin
 if TYPE_CHECKING:
     from app.db.models.character import Character
     from app.db.models.chapter import Chapter
+    from app.db.models.note import ProseNote
 
 
 class Scene(TimestampMixin, Base):
@@ -32,10 +33,15 @@ class Scene(TimestampMixin, Base):
     plan_cfg_json: Mapped[str] = mapped_column(Text, default="{}")
     cursor_pos: Mapped[int] = mapped_column(default=0)
     stage_desc: Mapped[str] = mapped_column(Text, default="")   # 舞台布置文本（主笔规划产物，v2 / 0002）
+    goal: Mapped[str] = mapped_column(Text, default="")          # 本场张力目标/结局条件（主笔规划产物，v2 / 0008）
+    content_desc: Mapped[str] = mapped_column(Text, default="")  # 场景内容描述：事件梗概/冲突点/环境细节（0008）
     scene_summary: Mapped[str] = mapped_column(Text, default="")  # 收束分析产出的场景摘要（v2 / 0002）
     final_prose: Mapped[str] = mapped_column(Text, default="")    # 作者手动定稿的整场正文（0004 · 正文落库 P0）
 
     chapter: Mapped["Chapter"] = relationship(back_populates="scenes")
     characters: Mapped[list["Character"]] = relationship(
+        back_populates="scene", cascade="all, delete-orphan"
+    )
+    notes: Mapped[list["ProseNote"]] = relationship(
         back_populates="scene", cascade="all, delete-orphan"
     )

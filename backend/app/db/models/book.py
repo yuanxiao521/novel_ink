@@ -9,9 +9,14 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base, TimestampMixin
 
 if TYPE_CHECKING:
+    from app.db.models.belief import Belief
+    from app.db.models.chat_history import ChatHistory
     from app.db.models.chapter import Chapter
+    from app.db.models.character import Character
     from app.db.models.foreshadow import Foreshadow
     from app.db.models.inspiration_card import InspirationCard
+    from app.db.models.memory import BookMemory
+    from app.db.models.world_state import WorldState
 
 
 class Book(TimestampMixin, Base):
@@ -31,9 +36,24 @@ class Book(TimestampMixin, Base):
     chapters: Mapped[list["Chapter"]] = relationship(
         back_populates="book", cascade="all, delete-orphan"
     )
+    characters: Mapped[list["Character"]] = relationship(
+        back_populates="book", cascade="all, delete-orphan"
+    )
+    beliefs: Mapped[list["Belief"]] = relationship(
+        back_populates="book", cascade="all, delete-orphan"
+    )
     foreshadows: Mapped[list["Foreshadow"]] = relationship(
         back_populates="book", cascade="all, delete-orphan"
     )
     inspirations: Mapped[list["InspirationCard"]] = relationship(
+        back_populates="book", cascade="all, delete-orphan"
+    )
+    memories: Mapped[list["BookMemory"]] = relationship(
+        back_populates="book", cascade="all, delete-orphan"
+    )
+    chat_histories: Mapped[list["ChatHistory"]] = relationship(
+        back_populates="book", cascade="all, delete-orphan"
+    )
+    world_states: Mapped[list["WorldState"]] = relationship(
         back_populates="book", cascade="all, delete-orphan"
     )
