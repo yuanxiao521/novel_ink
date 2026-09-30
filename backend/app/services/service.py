@@ -964,12 +964,13 @@ class SimulationService:
                 full_reply += token
                 yield token
         else:
-            fallback = (
-                f"主笔已收到：{last_user}。当前模型未接入，我先按这本书的骨架给你一点参考——"
-                "可以先从「一句话方向」或选中骨架里的某一章让我展开；需要真实创作建议时接入模型即可。"
-            )
-            full_reply = fallback
-            yield fallback
+            # 回退文案按两段增量下发：与真实 LLM 的逐 token 流保持同一种前端渲染节奏（B15）
+            for _seg in (
+                f"主笔已收到：{last_user}。当前模型未接入，我先按这本书的骨架给你一点参考——",
+                "可以先从「一句话方向」或选中骨架里的某一章让我展开；需要真实创作建议时接入模型即可。",
+            ):
+                full_reply += _seg
+                yield _seg
 
         # 对话完成后保存历史（user 消息 + assistant 回复）
         import time as _time
