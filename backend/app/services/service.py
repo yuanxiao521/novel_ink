@@ -704,15 +704,22 @@ class SimulationService:
         from app.services.engine.prose import review_prose
 
         scene, _ = await self._scene_and_book(scene_id)
-        report = await review_prose(llm_client, scene, text)
+        characters = await self.repo.list_characters_for_scene(scene_id) if scene_id else []
+        report = await review_prose(llm_client, scene, text, characters=characters)
         issues = report.get("issues") or []
+        voice = report.get("voice_findings") or []
         summary = "；".join(f"[{i.get('severity')}] {i.get('text')}"
                             for i in issues[:3]) or "（无问题）"
+        if voice:
+            summary += "；口吻：" + "；".join(
+                f"{v.get('char')}（{str(v.get('issue') or '')[:40]}）" for v in voice[:2]
+            )
         await self.repo.save_prose_note({
             "id": f"note-{uuid.uuid4().hex[:10]}",
             "scene_id": scene_id, "kind": "editor", "status": "pending",
             "suggestion": f"{report.get('overall') or ''}\n{summary}"[:600],
             "before": text, "after": "", "created_by": "editor",
+            "payload_json": json.dumps({"voice_findings": voice}, ensure_ascii=False),
             "ts": int(time.time() * 1000),
         })
         return {"report": report, "note_status": "pending"}

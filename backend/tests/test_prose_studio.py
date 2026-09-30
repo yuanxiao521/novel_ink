@@ -217,3 +217,71 @@ async def test_draft_marks_blank_card_explicitly():
     llm = _PromptCaptureLLM()
     await draft_prose(llm, {"title": "破庙夜谈"}, "", characters=[{"name": "路人", "spec_json": "{}"}])
     assert "未填角色卡" in llm.calls[0]
+
+
+# ---------------------------------------------------------------- S2：口吻纪律 + 体检回环
+class _FakeReportLLM(_PromptCaptureLLM):
+    """返回固定体检报告，并记录 prompt。"""
+
+    def __init__(self, report):
+        super().__init__()
+        self._report = report
+
+    async def call_cheap(self, prompt, json_schema=None):
+        self.calls.append(prompt)
+        return self._report
+
+
+async def test_draft_prompt_carries_voice_discipline():
+    """写手 prompt 必须含「口吻纪律」硬要求（反同质/称呼一致），不能退回口号式要求。"""
+    import json
+
+    from app.services.engine.prose import draft_prose
+
+    llm = _PromptCaptureLLM()
+    spec = {"name": "林尘", "voice": "话少，短句"}
+    await draft_prose(llm, {"title": "破庙夜谈"}, "",
+                      characters=[{"name": "林尘", "spec_json": json.dumps(spec, ensure_ascii=False)}])
+    prompt = llm.calls[0]
+    assert "口吻纪律" in prompt
+    assert "可区分" in prompt          # 反同质
+    assert "互称" in prompt            # 称呼一致
+
+
+async def test_review_injects_cards_and_drops_ungrounded_findings():
+    """体检：①角色卡逐字进 prompt；②口吻检点只保留"有角色名 + 有正文原句"的条目。"""
+    import json
+
+    from app.services.engine.prose import review_prose
+
+    text = "“夹层里。”陈默说。李文却笑了笑：“我帮你查了这么久，你才肯拿出来？”"
+    report = {
+        "issues": [],
+        "voice_findings": [
+            {"char": "陈默", "evidence": "“夹层里。”陈默说。", "issue": "话太少", "suggestion": "补一句"},
+            {"char": "陈默", "evidence": "（正文里根本没这句）", "issue": "幻觉", "suggestion": "x"},
+            {"char": "张三", "evidence": "“夹层里。”陈默说。", "issue": "伪角色", "suggestion": "x"},
+            {"char": "李文", "evidence": "", "issue": "无证据", "suggestion": "x"},
+        ],
+        "overall": "整体尚可",
+    }
+    llm = _FakeReportLLM(report)
+    chars = [{"name": "陈默", "spec_json": json.dumps(
+        {"name": "陈默", "voice": "话不多，句句见血", "traits": ["敏锐"]}, ensure_ascii=False)}]
+    out = await review_prose(llm, {"title": "书房夜谈"}, text, characters=chars)
+    assert "话不多，句句见血" in llm.calls[0]   # 角色卡进体检 prompt
+    assert "voice_findings" in llm.calls[0]
+    assert [v["char"] for v in out["voice_findings"]] == ["陈默"]  # 仅留可核对的一条
+    assert out["voice_findings"][0]["evidence"] == "“夹层里。”陈默说。"
+
+
+async def test_review_note_payload_keeps_voice_findings(svc):
+    """服务层：体检 note 的 payload_json 落 voice_findings（前端可审阅）。"""
+    import json
+
+    await svc.repo.save_character({"id": "c-v", "book_id": "book-p", "name": "主角", "spec_json": "{}"})
+    out = await svc.prose_review("sc-1", "测试正文。")
+    assert out["report"]["voice_findings"] == []          # 无 LLM → 空数组（键存在）
+    notes = await svc.list_prose_notes("sc-1")
+    payload = json.loads(notes[0].get("payload_json") or "{}")
+    assert payload.get("voice_findings") == []

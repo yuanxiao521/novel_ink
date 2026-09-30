@@ -17,6 +17,12 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------- JSON schema
 REVIEW_SCHEMA = {
     "issues": [{"severity": "str: high|mid|low", "text": "str 问题", "suggestion": "str 建议"}],
+    "voice_findings": [{
+        "char": "str 角色名",
+        "evidence": "str 正文原句（逐字摘录，不得改写）",
+        "issue": "str 哪里不像（语气词/句长/称呼/用词层级）",
+        "suggestion": "str 改成什么更贴卡",
+    }],
     "overall": "str ≤80 字总评",
 }
 
@@ -105,7 +111,12 @@ def _world_states_block(world_states: list[dict] | None) -> str:
 
 
 _DRAFT_PROMPT = """你是小说正文【写手】。根据场景设定、出场角色、世界状态与前文，写一段有画面感的小说正文（旁白+行动+对话推进）。
-要求：中文，150-220 字；动作留白、有环境描写；符合角色性格和腔调；只写正文不要任何解释/标题。
+要求：中文，150-220 字；动作留白、有环境描写；只写正文不要任何解释/标题。
+口吻纪律（必须遵守）：
+- 每个角色的台词与动作必须对得上其「腔调」：句长、语气词、用词层级要能对号入座；
+- 多角色同场时，禁止所有人共用同一种句式/口头禅，各角色说话方式必须可区分；
+- 角色互称必须与卡内关系一致，同一关系不得在文内换称呼；
+- 角色没开口就不要替他/她说话；不要把所有角色都写成同一种"文雅"腔。
 场景设定：
 {scene}
 
@@ -126,9 +137,18 @@ _DRAFT_PROMPT = """你是小说正文【写手】。根据场景设定、出场�
 _REVIEW_PROMPT = """你是小说【审核体检员】。审读下面正文，给结构化体检报告（结构/逻辑/节奏/人设一致性/用词问题）。
 场景设定（作为体检基准）：
 {scene}
+
+出场角色卡（口吻体检基准，逐字对照其"腔调"）：
+{characters}
+
 正文：
 {text}
-输出 issues 数组（severity=high|mid|low），没问题的项不要编造。"""
+
+输出要求：
+1. issues 数组（severity=high|mid|low），没问题的项不要编造；
+2. voice_findings 数组：逐条指出"某角色的台词/动作不像其卡内腔调"的问题。每条必须带
+   char（角色名）与 evidence（正文原句，**逐字摘录**）；找不到原句的猜测一律不要输出。
+   若各角色腔调都立得住，voice_findings 返回空数组。"""
 
 _POLISH_PROMPT = """你是小说【润色师】。对下面正文做「去 AI 味」润色：
 - 只改写法（句式/节奏/措辞），**绝不改变剧情事实、人物言行、伏笔信息**；
@@ -159,10 +179,17 @@ _VERIFY_PROMPT = """你是小说【质检员】。对照这本书的伏笔账本
 {text}"""
 
 # ---------------------------------------------------------------- validators
-REVIEW_VALIDATOR: Callable[[Any], str | None] = lambda raw: (
-    None if isinstance(raw, dict) and isinstance(raw.get("issues"), list)
-    else "体检报告必须是含 issues 数组的对象"
-)
+def _validate_review(raw: Any) -> str | None:
+    """体检报告：issues 必填；voice_findings 若给出必须是数组（可为空）。"""
+    if not isinstance(raw, dict) or not isinstance(raw.get("issues"), list):
+        return "体检报告必须是含 issues 数组的对象"
+    vf = raw.get("voice_findings")
+    if vf is not None and not isinstance(vf, list):
+        return "voice_findings 必须是数组（无问题也要给空数组）"
+    return None
+
+
+REVIEW_VALIDATOR: Callable[[Any], str | None] = _validate_review
 POLISH_VALIDATOR: Callable[[Any], str | None] = lambda raw: (
     None if isinstance(raw, dict) and str(raw.get("after") or "").strip()
     else "润色输出必须是含非空 after 的对象"
@@ -175,6 +202,44 @@ DRAFT_VALIDATOR: Callable[[Any], str | None] = lambda raw: (
     None if isinstance(raw, str) and len(raw.strip()) >= 20
     else "正文过短（<20 字）"
 )
+
+_QUOTE_CHARS = str.maketrans({c: "" for c in "“”\"‘’ \t\n"})
+
+
+def _sanitize_voice_findings(report: Any, text: str, cast_names: set[str] | None = None) -> Any:
+    """口吻检点的防幻觉闸门（0 token）。
+
+    保留条件：①char 非空且在出场名单内；②evidence 非空且能在正文里逐字找到。
+    任一不满足 → 丢弃该条（宁可漏报，不可编造"某句不像他说的"）。
+    """
+    if not isinstance(report, dict):
+        return report
+    raw = report.get("voice_findings")
+    if not isinstance(raw, list):
+        report["voice_findings"] = []
+        return report
+    haystack = (text or "").translate(_QUOTE_CHARS)
+    kept: list[dict] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        char = str(item.get("char") or "").strip()
+        evidence = str(item.get("evidence") or "").strip()
+        if not char or not evidence:
+            continue
+        if cast_names and char not in cast_names:
+            continue
+        if evidence.translate(_QUOTE_CHARS) not in haystack:
+            continue
+        kept.append({
+            "char": char,
+            "evidence": evidence,
+            "issue": str(item.get("issue") or "").strip(),
+            "suggestion": str(item.get("suggestion") or "").strip(),
+        })
+    report["voice_findings"] = kept
+    return report
+
 
 # ---------------------------------------------------------------- role runtimes
 async def _run_role(
@@ -215,14 +280,21 @@ async def draft_prose(llm_client: Any, scene: dict, memory: str,
     return str(raw).strip()
 
 
-async def review_prose(llm_client: Any, scene: dict, text: str) -> dict:
-    """体检员：结构化体检报告；回退 → 空问题报告。"""
-    return await _run_role(
+async def review_prose(llm_client: Any, scene: dict, text: str,
+                       characters: list[dict] | None = None) -> dict:
+    """体检员：结构化体检报告（含口吻检点，对照角色卡）；回退 → 空问题报告。"""
+    cast_names = {str(c.get("name") or "").strip() for c in (characters or []) if c.get("name")}
+    report = await _run_role(
         llm_client,
-        _REVIEW_PROMPT.format(scene=_scene_block(scene), text=text or "（空）"),
+        _REVIEW_PROMPT.format(
+            scene=_scene_block(scene),
+            characters=_characters_block(characters or []),
+            text=text or "（空）",
+        ),
         REVIEW_SCHEMA, REVIEW_VALIDATOR,
-        {"issues": [], "overall": "（模型未接入，本次体检跳过）"},
+        {"issues": [], "voice_findings": [], "overall": "（模型未接入，本次体检跳过）"},
     )
+    return _sanitize_voice_findings(report, text, cast_names)
 
 
 async def polish_prose(llm_client: Any, text: str) -> dict:
