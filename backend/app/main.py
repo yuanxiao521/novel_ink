@@ -56,13 +56,11 @@ ALLOWED_ORIGINS = ["http://localhost:8000", "http://127.0.0.1:8000",
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    # 启动时跑 Alembic 迁移到 head（幂等）；DB 未就绪则忽略（走内存态兜底）
-    from app.db.repo import Repo
+    # 迁移改为手动执行：`uv run alembic upgrade head`（backend/ 下，见 Wiki）
+    # 启动不再自动跑迁移，避免每次启动额外叩 DB；漏迁会导致缺列报错，启动日志会提示。
+    import logging
 
-    try:
-        await Repo().init_schema()
-    except Exception:
-        pass
+    logging.getLogger("app").info("启动提醒：数据库迁移请手动执行 `uv run alembic upgrade head`")
     try:
         yield
     finally:

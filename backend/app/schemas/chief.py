@@ -55,3 +55,23 @@ class ChatMessage(BaseModel):
 class ChiefChatIn(BaseModel):
     messages: list[ChatMessage] = Field(default_factory=list)
     max_tokens: Optional[int] = None
+
+
+class MemoryIn(BaseModel):
+    """书级记忆（POST /books/{id}/memories）。
+
+    topic ∈ direction|setting|constraint|history|preference；
+    source ∈ chief|author|audit（默认 author，非法值由服务层兜底为 author）。
+    """
+
+    topic: str = "direction"
+    content: str = Field(..., max_length=2000)
+    source: str = "author"
+
+
+class MemoryUpdateIn(BaseModel):
+    """编辑记忆（PUT /memories/{id}）：字段全可选，只更新显式传入的。"""
+
+    topic: str = ""
+    content: str = ""
+    source: str = ""

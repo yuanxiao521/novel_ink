@@ -107,6 +107,7 @@ class Belief(BaseModel):
     channel: BeliefChannel                    # 亲见/被告知/推测
     text: str                                  # 该角色认知里的表述
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    edited: bool = False                       # 作者手改/编辑标记（sim 自动产出为 False）
     ts: int = 0
 
 

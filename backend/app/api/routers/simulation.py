@@ -212,6 +212,22 @@ class SceneBody(models.BaseModel):
     plan_cfg_json: str = "{}"
     cursor_pos: int = 0
     stage_desc: str = ""
+    goal: str = ""
+    content_desc: str = ""
+
+
+class ScenePatchIn(models.BaseModel):
+    """批量替换单场景载荷（PUT /chapters/{id}/scenes）：id 为空=新建，保留 scenario_def/facts。"""
+    id: str = ""
+    title: str = ""
+    stage_desc: str = ""
+    goal: str = ""
+    content_desc: str = ""
+
+
+class SceneBatchIn(models.BaseModel):
+    """场景级全量替换载荷：传入该章完整场景数组（服务端 diff 增删改）。"""
+    scenes: list[ScenePatchIn] = []
 
 
 class CharacterBody(models.BaseModel):
@@ -265,19 +281,150 @@ async def delete_scene(scene_id: str, svc: SimulationService = Depends(get_servi
     await svc.delete_scene(scene_id)
 
 
+@router.put("/chapters/{chapter_id}/scenes")
+async def replace_chapter_scenes(chapter_id: str, body: SceneBatchIn,
+                                 svc: SimulationService = Depends(get_service)):
+    """场景级全量替换（主笔升级 · 部分修改）：传该章完整场景数组，服务端 diff 增删改。"""
+    scenes = [s.model_dump() for s in body.scenes]
+    return await svc.replace_chapter_scenes(chapter_id, scenes)
+
+
+class ProseTextIn(models.BaseModel):
+    """正文协作载荷：当前正文（体检/润色/质检基于编辑区内容）。"""
+    text: str = ""
+
+
+class ProseReviewBody(models.BaseModel):
+    """作者审阅：approve 时可选携带 verifier 记账明细（后续接入账本）。"""
+    detail: dict = {}
+
+
+# ------------------------------------------------------------------ 正文协作工作区（阶段④）
+@router.post("/scenes/{scene_id}/prose/draft")
+async def prose_draft(scene_id: str, svc: SimulationService = Depends(get_service)):
+    """写手：正文初稿生成（无 LLM → text 为空串）。"""
+    return await svc.prose_draft(scene_id)
+
+
+@router.post("/scenes/{scene_id}/prose/review")
+async def prose_review(scene_id: str, body: ProseTextIn,
+                       svc: SimulationService = Depends(get_service)):
+    """体检员：体检报告 → editor note（pending）。"""
+    return await svc.prose_review(scene_id, body.text)
+
+
+@router.post("/scenes/{scene_id}/prose/polish")
+async def prose_polish(scene_id: str, body: ProseTextIn,
+                       svc: SimulationService = Depends(get_service)):
+    """润色师：润色稿 + 摘要 → polisher note（pending，after 供 [应用]）。"""
+    return await svc.prose_polish(scene_id, body.text)
+
+
+@router.post("/scenes/{scene_id}/prose/verify")
+async def prose_verify(scene_id: str, body: ProseTextIn,
+                       svc: SimulationService = Depends(get_service)):
+    """质检员：伏笔/信念/因果质检 → verifier note（pending，确认后才记账）。"""
+    return await svc.prose_verify(scene_id, body.text)
+
+
+@router.get("/scenes/{scene_id}/prose/notes")
+async def list_prose_notes(scene_id: str, svc: SimulationService = Depends(get_service)):
+    """审计记录列表（可追溯）。"""
+    return await svc.list_prose_notes(scene_id)
+
+
+@router.post("/prose-notes/{note_id}/approve")
+async def approve_prose_note(note_id: str, svc: SimulationService = Depends(get_service)):
+    """作者批准：verifier note → 先记账再置 approved。"""
+    return await svc.review_prose_note(note_id, approve=True)
+
+
+@router.post("/prose-notes/{note_id}/reject")
+async def reject_prose_note(note_id: str, svc: SimulationService = Depends(get_service)):
+    """作者驳回：仅置 rejected，不写库。"""
+    return await svc.review_prose_note(note_id, approve=False)
+
+
+@router.put("/scenes/{scene_id}/prose")
+async def save_scene_prose(scene_id: str, body: ProseTextIn,
+                           svc: SimulationService = Depends(get_service)):
+    """作者保存正文 → final_prose 幂等落库。"""
+    return await svc.save_scene_prose(scene_id, body.text)
+
+
+@router.get("/books/{book_id}/characters")
+async def list_book_characters(book_id: str, svc: SimulationService = Depends(get_service)):
+    """书级角色库（全书共享，一次编辑到处生效）。"""
+    return await svc.get_book_characters(book_id)
+
+
+@router.post("/books/{book_id}/characters", status_code=status.HTTP_201_CREATED)
+async def create_book_character(book_id: str, body: CharacterBody, svc: SimulationService = Depends(get_service)):
+    """书级新建角色卡（不挂具体场景）。"""
+    return await svc.create_character(book_id, body.model_dump(exclude_none=True))
+
+
 @router.post("/scenes/{scene_id}/characters", status_code=status.HTTP_201_CREATED)
-async def create_character(scene_id: str, body: CharacterBody, svc: SimulationService = Depends(get_service)):
-    return await svc.create_character(scene_id, body.model_dump(exclude_none=True))
+async def create_scene_character(scene_id: str, body: CharacterBody, svc: SimulationService = Depends(get_service)):
+    """场景特设角色（群演/NPC，仅该场景登场）。"""
+    scene = await svc.get_scene(scene_id)
+    if scene is None:
+        raise HTTPException(status_code=404, detail="场景不存在")
+    ch = await svc.get_chapter(scene["chapter_id"])
+    book_id = ch["book_id"] if ch else ""
+    return await svc.create_character(book_id, body.model_dump(exclude_none=True), scene_id=scene_id)
 
 
 @router.put("/characters/{char_id}")
 async def update_character(char_id: str, body: CharacterBody, svc: SimulationService = Depends(get_service)):
-    return await svc.update_character(char_id, body.model_dump(exclude_none=True))
+    # exclude_unset：PUT {name} 不带默认 "{}" 的 spec_json，避免误触④层校验
+    return await svc.update_character(char_id, body.model_dump(exclude_unset=True))
 
 
 @router.delete("/characters/{char_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_character(char_id: str, svc: SimulationService = Depends(get_service)):
     await svc.delete_character(char_id)
+
+
+# ------------------------------------------------------------------ 信念账本（书级 CRUD）
+class BeliefBody(models.BaseModel):
+    char_id: str = ""
+    fact_id: str = ""
+    source_event_id: str = ""
+    channel: str = "perceived"       # perceived/told/inferred
+    text: str = ""
+    confidence: float = 0.5
+
+
+@router.get("/books/{book_id}/beliefs")
+async def list_beliefs(book_id: str, char_id: Optional[str] = None,
+                       channel: Optional[str] = None,
+                       svc: SimulationService = Depends(get_service)):
+    """书级信念账本（推演自动沉淀 + 作者手改）。支持 char_id / channel 过滤。"""
+    return await svc.list_beliefs(book_id, char_id, channel)
+
+
+@router.post("/books/{book_id}/beliefs", status_code=status.HTTP_201_CREATED)
+async def create_belief(book_id: str, body: BeliefBody, svc: SimulationService = Depends(get_service)):
+    """作者手写信念（edited=True，需指定 char_id 与非空 text）。"""
+    return await svc.create_belief(book_id, body.model_dump())
+
+
+@router.put("/beliefs/{belief_id}")
+async def update_belief(belief_id: str, body: BeliefBody, svc: SimulationService = Depends(get_service)):
+    """作者修改信念（只传要改的字段；落库置 edited=True）。"""
+    return await svc.update_belief(belief_id, body.model_dump(exclude_unset=True))
+
+
+@router.delete("/beliefs/{belief_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_belief(belief_id: str, svc: SimulationService = Depends(get_service)):
+    await svc.delete_belief(belief_id)
+
+
+@router.get("/books/{book_id}/dashboard")
+async def get_dashboard(book_id: str, svc: SimulationService = Depends(get_service)):
+    """Overview 概览聚合：KPI / 章节时间线 / 待办 / 金句 / 近 4 周热力。"""
+    return await svc.get_dashboard(book_id)
 
 
 # ------------------------------------------------------------------ 主笔规划（S2）
@@ -343,7 +490,67 @@ async def delete_inspiration(card_id: str, svc: SimulationService = Depends(get_
     await svc.delete_inspiration(card_id)
 
 
+class InspirationUpdateIn(models.BaseModel):
+    """灵感卡编辑（PUT）：字段全可选，只更新显式传入的。"""
+    title: str = ""
+    desc: str = ""
+    icon: str = ""
+    type: str = ""
+
+
+class CastBody(models.BaseModel):
+    """选角（PUT /sims/{id}/cast）：上场角色 id 列表（允许空=清场）。"""
+    character_ids: list[str] = []
+
+
+@router.put("/inspirations/{card_id}")
+async def update_inspiration(card_id: str, body: InspirationUpdateIn,
+                             svc: SimulationService = Depends(get_service)):
+    """编辑灵感卡（title/desc/type/icon；不动 adopted）。"""
+    return await svc.update_inspiration(card_id, body.model_dump(exclude_unset=True))
+
+
+@router.put("/sims/{sim_id}/cast")
+async def set_sim_cast(sim_id: str, body: CastBody, svc: SimulationService = Depends(get_service)):
+    """配置上场角色：以该书角色库重建 sim 角色（cast 不重启局面）。"""
+    return await svc.set_sim_cast(sim_id, body.character_ids)
+
+
+# ------------------------------------------------------------------ 主笔书级记忆（记忆域）
+@router.get("/books/{book_id}/memories")
+async def list_memories(book_id: str, topic: Optional[str] = None, limit: int = 50,
+                        svc: SimulationService = Depends(get_service)):
+    """书级记忆列表（topic 过滤 + 最近 limit 条，ts 倒序）。"""
+    return await svc.list_memories(book_id, topic, limit)
+
+
+@router.post("/books/{book_id}/memories")
+async def create_memory(book_id: str, body: chief.MemoryIn,
+                        svc: SimulationService = Depends(get_service)):
+    """作者/主笔写入一条书级记忆（参与主笔感知）。"""
+    return await svc.create_memory(book_id, body.model_dump())
+
+
+@router.put("/memories/{memory_id}")
+async def update_memory(memory_id: str, body: chief.MemoryUpdateIn,
+                        svc: SimulationService = Depends(get_service)):
+    """编辑记忆（只更新显式传入字段）。"""
+    return await svc.update_memory(memory_id, body.model_dump(exclude_unset=True))
+
+
+@router.delete("/memories/{memory_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_memory(memory_id: str, svc: SimulationService = Depends(get_service)):
+    await svc.delete_memory(memory_id)
+
+
 # ------------------------------------------------------------------ 主笔共创对话（P0-2）
+@router.get("/books/{book_id}/chief/chat_history")
+async def get_chat_history(book_id: str,
+                           svc: SimulationService = Depends(get_service)):
+    """获取某书的主笔共创对话历史（ts 正序）。"""
+    return await svc.list_chat_histories(book_id)
+
+
 @router.post("/books/{book_id}/chief/chat")
 async def chief_chat(book_id: str, body: chief.ChiefChatIn,
                      svc: SimulationService = Depends(get_service)):
@@ -448,6 +655,7 @@ async def _flatten_state(sim: models.SimulationState, sim_id: str) -> dict:
         "paused": sim.paused,
         "characters": list(sim.characters.keys()),
         "beliefs": {cid: [b.model_dump() for b in bl] for cid, bl in sim.beliefs.items()},
+        "empty_world": bool(sim.scratch.get("empty_world")),
         "guard": sim.guard.model_dump(),
         "world": sim.world.model_dump(),
         "last_main_actor": sim.last_main_actor,
@@ -489,6 +697,12 @@ class InterveneBody(models.BaseModel):
 async def intervene(sim_id: str, body: InterveneBody, svc: SimulationService = Depends(get_service)):
     sim = await svc.intervene(sim_id, body.action, body.payload)
     return {"sim_id": sim_id, "action": body.action, "ok": True, "turn": sim.world.turn}
+
+
+@router.get("/sims/{sim_id}/inject-palette")
+async def inject_palette(sim_id: str, svc: SimulationService = Depends(get_service)):
+    """介入工具的下拉数据源：facts（可曝光）+ 角色动态目标（可调权）。"""
+    return await svc.get_inject_palette(sim_id)
 
 
 # 作者↔导演 共创对话（逐 token 流式）
