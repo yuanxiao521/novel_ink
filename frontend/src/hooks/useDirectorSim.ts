@@ -83,6 +83,9 @@ export interface SimUIState {
   archives: TurnArchive[]; // 回合归档（历史）
   viewing: TurnArchive | null; // 当前正在查看的历史回合（null=实时）
   closeReport: DirectorCloseReport | null; // 场景收束长程汇报（S3）
+  emptyWorld: boolean; // 空黑板：无角色且无 facts（引导选角）
+  charIds: string[]; // 当前上场角色 id 列表
+  worldFacts: Array<{ id: string; text: string }>; // 世界事实（全局视角）
 }
 
 const initState: SimUIState = {
@@ -108,6 +111,9 @@ const initState: SimUIState = {
   archives: [],
   viewing: null,
   closeReport: null,
+  emptyWorld: false,
+  charIds: [],
+  worldFacts: [],
 };
 
 type Action =
@@ -194,8 +200,11 @@ function reducer(s: SimUIState, a: Action): SimUIState {
       if (typeof a.st.tension === 'number') {
         next.tension = { val: a.st.tension, trend: a.st.tension_trend || 'flat' };
       }
+      if (a.st.characters) next.charIds = a.st.characters as string[];
       if (a.st.beliefs) next.beliefs = { ...a.st.beliefs };
       if (a.st.guard) next.guard = { blocks: a.st.guard.last_turn_blocks || 0, fuse: fused(a.st.guard) };
+      if (typeof a.st.empty_world === 'boolean') next.emptyWorld = a.st.empty_world;
+      if (a.st.world?.facts) next.worldFacts = a.st.world.facts;
       return next;
     }
     case 'RUN':
@@ -409,8 +418,9 @@ function accumulateTurnType(s: SimUIState, kind: string, txt: string): SimUIStat
 
 /* ---------- Hook ---------- */
 
-export function useDirectorSim(sceneId?: string, bookId?: string, chapterId?: string) {
-  const targetScene = sceneId || 'scene-betrayal-night'; // 无参回退默认场景
+export function useDirectorSim(sceneId?: string, bookId?: string, chapterId?: string, startFresh?: boolean) {
+  // 不再兜底 betrayal_night：无 sceneId 时不建 sim（由页面层引导"先选择场景"）
+  const targetScene = sceneId || '';
   const [state, dispatch] = useReducer(reducer, initState);
   const simIdRef = useRef<string | null>(null);
   const esRef = useRef<EventSource | null>(null);
@@ -563,8 +573,9 @@ export function useDirectorSim(sceneId?: string, bookId?: string, chapterId?: st
     };
   };
 
-  // 挂载：按 sceneId 启动/恢复 sim + 拉初始状态，不自动连流
+  // 挂载：按 sceneId 启动/恢复 sim + 拉初始状态，不自动连流；无 sceneId 不做任何请求
   useEffect(() => {
+    if (!targetScene) return;
     let cancelled = false;
     const fetchJson = async (url: string, opts?: RequestInit) => {
       const res = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...opts });
@@ -580,7 +591,7 @@ export function useDirectorSim(sceneId?: string, bookId?: string, chapterId?: st
             book_id: bookId ?? undefined,
             chapter_id: chapterId ?? undefined,
             scene_id: targetScene,
-            resume: true,
+            resume: startFresh ? false : true,
           }),
         }) as { sim_id: string; resumed: boolean };
         if (!started.sim_id) throw new Error('启动 sim 未返回 sim_id');
@@ -605,9 +616,9 @@ export function useDirectorSim(sceneId?: string, bookId?: string, chapterId?: st
       }
     })();
     return () => { cancelled = true; closeStream(); };
-    // sceneId 固定（路由参数）；挂载时执行一次
+    // sceneId 固定（路由参数）；startFresh 变化时也要重开 sim（入口选"新开/继续"）
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sceneId]);
+  }, [sceneId, startFresh]);
 
   // 播放控制：resume（清除暂停标记）+ 重连 SSE
   const resumeAndConnect = () => {
@@ -722,6 +733,18 @@ export function useDirectorSim(sceneId?: string, bookId?: string, chapterId?: st
       .catch((e) => console.warn('[导演台] rewind 失败：', e));
   };
 
+  // 拉取最新 sim state（选角/介入等操作后刷新）
+  const refresh = async () => {
+    const sid = simIdRef.current;
+    if (!sid) return;
+    try {
+      const st = (await fetch(`${API_BASE}/api/v1/sims/${sid}/state`).then((r) => r.json())) as SimState;
+      dispatch({ type: 'STATE', st });
+    } catch {
+      /* state 拉取失败不阻塞 */
+    }
+  };
+
   return {
     state,
     playing,
@@ -734,5 +757,6 @@ export function useDirectorSim(sceneId?: string, bookId?: string, chapterId?: st
     rewindTo,
     agreeRaise: () => resolveRaise('accept'),
     rejectRaise: () => resolveRaise('reject'),
+    refresh,
   };
 }

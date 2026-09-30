@@ -32,6 +32,8 @@ export interface SceneMeta {
   scenario_def: string;
   cursor_pos: number;
   stage_desc?: string;
+  goal?: string;
+  content_desc?: string;
   scene_summary?: string;
   characters?: CharacterMeta[];
 }
@@ -141,6 +143,22 @@ export async function deleteScene(id: string): Promise<void> {
   return send('DELETE', `/api/v1/scenes/${id}`);
 }
 
+/** 场景级全量替换（主笔升级 · 部分修改）：传该章完整场景数组，服务端 diff 增删改。 */
+export interface ScenePatchItem {
+  id?: string;
+  title: string;
+  stage_desc?: string;
+  goal?: string;
+  content_desc?: string;
+}
+
+export async function replaceChapterScenes(
+  chapterId: string,
+  scenes: ScenePatchItem[],
+): Promise<{ chapter_id: string; scenes: number }> {
+  return send('PUT', `/api/v1/chapters/${chapterId}/scenes`, { scenes });
+}
+
 /* ---------- 正文落库（P0 · v1.2） ---------- */
 
 export interface FinalizeResult {
@@ -189,6 +207,116 @@ export function exportBookUrl(bookId: string): string {
   return `${API_BASE}/api/v1/books/${bookId}/export`;
 }
 
+/* ---------- 导演介入三件套（v1.3） ---------- */
+
+export interface InjectPalette {
+  turn: number;
+  /** 可曝光事实（当前运行时黑板 facts） */
+  facts: Array<{ id: string; text: string; kind: string; visible_to: string[] }>;
+  /** 角色与可调权动态目标 */
+  characters: Array<{
+    id: string;
+    name: string;
+    dynamic_goals: Array<{ id: string; text: string; weight: number }>;
+  }>;
+}
+
+export interface InterveneResult {
+  sim_id: string;
+  action: string;
+  ok: boolean;
+  turn: number;
+}
+
+/** 介入工具下拉数据源：facts + 角色动态目标。 */
+export async function fetchInjectPalette(simId: string): Promise<InjectPalette> {
+  return getJson<InjectPalette>(`${API_BASE}/api/v1/sims/${simId}/inject-palette`);
+}
+
+/** 手动介入：inject_event / expose / adjust_weight（adjust_weight 的 reason 必填，后端 4xx 兜底）。 */
+export async function interveneSim(
+  simId: string,
+  action: 'inject_event' | 'expose' | 'adjust_weight',
+  payload: Record<string, unknown>,
+): Promise<InterveneResult> {
+  return send('POST', `/api/v1/sims/${simId}/intervene`, { action, payload });
+}
+
+/* ---------- 角色卡 CRUD（v1.3） ---------- */
+
+export interface CharacterGoalSpec {
+  id: string;
+  text: string;
+  weight: number;
+  last_adjust_reason?: string;
+}
+
+/** ④层角色卡可编辑字段（docs/prompt核心设定.md）：spec_json 的 JSON 形态。 */
+export interface CharacterSpec {
+  id?: string;
+  name: string;
+  summary: string;
+  traits: string[];
+  voice: string;
+  core_beliefs: string[];
+  dynamic_goals: CharacterGoalSpec[];
+  bottom_lines: string[];
+  system_prompt: string;
+  think_schema: string;
+  decide_schema: string;
+  static_world: string;
+}
+
+export interface CharacterCardMeta {
+  id: string;
+  book_id: string;
+  scene_id?: string | null;
+  name: string;
+  spec_json: string;
+}
+
+export interface SceneDetail {
+  id: string;
+  chapter_id: string;
+  title: string;
+  scenario_def: string;
+  cursor_pos: number;
+  stage_desc?: string;
+  goal?: string;
+  content_desc?: string;
+  scene_summary?: string;
+  final_prose?: string;
+  characters: CharacterCardMeta[];
+}
+
+/** 场景详情（含角色卡列表，GET /scenes/{id} 已内联 characters）。 */
+export async function fetchSceneDetail(sceneId: string): Promise<SceneDetail> {
+  return getJson<SceneDetail>(`${API_BASE}/api/v1/scenes/${sceneId}`);
+}
+
+/** 书级角色库（GET /books/{id}/characters）。 */
+export async function listBookCharacters(bookId: string): Promise<CharacterCardMeta[]> {
+  return getJson<CharacterCardMeta[]>(`${API_BASE}/api/v1/books/${bookId}/characters`);
+}
+
+/** 书级新建角色卡（POST /books/{id}/characters）。 */
+export async function createBookCharacter(bookId: string, data: { name: string; spec_json?: string }): Promise<{ id: string }> {
+  return send('POST', `/api/v1/books/${bookId}/characters`, data);
+}
+
+/** 书级新建（兼容旧调用，走书级端点）。 */
+export async function createCharacter(bookId: string, data: { name: string; spec_json?: string }): Promise<{ id: string }> {
+  return createBookCharacter(bookId, data);
+}
+
+export async function updateCharacter(id: string, data: { name?: string; spec_json?: string }): Promise<{ id: string }> {
+  return send('PUT', `/api/v1/characters/${id}`, data);
+}
+
+export async function deleteCharacter(id: string): Promise<void> {
+  return send('DELETE', `/api/v1/characters/${id}`);
+}
+
 
 export interface InspirationCard {
   id: string;
@@ -223,6 +351,34 @@ export async function setInspirationAdopted(cardId: string, adopted: boolean): P
 
 export async function deleteInspiration(cardId: string): Promise<void> {
   return send('DELETE', `/api/v1/inspirations/${cardId}`);
+}
+
+export async function updateInspiration(
+  id: string,
+  data: { title?: string; desc?: string; type?: string; icon?: string },
+): Promise<InspirationCard> {
+  return send('PUT', `/api/v1/inspirations/${id}`, data);
+}
+
+/** 配置上场角色：以该书角色库重建 sim 角色（cast 不重启局面）。 */
+export async function setSimCast(
+  simId: string,
+  characterIds: string[],
+): Promise<{ sim_id: string; characters: string[] }> {
+  return send('PUT', `/api/v1/sims/${simId}/cast`, { character_ids: characterIds });
+}
+
+/** 主笔共创对话历史（按书加载）。 */
+export interface ChatHistoryMsg {
+  id: string;
+  book_id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  ts: number;
+}
+
+export async function listChatHistory(bookId: string): Promise<ChatHistoryMsg[]> {
+  return getJson<ChatHistoryMsg[]>(`${API_BASE}/api/v1/books/${bookId}/chief/chat_history`);
 }
 
 /** 主笔共创对话：SSE 流式读取（event: token → {delta}，event: done 结束）。 */
@@ -263,4 +419,204 @@ export async function chiefChat(
   } finally {
     reader.releaseLock();
   }
+}
+
+// ---------------------------------------------------------------------------
+// 书级记忆（主笔 Agent · 记忆域）
+// ---------------------------------------------------------------------------
+export type MemoryTopic = 'direction' | 'setting' | 'constraint' | 'history' | 'preference';
+
+export interface BookMemoryMeta {
+  id: string;
+  book_id: string;
+  topic: MemoryTopic;
+  content: string;
+  source: 'chief' | 'author' | 'audit';
+  ts: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export async function listMemories(
+  bookId: string,
+  filters?: { topic?: string; limit?: number },
+): Promise<BookMemoryMeta[]> {
+  const q = new URLSearchParams();
+  if (filters?.topic) q.set('topic', filters.topic);
+  if (filters?.limit) q.set('limit', String(filters.limit));
+  const qs = q.toString();
+  return getJson<BookMemoryMeta[]>(`${API_BASE}/api/v1/books/${bookId}/memories${qs ? `?${qs}` : ''}`);
+}
+
+export async function createMemory(
+  bookId: string,
+  data: { topic: MemoryTopic; content: string; source?: 'author' | 'chief' },
+): Promise<{ id: string }> {
+  return send('POST', `/api/v1/books/${bookId}/memories`, data);
+}
+
+export async function updateMemory(
+  id: string,
+  data: { topic?: MemoryTopic; content?: string },
+): Promise<{ id: string }> {
+  return send('PUT', `/api/v1/memories/${id}`, data);
+}
+
+export async function deleteMemory(id: string): Promise<void> {
+  return send('DELETE', `/api/v1/memories/${id}`);
+}
+
+// ---------------------------------------------------------------------------
+// 信念账本（v1.5 · 书级 CRUD）
+// ---------------------------------------------------------------------------
+export type BeliefChannel = 'perceived' | 'told' | 'inferred';
+
+export interface BeliefMeta {
+  id: string;
+  book_id: string;
+  char_id: string;
+  fact_id?: string;
+  source_event_id?: string;
+  channel: BeliefChannel;
+  text: string;
+  confidence: number;
+  edited: boolean;
+  ts: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface BeliefBodySpec {
+  char_id: string;
+  fact_id?: string;
+  source_event_id?: string;
+  channel: BeliefChannel;
+  text: string;
+  confidence?: number;
+}
+
+export async function listBookBeliefs(
+  bookId: string,
+  filters?: { char_id?: string; channel?: string },
+): Promise<BeliefMeta[]> {
+  const q = new URLSearchParams();
+  if (filters?.char_id) q.set('char_id', filters.char_id);
+  if (filters?.channel) q.set('channel', filters.channel);
+  const qs = q.toString();
+  return getJson<BeliefMeta[]>(`${API_BASE}/api/v1/books/${bookId}/beliefs${qs ? `?${qs}` : ''}`);
+}
+
+export async function createBelief(bookId: string, data: BeliefBodySpec): Promise<{ id: string }> {
+  return send('POST', `/api/v1/books/${bookId}/beliefs`, data);
+}
+
+export async function updateBelief(id: string, data: Partial<BeliefBodySpec>): Promise<{ id: string }> {
+  return send('PUT', `/api/v1/beliefs/${id}`, data);
+}
+
+export async function deleteBelief(id: string): Promise<void> {
+  return send('DELETE', `/api/v1/beliefs/${id}`);
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard 概览（v1.5 · 聚合）
+// ---------------------------------------------------------------------------
+export interface DashboardData {
+  book: {
+    id: string;
+    title: string;
+    genre: string;
+    status: string;
+    chapter_count: number;
+    cover_init: string;
+  };
+  kpi: {
+    chapters_done: number;
+    chapters_total: number;
+    word_count: number;
+    foreshadow_open: number;
+    foreshadow_closed: number;
+    health: number;
+  };
+  timeline: Array<{
+    chapter_id: string;
+    title: string;
+    order_no: number;
+    tone: string;
+    status: 'done' | 'current' | 'draft' | 'planned';
+    label: string;
+    badge: string;
+    word_count: number;
+  }>;
+  todos: Array<{ severity: 'ok' | 'warn' | 'info' | 'danger'; title: string; desc: string }>;
+  quotes: Array<{ text: string; author: string }>;
+  heat: number[];
+}
+
+export async function fetchDashboard(bookId: string): Promise<DashboardData> {
+  return getJson<DashboardData>(`${API_BASE}/api/v1/books/${bookId}/dashboard`);
+}
+
+// ---------------------------------------------------------------------------
+// 正文协作工作区（阶段④ · 四角色 + 审计记录）
+// ---------------------------------------------------------------------------
+export type ProseNoteKind = 'writer' | 'editor' | 'polisher' | 'verifier';
+export type ProseNoteStatus = 'pending' | 'approved' | 'rejected';
+
+export interface ProseNote {
+  id: string;
+  scene_id: string;
+  kind: ProseNoteKind;
+  status: ProseNoteStatus;
+  suggestion: string;
+  before: string;
+  after: string;
+  created_by: string;
+  reviewed_at?: string | null;
+  ts: number;
+}
+
+export interface VerifyOpinion {
+  foreshadow_updates: Array<{ text: string; status: string; reason: string }>;
+  belief_deltas: Array<{ char: string; text: string; channel: string }>;
+  causal: string[];
+  risks: string[];
+}
+
+/** 写手生成正文初稿（无 LLM → text 空串）。 */
+export async function generateSceneDraft(sceneId: string): Promise<{ text: string }> {
+  return send('POST', `/api/v1/scenes/${sceneId}/prose/draft`);
+}
+
+/** 体检员：结构化体检报告。 */
+export async function reviewSceneProse(sceneId: string, text: string): Promise<{ report: { issues: Array<{ severity: string; text: string; suggestion: string }>; overall: string }; note_status: string }> {
+  return send('POST', `/api/v1/scenes/${sceneId}/prose/review`, { text });
+}
+
+/** 润色师：去 AI 味润色（只改写法）。 */
+export async function polishSceneProse(sceneId: string, text: string): Promise<{ after: string; summary: string }> {
+  return send('POST', `/api/v1/scenes/${sceneId}/prose/polish`, { text });
+}
+
+/** 质检员：伏笔/信念/因果对照意见。 */
+export async function verifySceneProse(sceneId: string, text: string): Promise<{ opinion: VerifyOpinion; note_status: string }> {
+  return send('POST', `/api/v1/scenes/${sceneId}/prose/verify`, { text });
+}
+
+/** 审计记录（可追溯）。 */
+export async function listProseNotes(sceneId: string): Promise<ProseNote[]> {
+  return getJson<ProseNote[]>(`${API_BASE}/api/v1/scenes/${sceneId}/prose/notes`);
+}
+
+/** 作者批准（verifier → 记账） / 驳回。 */
+export async function approveProseNote(noteId: string): Promise<{ id: string; status: string; bookkeeping: boolean }> {
+  return send('POST', `/api/v1/prose-notes/${noteId}/approve`);
+}
+export async function rejectProseNote(noteId: string): Promise<{ id: string; status: string }> {
+  return send('POST', `/api/v1/prose-notes/${noteId}/reject`);
+}
+
+/** 作者保存正文 → final_prose 幂等落库。 */
+export async function saveSceneProse(sceneId: string, text: string): Promise<{ scene_id: string; unchanged: boolean; word_count: number }> {
+  return send('PUT', `/api/v1/scenes/${sceneId}/prose`, { text });
 }

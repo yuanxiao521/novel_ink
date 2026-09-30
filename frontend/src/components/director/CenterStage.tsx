@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { charName } from './characters';
-import chenImg from '../../assets/portrait-chenmo.png';
-import liwImg from '../../assets/portrait-liwen.png';
+import { CastPanel } from './CastPanel';
+import { setSimCast } from '../../api/novel';
 import type { SimUIState } from '../../hooks/useDirectorSim';
 
 const TYPE_LABEL: Record<string, string> = { conflict: '冲突', dialogue: '对话', action: '行动', info: '信息' };
@@ -13,9 +13,43 @@ export interface FinalizeProps {
   finalized: { wordCount: number } | null;
 }
 
-export function CenterStage({ state, playing, finalize }: { state: SimUIState; playing: boolean; finalize?: FinalizeProps }) {
+export interface CastProps {
+  simId: string | null;
+  bookId: string;
+  refresh: () => void;
+}
+
+export function CenterStage({
+  state,
+  playing,
+  cast,
+  finalize,
+}: {
+  state: SimUIState;
+  playing: boolean;
+  cast?: CastProps;
+  finalize?: FinalizeProps;
+}) {
   const [tab, setTab] = useState<'blackboard' | 'prose'>('blackboard');
+  const [castOpen, setCastOpen] = useState(false);
+  const [castSaving, setCastSaving] = useState(false);
   const viewing = state.viewing;
+
+  const isEmptyBoard = state.emptyWorld && state.charIds.length === 0;
+
+  const saveCast = async (ids: string[]) => {
+    if (!cast?.simId) return;
+    setCastSaving(true);
+    try {
+      await setSimCast(cast.simId, ids);
+      setCastOpen(false);
+      cast.refresh();
+    } catch (e) {
+      console.warn('[导演台] 选角失败：', e);
+    } finally {
+      setCastSaving(false);
+    }
+  };
 
   // 推演中：根据当前事件判断阶段
   const runningStatus = (() => {
@@ -42,7 +76,7 @@ export function CenterStage({ state, playing, finalize }: { state: SimUIState; p
           <svg className="stage-icon" viewBox="0 0 16 16" fill="none">
             <path d="M2 12.5L6 4.5L9 10.5L11.5 6.5L14 12.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
-          <span className="stage-name">{viewing ? `历史回合 T-${viewing.turn} · 张力 ${viewing.tension}%` : '陈默书房 · 夜 · 雨'}</span>
+          <span className="stage-name">{viewing ? `历史回合 T-${viewing.turn} · 张力 ${viewing.tension}%` : '世界黑板'}</span>
         </div>
         <div className="tab-switch">
           <button className={`tab ${tab === 'blackboard' ? 'active' : ''}`} data-stage-tab="blackboard" onClick={() => setTab('blackboard')}>
@@ -129,18 +163,33 @@ export function CenterStage({ state, playing, finalize }: { state: SimUIState; p
       ) : (
         <>
           <div className={`blackboard stage-pane ${tab === 'blackboard' ? 'active' : ''}`} data-pane="blackboard">
+            {isEmptyBoard && cast && cast.bookId ? (
+              /* —— 空台引导卡：无角色无事实，内联展开选角 —— */
+              <div className="empty-board">
+                {castOpen ? (
+                  <CastPanel
+                    bookId={cast.bookId}
+                    currentIds={[]}
+                    onSave={saveCast}
+                    onCancel={() => setCastOpen(false)}
+                    saving={castSaving}
+                    footerHint="空台开场：先配上场角色，再点「播放」"
+                  />
+                ) : (
+                  <button className="empty-board-cta" onClick={() => setCastOpen(true)}>
+                    <span className="ebb-ico">🎭</span>
+                    <span className="ebb-title">本场还没有角色</span>
+                    <span className="ebb-sub">从该书角色库选择本场上场的角色（配置上场角色）</span>
+                  </button>
+                )}
+              </div>
+            ) : (
+              <>
             <div className="env-section">
           <div className="section-title blue">环境事实</div>
-          <div className="env-row">
-            <span className="env-dot"></span>
-            <span className="env-text">窗外下着雨，雨声渐密</span>
-            <span className="env-vis">陈默✓ 李文✓ 周婶✓</span>
-          </div>
-          <div className="env-row">
-            <span className="env-dot"></span>
-            <span className="env-text">保险柜门半开，锁孔有新鲜划痕</span>
-            <span className="env-vis">陈默✓ 李文✓ 周婶✗</span>
-          </div>
+          {state.envRows.length === 0 && !state.emptyWorld && (
+            <div className="env-empty">暂无环境事实。点「播放」推演后，环境事实会随回合自动生成。</div>
+          )}
           {state.envRows.map((r, i) => (
             <div className="env-row" key={`env-${i}`}>
               <span className="env-dot"></span>
@@ -151,6 +200,9 @@ export function CenterStage({ state, playing, finalize }: { state: SimUIState; p
 
         <div className="event-section">
           <div className="section-title cyan">当前回合事件</div>
+          {state.eventCards.length === 0 && (
+            <div className="event-empty">暂无事件。点底部「播放」开始推演，事件会实时出现。</div>
+          )}
           {state.eventCards.map((c, i) => (
             <div className={`event-card ${c.cls}`} key={`ev-${i}`}>
               <div className="event-meta">
@@ -167,65 +219,55 @@ export function CenterStage({ state, playing, finalize }: { state: SimUIState; p
 
         <div className="char-summary">
           <div className="section-title muted">角色状态摘要</div>
-          <div className="summary-row">
-            <span className="summary-name">陈默</span>
-            <span className="summary-text">
-              {state.overrides.chenmo?.mood || '警觉'} —— 他注意到李文的语气不对
-            </span>
-          </div>
-          <div className="summary-row">
-            <span className="summary-name">李文</span>
-            <span className="summary-text">
-              {state.overrides.liwen?.mood || '紧张'} —— 她在试探保险柜的事
-            </span>
-          </div>
+          {Object.keys(state.overrides).length === 0 ? (
+            <div className="summary-empty">暂无角色状态。推演开始后，角色的情绪与思考会实时显示在这里。</div>
+          ) : (
+            Object.entries(state.overrides).map(([cid, ov]) => (
+              <div className="summary-row" key={cid}>
+                <span className="summary-name">{charName(cid)}</span>
+                <span className="summary-text">
+                  {ov.mood || '—'}{ov.thought ? ` —— ${ov.thought}` : ''}{ov.action ? ` · ${ov.action}` : ''}
+                </span>
+              </div>
+            ))
+          )}
         </div>
+              </>
+            )}
       </div>
 
       <div className={`prose-view stage-pane ${tab === 'prose' ? 'active' : ''}`} data-pane="prose">
-        <div className="prose-header">
-          <span className="prose-chapter-label">第七章</span>
-          <span className="prose-word-count">1,284 字</span>
-        </div>
-        <div className="prose-content">
-          <h2 className="prose-title">雨夜的试探</h2>
-
-          <p className="prose-paragraph">
-            窗外的雨越下越密，敲打着窗棂，像某种不安的节拍。陈默坐在书桌后，目光落在那杯早已凉透的茶上，却没有端起来的意思。
-          </p>
-          <p className="prose-paragraph">
-            李文站在桌前，手指无意识地绞着衣角。沉默了几秒，她终于开口——
-          </p>
-          <div className="prose-dialogue">
-            <img className="prose-dialogue-avatar" src={liwImg} alt={charName('liwen')} />
-            <div className="prose-dialogue-body">
-              <div className="prose-dialogue-name">李文</div>
-              <div className="prose-dialogue-text">「默哥，这文件……你什么时候放的？」</div>
-            </div>
+        {state.prose.length === 0 ? (
+          <div className="prose-empty">
+            <div className="prose-empty-title">暂无成文</div>
+            <p className="prose-empty-sub">推演开始后，正文会逐段生成在这里。<br />当前回合结束后会自动聚合为成文段落。</p>
           </div>
-          <p className="prose-paragraph">陈默抬起眼，没有直接回答，只是缓缓问——</p>
-          <div className="prose-dialogue">
-            <img className="prose-dialogue-avatar" src={chenImg} alt={charName('chenmo')} />
-            <div className="prose-dialogue-body">
-              <div className="prose-dialogue-name">陈默</div>
-              <div className="prose-dialogue-text">「你怎么会问这个？」</div>
+        ) : (
+          <>
+            <div className="prose-content">
+              {state.prose.map((t, i) => (
+                <p className="prose-paragraph" key={`prose-${i}`}>
+                  {t}
+                </p>
+              ))}
             </div>
-          </div>
-          <p className="prose-paragraph">
-            李文的手指停住了。她望着陈默，那眼神里有试探，也有某种更深的、几乎要溢出来的东西。雨声忽然变得很响，像要把什么东西盖住。
-          </p>
-
-          {state.prose.map((t, i) => (
-            <p className="prose-paragraph" key={`prose-${i}`}>
-              {t}
-            </p>
-          ))}
-        </div>
-        <div className="prose-footer">
-          <button className="prose-nav-btn">上一章</button>
-          <span className="prose-progress">第 7 章 / 共 23 章</span>
-          <button className="prose-nav-btn">下一章</button>
-        </div>
+            {finalize && (
+              <div className="prose-footer">
+                <button
+                  className="close-report-finalize-btn"
+                  onClick={finalize.onFinalize}
+                  disabled={finalize.finalizing}
+                >
+                  {finalize.finalizing
+                    ? '定稿中…'
+                    : finalize.finalized
+                      ? `✓ 已定稿 · ${finalize.finalized.wordCount} 字 · 点击重新定稿`
+                      : '✒ 定稿入库'}
+                </button>
+              </div>
+            )}
+          </>
+        )}
       </div>
         </>
       )}

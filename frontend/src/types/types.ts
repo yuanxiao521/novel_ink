@@ -34,10 +34,15 @@ export interface SimState {
   turn: number;
   tension: number;
   tension_trend?: string;
-  characters?: unknown[];
+  characters?: string[];
   beliefs?: Record<string, Belief[]>;
   guard?: GuardState;
   paused?: boolean;
+  empty_world?: boolean;
+  world?: {
+    facts?: Array<{ id: string; text: string }>;
+    env_conds?: string[];
+  };
 }
 
 export interface RaiseRequest {

@@ -1,15 +1,5 @@
 import type { SimUIState } from '../../hooks/useDirectorSim';
 
-const STATIC_TURNS = [
-  { turn: 1, cls: 'type-action', desc: '雨夜归家' },
-  { turn: 2, cls: 'type-dialogue', desc: '书房初遇' },
-  { turn: 3, cls: 'type-info', desc: '周婶送茶' },
-  { turn: 4, cls: 'type-conflict', desc: '保险柜疑云' },
-  { turn: 5, cls: 'type-dialogue', desc: '沉默对峙' },
-  { turn: 6, cls: 'type-action', desc: '文件异动' },
-  { turn: 7, cls: 'type-dialogue', desc: '李文试探' },
-];
-
 function pad(n: number): string {
   return n < 10 ? '0' + n : String(n);
 }
@@ -82,7 +72,7 @@ export function TimelineBar({
     </>
   );
 
-  const showStatic = state.finishedTurns.length === 0 && state.current === null;
+  const hasNoData = state.finishedTurns.length === 0 && state.current === null;
   const viewing = state.viewing;
 
   return (
@@ -97,7 +87,7 @@ export function TimelineBar({
         </div>
         <div className="tl-meta">
           <span>速度 1x</span>
-          <span>共 {state.turn ?? 7} 回合 / {state.eventCards.length || 23} 事件</span>
+          <span>共 {state.turn ?? 0} 回合 / {state.eventCards.length} 事件</span>
         </div>
         <div className="tl-legend">
           <span className="legend-item">
@@ -115,40 +105,34 @@ export function TimelineBar({
         </div>
       </div>
       <div className="tl-track">
-        {showStatic
-          ? STATIC_TURNS.map((t) => (
-              <div className={`turn-node ${t.cls} ${t.turn === 7 ? 'current' : ''}`} key={`static-${t.turn}`}>
-                <span className="turn-dot"></span>
-                <span className="turn-label">T-{pad(t.turn)}</span>
-                <span className="turn-desc">{t.desc}</span>
-              </div>
-            ))
-          : (
-            <>
-              {state.archives.map((arc) => {
-                const isViewing = viewing?.turn === arc.turn;
-                return (
-                  <div
-                    className={`turn-node ${arc.cls} ${isViewing ? 'viewing' : ''}`}
-                    key={`arc-${arc.turn}`}
-                    title={`点击查看 T-${pad(arc.turn)} · ${arc.summary}`}
-                    onClick={() => handleNodeClick(arc.turn)}
-                  >
-                    <span className="turn-dot"></span>
-                    <span className="turn-label">T-{pad(arc.turn)}</span>
-                    <span className="turn-desc">{arc.summary}</span>
-                  </div>
-                );
-              })}
-              {state.current && (
-                <div className="turn-node current">
+        {hasNoData ? (
+          <div className="timeline-empty">暂无回合记录。点「播放」开始推演，回合节点会实时出现。</div>
+        ) : (
+          <>
+            {state.archives.map((arc) => {
+              const isViewing = viewing?.turn === arc.turn;
+              return (
+                <div
+                  className={`turn-node ${arc.cls} ${isViewing ? 'viewing' : ''}`}
+                  key={`arc-${arc.turn}`}
+                  title={`点击查看 T-${pad(arc.turn)} · ${arc.summary}`}
+                  onClick={() => handleNodeClick(arc.turn)}
+                >
                   <span className="turn-dot"></span>
-                  <span className="turn-label">T-{pad(state.current.turn)}</span>
-                  <span className="turn-desc">{state.current.summary}</span>
+                  <span className="turn-label">T-{pad(arc.turn)}</span>
+                  <span className="turn-desc">{arc.summary}</span>
                 </div>
-              )}
-            </>
-          )}
+              );
+            })}
+            {state.current && (
+              <div className="turn-node current">
+                <span className="turn-dot"></span>
+                <span className="turn-label">T-{pad(state.current.turn)}</span>
+                <span className="turn-desc">{state.current.summary}</span>
+              </div>
+            )}
+          </>
+        )}
       </div>
     </footer>
   );

@@ -64,7 +64,7 @@ export const CHARS: CharSpec[] = [
 ];
 
 export function charOf(id: string): CharSpec {
-  return CHARS.find((c) => c.id === id) || CHARS[0];
+  return CHARS.find((c) => c.id === id) || { id, name: id, portrait: '', mood: '—', goal: '', weight: 0, emotion: 0, beliefs: [] };
 }
 
 export function charName(id: string): string {
