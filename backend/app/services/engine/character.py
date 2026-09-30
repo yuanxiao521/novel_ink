@@ -133,7 +133,7 @@ class CharacterEngine:
         if not llm.available:
             return
         chunks: list[str] = []
-        async for tok in llm.stream_cheap_text(prompt, model=settings.model_strong):
+        async for tok in llm.chat_stream(prompt, model=settings.model_strong):
             chunks.append(tok)
             yield tok
         if chunks:

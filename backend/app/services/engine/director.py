@@ -344,7 +344,7 @@ class DirectorEngine:
         logger.info("[director-chat] 作者问：%s", message)
         chunks: list[str] = []
         try:
-            async for tok in llm_client.stream_cheap_text(prompt, temperature=0.7):
+            async for tok in llm_client.chat_stream(prompt, temperature=0.7):
                 chunks.append(tok)
                 yield tok
         except Exception as e:  # noqa: BLE001 —— 网络抖动等：记日志，向调用方报"导演无法回应"

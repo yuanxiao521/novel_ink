@@ -241,7 +241,7 @@ def build_graph(plan_cfg: PlanCfg, decide_fn: DecideFn, converge_fn: ConvergeFn,
                 "行为：\n" + "\n".join(act_summary)
             )
             parts = []
-            async for token in llm_client.stream_cheap_text(prompt):
+            async for token in llm_client.chat_stream(prompt):
                 parts.append(token)
                 full_text += token
                 writer({"kind": "prose_delta", "turn": sim.world.turn, "delta": token})

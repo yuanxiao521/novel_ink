@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 
+from app.services.engine.schema_retry import validate_and_retry
 from app.services.llm.client import client as llm_client
 
 logger = logging.getLogger(__name__)
@@ -77,6 +78,45 @@ _FALLBACK_CARDS = [
     {"icon": "🧭", "title": "秘境探险", "desc": "主角坠崖后进入上古剑冢，获得可吞噬血脉的残缺功法。", "type": "world"},
 ]
 
+
+def _validate_plan(raw: object) -> str | None:
+    """骨架校验器（0 token）：缺章节/缺标题/场景不是数组 → 返回错误描述，通过返回 None。"""
+    if not isinstance(raw, dict):
+        return "顶层必须是 JSON 对象"
+    chapters = raw.get("chapters")
+    if not isinstance(chapters, list) or not chapters:
+        return "缺少非空 chapters 数组"
+    for i, ch in enumerate(chapters):
+        if not isinstance(ch, dict):
+            return f"chapters[{i}] 必须是对象"
+        if not str(ch.get("title") or "").strip():
+            return f"chapters[{i}] 缺少 title"
+        if not isinstance(ch.get("scenes"), list):
+            return f"chapters[{i}] 缺少 scenes 数组"
+    return None
+
+
+def _validate_cards(raw: object) -> str | None:
+    """灵感卡校验器：必须是数组且每项有 title。"""
+    if not isinstance(raw, list):
+        return "必须是数组"
+    for i, c in enumerate(raw):
+        if not isinstance(c, dict) or not str(c.get("title") or "").strip():
+            return f"cards[{i}] 缺少 title"
+    return None
+
+
+def _validate_rules(raw: object) -> str | None:
+    """规则校验器：数组且每项有 concept / constraint。"""
+    if not isinstance(raw, list):
+        return "必须是数组"
+    for i, r in enumerate(raw):
+        if not isinstance(r, dict):
+            return f"rules[{i}] 必须是对象"
+        if not str(r.get("concept") or "").strip() or not str(r.get("constraint") or "").strip():
+            return f"rules[{i}] 缺 concept 或 constraint"
+    return None
+
 _PLAN_PROMPT = """你是小说【主笔】（总编剧）。你的职责：把作者的一句话方向扩成可执行的书籍骨架。
 只负责结构，绝不写现场台词；角色行为、对白、情绪都留给角色与导演涌现。
 注意：
@@ -108,6 +148,8 @@ constraint_keywords（约束表述词，如「不能」「只能」）。
 async def plan_skelly(direction: str, context: str = "", inspirations: list[dict] | None = None) -> dict:
     """主笔产出书籍骨架（预览态）。LLM 不可用/产出非法 → 抛 ValueError（路由转 503）。
 
+    阶段③：结构化输出经 `validate_and_retry` 校验——骨架缺章/缺标题/缺场景数组时
+    带错误反馈重生成（≤ guard_retry_max 次），全部失败才抛错，**不落库**。
     上下文拼装：{context}（书 synopsis 等）+ {inspirations}（已采纳灵感卡 title/desc，
     P1-1 灵感→骨架落地，把"已在酝酿的设定"喂给主笔）。
     """
@@ -120,22 +162,23 @@ async def plan_skelly(direction: str, context: str = "", inspirations: list[dict
         base += f"\n\n作者已在酝酿以下设定（规划时必须吸收/不矛盾）：\n{lines}"
     prompt = _PLAN_PROMPT.format(direction=direction or "（未提供，按经典玄幻开局生成）",
                                  context=base)
-    raw = await llm_client.call_cheap(prompt, PLAN_SCHEMA)
-    if not isinstance(raw, dict) or not raw.get("chapters"):
-        raise ValueError("主笔产出为空或结构非法")
+    raw = await validate_and_retry(llm_client, prompt, PLAN_SCHEMA, _validate_plan)
     return raw
 
 
 async def generate_cards(direction: str) -> list[dict]:
     """主笔生成灵感卡（3~5 张）。LLM 不可用/产出非法 → 确定性回退模板卡。
 
+    阶段③：经 `validate_and_retry` 校验（数组+每项有 title），重试仍失败 → 回退模板卡。
     返回规范化 dict 列表（icon/title/desc/type；source/adopted 由服务层落库时补）。
     """
     cards: list[dict] = []
     if llm_client.available and (direction or "").strip():
-        raw = await llm_client.call_cheap(_CARDS_PROMPT.format(direction=direction),
-                                          CARDS_SCHEMA)
-        if isinstance(raw, list):
+        try:
+            raw = await validate_and_retry(
+                llm_client, _CARDS_PROMPT.format(direction=direction),
+                CARDS_SCHEMA, _validate_cards,
+            )
             cards = [
                 {
                     "icon": str(c.get("icon") or "✦")[:16],
@@ -145,18 +188,28 @@ async def generate_cards(direction: str) -> list[dict]:
                 }
                 for c in raw if (c.get("title") or "").strip()
             ]
+        except ValueError:
+            logger.warning("[主笔] 灵感卡生成校验失败，回退模板卡")
     if not cards:
         cards = [dict(c) for c in _FALLBACK_CARDS]
     return cards[:5]
 
 
 async def parse_world_rules(rules_text: str) -> list[dict]:
-    """把「## 规则」自然语言段转结构化 WorldRule[]（model_cheap，解析一次）。"""
+    """把「## 规则」自然语言段转结构化 WorldRule[]（model_cheap，解析一次）。
+
+    阶段③：经 `validate_and_retry` 校验（数组+每项有 concept/constraint）；
+    重试仍失败 → 返回 []（规则解析是辅助，不阻塞骨架落库），记日志告警。
+    """
     if not llm_client.available or not (rules_text or "").strip():
         return []
-    raw = await llm_client.call_cheap(_RULES_PROMPT.format(rules_text=rules_text),
-                                      RULES_SCHEMA)
-    if not isinstance(raw, list):
+    try:
+        raw = await validate_and_retry(
+            llm_client, _RULES_PROMPT.format(rules_text=rules_text),
+            RULES_SCHEMA, _validate_rules,
+        )
+    except ValueError as e:
+        logger.warning("[主笔] 世界规则解析校验失败，本次跳过：%s", e)
         return []
     rules: list[dict] = []
     for r in raw:

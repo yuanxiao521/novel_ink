@@ -6,9 +6,13 @@
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+import logging
+import time
 import uuid
+from datetime import datetime
 from typing import AsyncIterator
 
 from langgraph.graph.state import CompiledStateGraph
@@ -19,6 +23,9 @@ from app.db.repo import Repo
 from app.errors import InvalidActionError, SceneNotFoundError, SimNotFoundError
 from app.schemas import models
 from app.services.engine.director import PlanCfg
+from app.services.llm.client import client as llm_client  # 模块级引用：便于测试统一替换（conftest）
+
+logger = logging.getLogger(__name__)
 
 
 def _scene_plan_cfg(plan_cfg_json: str, static_cfg: PlanCfg) -> PlanCfg:
@@ -71,7 +78,199 @@ class SimulationService:
         return await self.repo.get_scene(scene_id)
 
     async def get_scene_characters(self, scene_id: str) -> list[dict]:
-        return await self.repo.list_characters_by_scene(scene_id)
+        """场景可用角色 = 本书书级角色 + 场景特设角色。"""
+        return await self.repo.list_characters_for_scene(scene_id)
+
+    async def get_book_characters(self, book_id: str) -> list[dict]:
+        """书级角色库（人物页数据源）。"""
+        return await self.repo.list_characters_by_book(book_id)
+
+    # ---------------------------------------------------------------- 信念账本（书级 CRUD）
+    @staticmethod
+    def _valid_channel(channel: str) -> bool:
+        return channel in {"perceived", "told", "inferred"}
+
+    async def list_beliefs(self, book_id: str, char_id: str | None = None,
+                           channel: str | None = None) -> list[dict]:
+        return await self.repo.list_beliefs(book_id, char_id, channel)
+
+    async def create_belief(self, book_id: str, data: dict) -> dict:
+        """作者手写信念：edited=True、source=AUTHOR；channel 枚举/置信度 clamp 校验。"""
+        channel = str(data.get("channel") or "perceived")
+        if not self._valid_channel(channel):
+            raise InvalidActionError(f"非法 channel: {channel!r}")
+        cid = str(data.get("char_id") or "").strip()
+        if not cid:
+            raise InvalidActionError("必须指定 char_id")
+        text = str(data.get("text") or "").strip()
+        if not text:
+            raise InvalidActionError("信念内容 text 不能为空")
+        confidence = self._clamp_conf(data.get("confidence"))
+        bid = data.get("id") or f"bel-{uuid.uuid4().hex[:12]}"
+        await self.repo.save_belief({
+            "id": bid, "book_id": book_id, "char_id": cid,
+            "fact_id": str(data.get("fact_id") or ""),
+            "source_event_id": str(data.get("source_event_id") or "AUTHOR"),
+            "channel": channel, "text": text, "confidence": confidence,
+            "edited": True, "ts": int(time.time() * 1000),
+        })
+        return {"id": bid}
+
+    async def update_belief(self, belief_id: str, data: dict) -> dict:
+        cur = await self.repo.get_belief(belief_id)
+        if cur is None:
+            raise InvalidActionError(f"信念不存在: {belief_id}")
+        channel = str(data.get("channel") or cur["channel"])
+        if not self._valid_channel(channel):
+            raise InvalidActionError(f"非法 channel: {channel!r}")
+        text = str(data.get("text") if "text" in data else cur["text"]).strip()
+        if not text:
+            raise InvalidActionError("信念内容 text 不能为空")
+        await self.repo.save_belief({
+            "id": belief_id, "book_id": cur["book_id"], "char_id": cur["char_id"],
+            "fact_id": str(data.get("fact_id", cur["fact_id"]) or ""),
+            "source_event_id": str(data.get("source_event_id", cur["source_event_id"]) or ""),
+            "channel": channel, "text": text,
+            "confidence": self._clamp_conf(data.get("confidence", cur["confidence"])),
+            "edited": True, "ts": int(time.time() * 1000),
+        })
+        return {"id": belief_id}
+
+    async def delete_belief(self, belief_id: str) -> None:
+        await self.repo.delete_belief(belief_id)
+
+    @staticmethod
+    def _clamp_conf(value) -> float:
+        try:
+            return max(0.0, min(1.0, float(value)))
+        except (TypeError, ValueError):
+            return 0.5
+
+    # ---------------------------------------------------------------- Dashboard 聚合
+    async def get_dashboard(self, book_id: str) -> dict:
+        from datetime import datetime
+
+        book = await self.repo.get_book(book_id) or {}
+        tree = await self.repo.get_book_tree(book_id)
+        chapters = sorted((tree or {}).get("chapters") or [], key=lambda c: c.get("order_no") or 0)
+        foreshadows = await self.repo.list_foreshadows(book_id)
+        beliefs = await self.repo.list_beliefs(book_id)
+        active_sims = await self.repo.list_active_sims_by_book(book_id)
+        active_scene_ids = {s["scene_id"] for s in active_sims if s.get("scene_id")}
+
+        # 场景全量（含 final_prose / 时间戳）
+        scenes_all: list[dict] = []
+        for ch in chapters:
+            scenes_all += await self.repo.list_scenes_by_chapter(ch["id"])
+        scenes_by_ch: dict[str, list[dict]] = {}
+        for s in scenes_all:
+            scenes_by_ch.setdefault(s["chapter_id"], []).append(s)
+
+        word_count = sum(len(s.get("final_prose") or "") for s in scenes_all)
+
+        # ---- 时间线：章状态 + 章字数 ----
+        timeline: list[dict] = []
+        chapters_done = 0
+        for ch in chapters:
+            ch_scenes = scenes_by_ch.get(ch["id"], [])
+            fully_done = bool(ch_scenes) and all(
+                (s.get("final_prose") or "").strip() for s in ch_scenes
+            )
+            if fully_done:
+                status, label, badge = "done", "已定稿", "done"
+                chapters_done += 1
+            elif any(s["id"] in active_scene_ids for s in ch_scenes):
+                status, label, badge = "current", "导演中", "draft"
+            elif ch_scenes:
+                status, label, badge = "draft", "创作中", "draft"
+            else:
+                status, label, badge = "planned", "规划中", "planned"
+            timeline.append({
+                "chapter_id": ch["id"], "title": ch.get("title") or "",
+                "order_no": ch.get("order_no") or 0, "tone": ch.get("tone") or "",
+                "status": status, "label": label, "badge": badge,
+                "word_count": sum(len(s.get("final_prose") or "") for s in ch_scenes),
+            })
+
+        # ---- 伏笔 KPI + 待办 ----
+        open_fs = [f for f in foreshadows if f.get("status") in {"buried", "in_progress"}]
+        closed_fs = [f for f in foreshadows if f.get("status") == "closed"]
+        open_with_target = [f for f in open_fs if f.get("expected_close_scene")]
+        edited_beliefs = sum(1 for b in beliefs if b.get("edited"))
+
+        todos: list[dict] = []
+        if open_with_target:
+            todos.append({
+                "severity": "warn", "title": "伏笔待回收",
+                "desc": f"{len(open_with_target)} 条伏笔已设定期望回收场景，注意按节推进",
+            })
+        elif open_fs:
+            todos.append({
+                "severity": "warn", "title": "伏笔推进中",
+                "desc": f"{len(open_fs)} 条伏笔仍处埋设/推进态",
+            })
+        if edited_beliefs:
+            todos.append({
+                "severity": "info", "title": "手改信念",
+                "desc": f"角色信念账本中有 {edited_beliefs} 条作者手改/编辑，注意与推演事实保持一致",
+            })
+        if chapters_done == len(chapters) and chapters:
+            todos.append({"severity": "ok", "title": "全书可发布", "desc": "所有章节已定稿，建议进阅读台做最终校对"})
+
+        # ---- 健康分（派生占位）----
+        health = 100 - min(20, len(open_fs) * 3) - min(30, (len(chapters) - chapters_done) * 5)
+        health = max(0, min(100, health))
+
+        # ---- 金句（从最终正文抽对话行）----
+        quotes: list[dict] = []
+        for s in scenes_all:
+            prose = s.get("final_prose") or ""
+            for line in prose.splitlines():
+                line = line.strip()
+                if line and (("「" in line and "」" in line) or (line.startswith('"') and line.endswith('"'))):
+                    quotes.append({"text": line[:60], "author": s.get("title") or "—— 正文"})
+                    if len(quotes) >= 3:
+                        break
+            if len(quotes) >= 3:
+                break
+
+        # ---- 近 4 周热力（按定稿时间散布字数，数据不足则全 0）----
+        heat = [0.0] * 28
+        now = datetime.now()
+        for s in scenes_all:
+            if not (s.get("final_prose") or "").strip():
+                continue
+            ts = s.get("updated_at") or s.get("created_at")
+            if not ts:
+                continue
+            try:
+                d = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+                if d.tzinfo is not None:
+                    d = d.astimezone().replace(tzinfo=None)
+            except ValueError:
+                continue
+            days = (now - d).days
+            if 0 <= days < 28:
+                heat[27 - days] += len(s.get("final_prose") or "")
+
+        return {
+            "book": {"id": book.get("id"), "title": book.get("title") or "",
+                     "genre": book.get("genre") or "", "status": book.get("status") or "",
+                     "chapter_count": book.get("chapter_count") or 0,
+                     "cover_init": book.get("cover_init") or "墨"},
+            "kpi": {
+                "chapters_done": chapters_done,
+                "chapters_total": len(chapters),
+                "word_count": word_count,
+                "foreshadow_open": len(open_fs),
+                "foreshadow_closed": len(closed_fs),
+                "health": health,
+            },
+            "timeline": timeline,
+            "todos": todos,
+            "quotes": quotes,
+            "heat": [round(x) for x in heat],
+        }
 
     async def get_book_tree(self, book_id: str) -> dict | None:
         return await self.repo.get_book_tree(book_id)
@@ -116,9 +315,48 @@ class SimulationService:
     async def delete_scene(self, scene_id: str) -> None:
         await self.repo.delete_scene(scene_id)
 
-    async def create_character(self, scene_id: str, data: dict) -> dict:
+    async def replace_chapter_scenes(self, chapter_id: str, scenes: list[dict]) -> dict:
+        """场景级全量替换（主笔升级 · 部分修改）：传入该章完整场景数组。
+
+        服务端 diff：带 id 且存在的 → 更新；无 id/不存在的 → 新建；
+        已存在但不在传入数组 → 删除（cursor_pos 按数组序重排）。
+        不触碰 scenario_def / initial_facts / 角色卡，只改结构字段。
+        """
+        chapter = await self.repo.get_chapter(chapter_id)
+        if chapter is None:
+            raise SceneNotFoundError(f"未找到章节: {chapter_id}")
+
+        existing = await self.repo.list_scenes_by_chapter(chapter_id)
+        existing_map = {s["id"]: s for s in existing}
+        keep: list[str] = []
+        for j, sc in enumerate(scenes):
+            sid = (sc.get("id") or "").strip()
+            fields = {
+                "title": str(sc.get("title") or f"场景{j + 1}"),
+                "stage_desc": str(sc.get("stage_desc") or ""),
+                "goal": str(sc.get("goal") or ""),
+                "content_desc": str(sc.get("content_desc") or ""),
+                "cursor_pos": j + 1,
+            }
+            if sid and sid in existing_map:
+                await self.repo.save_scene({**fields, "id": sid})
+                keep.append(sid)
+            else:
+                r = await self.create_scene(chapter_id, fields)
+                keep.append(r["id"])
+        for sid in existing_map:
+            if sid not in keep:
+                await self.repo.delete_scene(sid)
+        return {"chapter_id": chapter_id, "scenes": len(keep)}
+
+    async def create_character(self, book_id: str, data: dict, scene_id: Optional[str] = None) -> dict:
+        """书级创建：scene_id 省略 → 全书共享；给定 → 该场景特设角色（群演/NPC）。"""
         cid = data.get("id") or f"char-{uuid.uuid4().hex[:8]}"
-        data = {**data, "id": cid, "scene_id": scene_id}
+        data = {**data, "id": cid, "book_id": book_id}
+        if scene_id:
+            data["scene_id"] = scene_id
+        else:
+            data.pop("scene_id", None)
         if data.get("spec_json"):
             models.CharacterCard.model_validate_json(data["spec_json"])  # 校验④层字段
         await self.repo.save_character(data)
@@ -138,6 +376,7 @@ class SimulationService:
         """主笔产出骨架预览（不落库）：POST /books/{id}/plan。
 
         inspiration_ids 非空时，把已采纳灵感卡作为"已在酝酿的设定"注入主笔（P1-1 灵感落地）。
+        上下文统一走 chief_perceive（书树+记忆+灵感+伏笔），杜绝从零重排。
         """
         book = await self.repo.get_book(book_id)
         if book is None:
@@ -151,12 +390,17 @@ class SimulationService:
             inspirations = [c for c in all_cards
                             if c.get("id") in ids and c.get("adopted")]
 
-        plan = await plan_skelly(direction, book.get("synopsis", ""),
+        context = await self.chief_perceive(book_id)
+        plan = await plan_skelly(direction, context or book.get("synopsis", ""),
                                  inspirations=inspirations or None)
         return {"book_id": book_id, "plan": plan}
 
     async def commit_book_plan(self, book_id: str, plan: dict) -> dict:
-        """确认骨架 → 落库：worldview/world_rules + chapters/scenes + foreshadows。"""
+        """确认骨架 → 落库：worldview/world_rules + chapters/scenes + foreshadows。
+
+        全量替换语义：先清理该书已有的章节/场景，再按 plan 重新创建，
+        避免多次提交 plan 时因标题差异导致重复章节/场景。
+        """
         book = await self.repo.get_book(book_id)
         if book is None:
             raise SceneNotFoundError(f"未找到书: {book_id}")
@@ -174,45 +418,32 @@ class SimulationService:
             "world_rules_json": json.dumps(world_rules, ensure_ascii=False),
         })
 
-        # 2) 章节 + 场景（幂等：按标题匹配已有记录，存在则跳过不重复创建）
+        # 2) 清理已有章节/场景（全量替换），再按 plan 创建
         existing_chapters = await self.list_chapters(book_id)
-        existing_chapter_map = {c.get("title"): c for c in existing_chapters}
+        for ch in existing_chapters:
+            await self.repo.delete_chapter(ch["id"])
+
         chapters = plan.get("chapters") or []
         scene_ids: list[str] = []
         for i, ch in enumerate(chapters):
             ch_title = ch.get("title", f"第{i + 1}章")
-            if ch_title in existing_chapter_map:
-                cid = existing_chapter_map[ch_title]["id"]
-                # 更新已有章节的元信息（摘要/基调/字数）
-                await self.update_chapter(cid, {
-                    "summary": ch.get("summary", ""),
-                    "order_no": i + 1,
-                    "tone": ch.get("tone", ""),
-                    "tension_curve": ch.get("tension_curve", ""),
-                    "word_target": int(ch.get("word_target") or 0),
-                })
-            else:
-                cid = (await self.create_chapter(book_id, {
-                    "title": ch_title,
-                    "summary": ch.get("summary", ""),
-                    "order_no": i + 1,
-                    "tone": ch.get("tone", ""),
-                    "tension_curve": ch.get("tension_curve", ""),
-                    "word_target": int(ch.get("word_target") or 0),
-                }))["id"]
+            cid = (await self.create_chapter(book_id, {
+                "title": ch_title,
+                "summary": ch.get("summary", ""),
+                "order_no": i + 1,
+                "tone": ch.get("tone", ""),
+                "tension_curve": ch.get("tension_curve", ""),
+                "word_target": int(ch.get("word_target") or 0),
+            }))["id"]
 
-            # 收集该章已有场景标题
-            existing_scenes = await self.list_scenes(cid)
-            existing_scene_titles = {s.get("title") for s in existing_scenes}
             scenes = ch.get("scenes") or []
             for j, sc in enumerate(scenes):
                 sc_title = sc.get("title", f"场景{j + 1}")
-                if sc_title in existing_scene_titles:
-                    # 场景已存在，跳过
-                    continue
                 r = await self.create_scene(cid, {
                     "title": sc_title,
                     "stage_desc": sc.get("stage_desc", ""),
+                    "goal": sc.get("goal", ""),
+                    "content_desc": sc.get("content_desc", ""),
                     "cursor_pos": j + 1,
                     "initial_facts_json": json.dumps(
                         [{"id": f"F-{k:03d}", "text": t, "kind": "env", "visible_to": []}
@@ -296,16 +527,423 @@ class SimulationService:
     async def delete_inspiration(self, card_id: str) -> None:
         await self.repo.delete_inspiration(card_id)
 
-    # ---------------------------------------------------------------- 主笔共创对话（P0-2）
-    async def chief_chat_stream(self, book_id: str, messages: list[dict]):
-        """主笔共创对话：注入书骨架上下文，逐 token 流式返回（无 LLM 时回退确定性文案）。"""
-        from app.services.llm.client import client as llm_client
+    async def update_inspiration(self, card_id: str, data: dict) -> dict:
+        """编辑灵感卡（title/desc/type/icon 白名单，改不改 adopted）。"""
+        cur = await self.repo.get_inspiration(card_id)
+        if cur is None:
+            raise InvalidActionError(f"未找到灵感卡: {card_id}")
+        merged = dict(cur)
+        for k in ("title", "desc", "type", "icon"):
+            if k in data:
+                merged[k] = data[k]
+        await self.repo.save_inspiration(merged)
+        return merged
 
+    # ---------------------------------------------------------------- 主笔书级记忆（记忆域）+ 感知装配
+    _MEMORY_TOPICS = {"direction", "setting", "constraint", "history", "preference"}
+
+    async def list_memories(self, book_id: str, topic: str | None = None,
+                            limit: int = 50) -> list[dict]:
+        return await self.repo.list_memories(book_id, topic or None, limit)
+
+    async def create_memory(self, book_id: str, data: dict) -> dict:
+        """作者/主笔写下书级记忆。topic 白名单校验，content 非空。"""
+        topic = str(data.get("topic") or "direction")
+        if topic not in self._MEMORY_TOPICS:
+            raise InvalidActionError(f"非法 topic: {topic!r}，可选 {sorted(self._MEMORY_TOPICS)}")
+        content = str(data.get("content") or "").strip()
+        if not content:
+            raise InvalidActionError("记忆内容 content 不能为空")
+        mid = data.get("id") or f"mem-{uuid.uuid4().hex[:10]}"
+        await self.repo.save_memory({
+            "id": mid, "book_id": book_id, "topic": topic,
+            "content": content, "source": str(data.get("source") or "author"),
+            "ts": int(time.time() * 1000),
+        })
+        return {"id": mid}
+
+    async def update_memory(self, memory_id: str, data: dict) -> dict:
+        topic = data.get("topic")
+        if topic and topic not in self._MEMORY_TOPICS:
+            raise InvalidActionError(f"非法 topic: {topic!r}")
+        await self.repo.save_memory({**data, "id": memory_id})
+        return {"id": memory_id}
+
+    async def delete_memory(self, memory_id: str) -> None:
+        await self.repo.delete_memory(memory_id)
+
+    async def chief_perceive(self, book_id: str, limit: int = 20) -> str:
+        """主笔感知装配：书树摘要 + 书级记忆 + 已采纳灵感卡 + 伏笔现状 → 上下文文本。
+
+        所有主笔入口（对话/规划/正文生成）统一走此函数，杜绝「从零重排、多书串味」。
+        """
+        parts: list[str] = []
         tree = await self.repo.get_book_tree(book_id)
-        title = (tree or {}).get("title", "（本书）")
-        synopsis = ((tree or {}).get("synopsis") or "").strip()
-        chapters = [(c.get("title") or "") for c in ((tree or {}).get("chapters") or [])][:6]
-        chap_txt = " / ".join(chapters) if chapters else "（暂无章节）"
+        if tree:
+            title = tree.get("title") or "（本书）"
+            synopsis = ((tree.get("synopsis") or "").strip()) or "（未填写）"
+            chapters = [(c.get("title") or "") for c in (tree.get("chapters") or [])]
+            chap_txt = " / ".join(chapters) if chapters else "（暂无章节）"
+            parts.append(f"书名：{title}\n一句方向：{synopsis}\n章节骨架：{chap_txt}")
+
+        memories = await self.repo.list_memories(book_id, limit=limit)
+        if memories:
+            mem_lines = [f"- [{m['topic']}] {m['content']}" for m in memories]
+            parts.append("书级记忆（已定设定/约束，务必遵守）：\n" + "\n".join(mem_lines))
+
+        try:
+            inspirations = await self.repo.list_inspirations(book_id)
+            adopted = [c for c in inspirations if c.get("adopted")]
+            if adopted:
+                lines = "\n".join(
+                    f"- {c.get('title')}：{c.get('desc', '')}"
+                    for c in adopted if c.get("title")
+                )
+                parts.append("已采纳灵感卡（作为伏笔/设定，不得矛盾）：\n" + lines)
+        except Exception:  # noqa: BLE001
+            pass
+
+        try:
+            foreshadows = await self.repo.list_foreshadows(book_id)
+            pending = [f for f in foreshadows if f.get("status") != "closed"]
+            if pending:
+                lines = "\n".join(
+                    f"- {f.get('text')}（状态：{f.get('status')}，期望回收场：{f.get('expected_close_scene') or '未定'}）"
+                    for f in pending
+                )
+                parts.append("伏笔现状（未回收伏笔，写作注意呼应/埋设）：\n" + lines)
+        except Exception:  # noqa: BLE001
+            pass
+
+        try:
+            # 世界状态现状（S1：战力/道具/时间/术语/数字骨架，过滤作者手改项）
+            world_states = await self.repo.list_world_states(book_id)
+            canon = [w for w in world_states if not w.get("edited")]
+            if canon:
+                lines = "\n".join(
+                    f"- [{w.get('kind')}] {w.get('name')}：{w.get('value')}"
+                    for w in canon[:30]
+                )
+                parts.append("世界状态现状（战力/道具/时间/术语/关键数字，写作保持与账本一致）：\n" + lines)
+        except Exception:  # noqa: BLE001
+            pass
+
+        return "\n\n".join(parts)
+
+    # ---------------------------------------------------------------- 正文协作工作区（阶段④）
+    async def _scene_and_book(self, scene_id: str):
+        """场景 + 其所属书 id（反查，供账本装配）。"""
+        scene = await self.repo.get_scene(scene_id)
+        if scene is None:
+            raise SceneNotFoundError(f"未找到场景: {scene_id}")
+        book_id = ""
+        chapter = await self.repo.get_chapter(scene.get("chapter_id") or "")
+        if chapter:
+            book_id = chapter.get("book_id") or ""
+        return scene, book_id
+
+    async def prose_draft(self, scene_id: str) -> dict:
+        """写手：生成正文初稿（注入角色卡 + 前文摘要），并留 writer 追溯记录。"""
+        from app.services.engine.prose import draft_prose
+
+        scene, book_id = await self._scene_and_book(scene_id)
+        memory = await self.chief_perceive(book_id, limit=8) if book_id else ""
+        existing = str(scene.get("final_prose") or "")
+
+        # 获取出场角色卡
+        characters = await self.repo.list_characters_for_scene(scene_id) if scene_id else []
+
+        # 感知注入：相关世界状态（只喂"与本场相关的状态"，不灌全书）
+        #   - character/item/term：仅当 name 匹配出场角色 → 精确相关
+        #   - time/numeric：全书级，直接注入（时间锚/关键数字是全局骨架）
+        world_states = []
+        if book_id:
+            try:
+                all_ws = await self.repo.list_world_states(book_id)
+                cast_names = {c.get("name") or "" for c in characters if c.get("name")}
+                world_states = [
+                    s for s in all_ws
+                    if (s.get("kind") in {"character", "item", "term"}
+                        and (s.get("name") or "") in cast_names)
+                    or s.get("kind") in {"time", "numeric"}
+                ]
+            except Exception:
+                world_states = []
+
+        # 获取前一场景正文摘要（同章节内 cursor_pos 更小的最后一个场景）
+        prev_prose = ""
+        chapter_id = scene.get("chapter_id") or ""
+        if chapter_id:
+            try:
+                all_scenes = await self.repo.list_scenes_by_chapter(chapter_id)
+                cur_pos = scene.get("cursor_pos") or 0
+                prev_scenes = [s for s in all_scenes
+                               if (s.get("cursor_pos") or 0) < cur_pos
+                               and s.get("final_prose", "").strip()]
+                if prev_scenes:
+                    prev_scenes.sort(key=lambda s: s.get("cursor_pos") or 0, reverse=True)
+                    prev_text = prev_scenes[0].get("final_prose", "")
+                    prev_prose = prev_text[:200] + ("……" if len(prev_text) > 200 else "")
+            except Exception:
+                pass
+
+        text = await draft_prose(llm_client, scene, memory, existing,
+                                 characters=characters, prev_prose=prev_prose,
+                                 world_states=world_states)
+        await self.repo.save_prose_note({
+            "id": f"note-{uuid.uuid4().hex[:10]}",
+            "scene_id": scene_id, "kind": "writer", "status": "approved",
+            "suggestion": "写手生成正文初稿" if text else "（模型未接入，初审稿为空由前端提示）",
+            "before": existing, "after": text, "created_by": "writer",
+            "ts": int(time.time() * 1000),
+        })
+        return {"text": text}
+
+    async def prose_review(self, scene_id: str, text: str) -> dict:
+        """体检员：结构化体检报告 → editor note（pending）。"""
+        from app.services.engine.prose import review_prose
+
+        scene, _ = await self._scene_and_book(scene_id)
+        report = await review_prose(llm_client, scene, text)
+        issues = report.get("issues") or []
+        summary = "；".join(f"[{i.get('severity')}] {i.get('text')}"
+                            for i in issues[:3]) or "（无问题）"
+        await self.repo.save_prose_note({
+            "id": f"note-{uuid.uuid4().hex[:10]}",
+            "scene_id": scene_id, "kind": "editor", "status": "pending",
+            "suggestion": f"{report.get('overall') or ''}\n{summary}"[:600],
+            "before": text, "after": "", "created_by": "editor",
+            "ts": int(time.time() * 1000),
+        })
+        return {"report": report, "note_status": "pending"}
+
+    async def prose_polish(self, scene_id: str, text: str) -> dict:
+        """润色师：去 AI 味润色（只改写法）→ polisher note（pending，after 供 [应用]）。"""
+        from app.services.engine.prose import polish_prose
+
+        await self._scene_and_book(scene_id)
+        out = await polish_prose(llm_client, text)
+        await self.repo.save_prose_note({
+            "id": f"note-{uuid.uuid4().hex[:10]}",
+            "scene_id": scene_id, "kind": "polisher", "status": "pending",
+            "suggestion": str(out.get("summary") or "")[:200],
+            "before": text, "after": str(out.get("after") or text),
+            "created_by": "polisher", "ts": int(time.time() * 1000),
+        })
+        return {"after": out.get("after", text), "summary": out.get("summary", "")}
+
+    async def prose_verify(self, scene_id: str, text: str) -> dict:
+        """质检员：伏笔/信念/因果对照 → verifier note（pending，明细存 payload_json，
+        作者 approve 时据此落账本）。"""
+        from app.services.engine.prose import verify_prose
+
+        scene, book_id = await self._scene_and_book(scene_id)
+        foreshadows = (await self.repo.list_foreshadows(book_id)) if book_id else []
+        beliefs = (await self.repo.list_beliefs(book_id)) if book_id else []
+        world_states = (await self.repo.list_world_states(book_id)) if book_id else []
+        opinion = await verify_prose(llm_client, text, foreshadows, beliefs, world_states)
+        sug = (
+            f"伏笔推进 {len(opinion.get('foreshadow_updates') or [])} 条；"
+            f"信念变化 {len(opinion.get('belief_deltas') or [])} 条；"
+            f"因果 {len(opinion.get('causal') or [])} 条；"
+            f"状态变化 {len(opinion.get('state_deltas') or [])} 条"
+        )
+        if opinion.get("risks"):
+            sug += "；风险：" + "；".join(str(r) for r in opinion["risks"][:2])[:300]
+        await self.repo.save_prose_note({
+            "id": f"note-{uuid.uuid4().hex[:10]}",
+            "scene_id": scene_id, "kind": "verifier", "status": "pending",
+            "suggestion": sug[:600], "before": text, "after": "", "created_by": "verifier",
+            "payload_json": json.dumps(opinion, ensure_ascii=False),
+            "ts": int(time.time() * 1000),
+        })
+        return {"opinion": opinion, "note_status": "pending"}
+
+    async def list_prose_notes(self, scene_id: str) -> list[dict]:
+        await self._scene_and_book(scene_id)
+        return await self.repo.list_prose_notes(scene_id)
+
+    async def review_prose_note(self, note_id: str, approve: bool) -> dict:
+        """作者审阅：approve verifier note → 读 payload_json 明细先记账（伏笔推进/信念/因果）
+        再置 approved；reject → 仅置 rejected 不写库。已审阅的 note 幂等拒绝。"""
+        note = await self.repo.get_prose_note(note_id)
+        if note is None:
+            raise InvalidActionError(f"审计记录不存在: {note_id}")
+        if note["status"] != "pending":
+            raise InvalidActionError(f"记录已审阅（{note['status']}），不允许重复操作")
+
+        bookkeeping = False
+        if approve and note["kind"] == "verifier":
+            try:
+                opinion = json.loads(note.get("payload_json") or "{}") or {}
+                scene, book_id = await self._scene_and_book(note["scene_id"])
+                if book_id and (opinion.get("foreshadow_updates") or opinion.get("belief_deltas")):
+                    bookkeeping = await self._apply_verify_bookkeeping(
+                        book_id, opinion, source_event_id="PROSE_VERIFY")
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[prose] verifier 记账失败，note 保持 pending：%s", e)
+                raise InvalidActionError(f"质检记账失败，未批准：{e}") from e
+
+        status = "approved" if approve else "rejected"
+        await self.repo.save_prose_note({
+            "id": note_id, "status": status,
+            "reviewed_at": datetime.now(),
+        })
+        return {"id": note_id, "status": status, "bookkeeping": bookkeeping}
+
+    async def _apply_verify_bookkeeping(self, book_id: str, opinion: dict,
+                                        source_event_id: str = "PROSE_VERIFY",
+                                        scene_no: int = 0) -> int:
+        """把质检/记账明细落账本（阶段⑤ 记账 Agent 核心写入）：
+        1) 伏笔推进（text 匹配书级伏笔 → status/notes 追加）；2) 信念新增（角色名→id）；
+        3) 世界状态（S1：战力/道具/时间/术语/数字，按 key upsert，幂等）；
+        4) 因果：无事件流跳过。返回实际写入条数（幂等由调用方 hash/状态闸门保证）。"""
+        written = 0
+        # 1) 伏笔推进
+        foreshadows = {f["id"]: f for f in await self.repo.list_foreshadows(book_id)}
+        valid_status = {"in_progress", "closed"}
+        for u in opinion.get("foreshadow_updates") or []:
+            text = str(u.get("text") or "").strip()
+            if not text:
+                continue
+            target = next(
+                (f for f in foreshadows.values()
+                 if f.get("text") and (text in f["text"] or f["text"] in text)),
+                None,
+            )
+            if target is None:
+                continue  # 账本里没有对应伏笔 → 不凭空新增（避免污染）
+            status = str(u.get("status") or "in_progress")
+            if status not in valid_status:
+                status = "in_progress"
+            reason = str(u.get("reason") or "")
+            prev_notes = str(target.get("notes") or "")
+            extra = f"[{source_event_id}] {reason}".strip() if reason else f"[{source_event_id}] 正文推进"
+            await self.repo.save_foreshadow({
+                "id": target["id"], "status": status,
+                "notes": f"{prev_notes}\n{extra}".strip() if prev_notes else extra,
+            })
+            written += 1
+
+        # 2) 信念新增（角色名 → 书级角色 id）
+        chars = {c.get("name"): c.get("id") for c in await self.repo.list_characters_by_book(book_id)}
+        valid_channel = {"perceived", "told", "inferred"}
+        for b in opinion.get("belief_deltas") or []:
+            cid = chars.get(str(b.get("char") or ""))
+            txt = str(b.get("text") or "").strip()
+            if not cid or not txt:
+                continue
+            channel = str(b.get("channel") or "perceived")
+            if channel not in valid_channel:
+                channel = "perceived"
+            await self.repo.save_belief({
+                "id": f"bel-{uuid.uuid4().hex[:10]}",
+                "book_id": book_id, "char_id": cid,
+                "fact_id": "", "source_event_id": source_event_id,
+                "channel": channel, "text": txt, "confidence": 0.7,
+                "edited": False, "ts": int(time.time() * 1000),
+            })
+            written += 1
+
+        # 3) 世界状态 upsert（S1：战力/道具/时间/术语/数字，按 key 幂等）
+        valid_kind = {"character", "item", "time", "term", "numeric"}
+        now_ts = int(time.time() * 1000)
+        # 真 upsert：按 (kind, key) 匹配既有行，复用其 id（历史/手建 id 不一定是 ws-<hash>，
+        # 用 key 定位才能正确更新而非插重复行）
+        existing = {}
+        try:
+            exist_rows = await self.repo.list_world_states(book_id)
+        except Exception:  # noqa: BLE001
+            exist_rows = []
+        for e in exist_rows:
+            existing[(str(e.get("kind") or ""), str(e.get("key") or ""))] = e
+
+        for s in opinion.get("state_deltas") or []:
+            kind = str(s.get("kind") or "").strip()
+            key = str(s.get("key") or "").strip()
+            value = str(s.get("value") or "").strip()
+            if kind not in valid_kind or not key or not value:
+                continue
+            prev_row = existing.get((kind, key))
+            if prev_row is not None:
+                rid = str(prev_row.get("id") or "")
+                prev_value = str(prev_row.get("value") or "")
+                name = str(s.get("name") or prev_row.get("name") or "").strip()
+            else:
+                # 无既有行 → 稳定 hash id 新建
+                nid = hashlib.sha256(f"{book_id}|{kind}|{key}".encode()).hexdigest()[:14]
+                rid = f"ws-{nid}"
+                prev_value = str(s.get("previous_value") or "")
+                name = str(s.get("name") or "").strip()
+            await self.repo.save_world_state({
+                "id": rid, "book_id": book_id,
+                "kind": kind,
+                "name": name,
+                "key": key,
+                "value": value,
+                "scene_no": scene_no,
+                "source_event_id": source_event_id,
+                "previous_value": prev_value,
+                "edited": False, "ts": now_ts,
+            })
+            existing[(kind, key)] = {"id": rid, "name": name}
+            written += 1
+        return written
+
+    async def save_scene_prose(self, scene_id: str, text: str) -> dict:
+        """作者保存正文 → final_prose 幂等落库，保存后**自动触发记账 Agent**（后台任务，
+        同内容重复保存 unchanged 不触发，天然幂等）。"""
+        scene, _ = await self._scene_and_book(scene_id)
+        text = (text or "").strip()
+        if str(scene.get("final_prose") or "") == text:
+            return {"scene_id": scene_id, "unchanged": True, "word_count": len(text)}
+        await self.update_scene(scene_id, {"final_prose": text})
+        # 后台记账：不阻塞保存返回；异常被 _bookkeep_after_save 捕获，不影响正文落库
+        asyncio.create_task(self._bookkeep_after_save(scene_id, text))
+        return {"scene_id": scene_id, "unchanged": False, "word_count": len(text)}
+
+    async def _bookkeep_after_save(self, scene_id: str, text: str) -> None:
+        """保存正文后的自动记账（阶段⑤ 记账 Agent）：LLM 分析 final_prose ↔ 伏笔/信念账本
+        → 落账本（复用 _apply_verify_bookkeeping）+ 审计记录（kind=verifier·approved·created_by=bookkeeping）。
+        失败仅告警，不滚动保存结果。"""
+        try:
+            from app.services.engine.prose import verify_prose
+
+            scene, book_id = await self._scene_and_book(scene_id)
+            if not book_id or not text.strip() or not llm_client.available:
+                return
+            foreshadows = await self.repo.list_foreshadows(book_id)
+            beliefs = await self.repo.list_beliefs(book_id)
+            world_states = await self.repo.list_world_states(book_id)
+            scene_no = scene.get("cursor_pos") or 0
+            opinion = await verify_prose(llm_client, text, foreshadows, beliefs, world_states)
+            written = await self._apply_verify_bookkeeping(
+                book_id, opinion, source_event_id="PROSE_SAVE", scene_no=scene_no)
+            sug = (
+                f"自动记账：伏笔 {len(opinion.get('foreshadow_updates') or [])} 条 / "
+                f"信念 {len(opinion.get('belief_deltas') or [])} 条 / "
+                f"状态 {len(opinion.get('state_deltas') or [])} 条，写入 {written} 条"
+            )
+            await self.repo.save_prose_note({
+                "id": f"note-{uuid.uuid4().hex[:10]}",
+                "scene_id": scene_id, "kind": "verifier", "status": "approved",
+                "suggestion": sug[:300], "before": "", "after": text[:500],
+                "created_by": "bookkeeping", "reviewed_at": datetime.now(),
+                "payload_json": json.dumps(opinion, ensure_ascii=False),
+                "ts": int(time.time() * 1000),
+            })
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[prose] 保存后自动记账失败（不影响保存）：%s", e)
+
+    # ---------------------------------------------------------------- 主笔共创对话（P0-2）
+    async def list_chat_histories(self, book_id: str) -> list[dict]:
+        """获取某书的主笔共创对话历史（ts 正序）。"""
+        return await self.repo.list_chat_histories(book_id)
+
+    async def chief_chat_stream(self, book_id: str, messages: list[dict]):
+        """主笔共创对话：注入感知上下文（书树+记忆+灵感+伏笔），逐 token 流式返回。
+        对话完成后自动保存历史到 chat_histories 表（按书隔离）。"""
+        perceived = await self.chief_perceive(book_id)
 
         last_user = ""
         for m in messages:
@@ -314,19 +952,47 @@ class SimulationService:
         last_user = last_user[-800:]
 
         prompt = (
-            f"你是小说【主笔】（总编剧）。下面是当前这本书的骨架上下文：\n"
-            f"书名：{title}\n一句方向：{synopsis or '（未填写）'}\n"
-            f"章节骨架：{chap_txt}\n"
+            f"你是小说【主笔】（总编剧）。这是当前这本书的感知上下文：\n"
+            f"{perceived or '（暂无上下文）'}\n"
             f"请基于以上上下文，回答作者问题：{last_user}\n"
             f"回答用中文，简洁有干货，可给建议或反问，不要空话。"
         )
 
+        full_reply = ""
         if llm_client.available:
-            async for token in llm_client.stream_cheap_text(prompt):
+            async for token in llm_client.chat_stream(prompt):
+                full_reply += token
                 yield token
         else:
-            yield f"主笔已收到：{last_user}。当前模型未接入，我先按这本书的骨架给你一点参考——"
-            yield "可以先从「一句话方向」或选中骨架里的某一章让我展开；需要真实创作建议时接入模型即可。"
+            fallback = (
+                f"主笔已收到：{last_user}。当前模型未接入，我先按这本书的骨架给你一点参考——"
+                "可以先从「一句话方向」或选中骨架里的某一章让我展开；需要真实创作建议时接入模型即可。"
+            )
+            full_reply = fallback
+            yield fallback
+
+        # 对话完成后保存历史（user 消息 + assistant 回复）
+        import time as _time
+        now_ts = int(_time.time() * 1000)
+        history_entries = []
+        # 保存本轮 user 消息
+        history_entries.append({
+            "id": f"ch_{now_ts}_u",
+            "role": "user",
+            "content": last_user,
+            "ts": now_ts,
+        })
+        # 保存 assistant 回复
+        history_entries.append({
+            "id": f"ch_{now_ts}_a",
+            "role": "assistant",
+            "content": full_reply,
+            "ts": now_ts + 1,
+        })
+        try:
+            await self.repo.append_chat_histories(book_id, history_entries)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[service] 保存对话历史失败（不影响对话）：%s", e)
 
     # ---------------------------------------------------------------- 场景收束 + 换场（S3）
     async def analyze_scene_close(self, sim_id: str) -> dict:
@@ -554,16 +1220,17 @@ class SimulationService:
         static_cfg = spec["plan_cfg"] if isinstance(spec["plan_cfg"], PlanCfg) else PlanCfg()
         plan_cfg = _scene_plan_cfg(scene.get("plan_cfg_json") or "", static_cfg)
 
-        char_rows = await self.repo.list_characters_by_scene(scene_id)
+        char_rows = await self.repo.list_characters_for_scene(scene_id)
         characters: dict[str, models.CharacterCard] = {}
         for row in char_rows:
             try:
                 card = models.CharacterCard.model_validate_json(row["spec_json"])
             except Exception:  # noqa: BLE001
                 continue
+            if not card.id or card.id in characters:  # 防御：spec 未回填 id 的坏卡不装配
+                continue
             characters[card.id] = card
-        if not characters:  # 兜底：DB 无角色卡 → 静态场景装配
-            characters = dict(spec["characters"])
+        # 空黑板：书级/特设均无角色卡 → 保持空（不再注入静态剧情角色，见导演台空态引导）
 
         sim = models.SimulationState(
             scenario=scenario_def,
@@ -573,13 +1240,20 @@ class SimulationService:
             world=models.WorldState(scene_id=scene_id, title=scene["title"]),
         )
         sim.characters = characters
-        sim.world.facts = list(initial_facts) if initial_facts else list(spec["initial_facts"])
+        # 空黑板：仅写场景初始事实；无初始事实则 facts 空（不回退模板剧情事实），
+        # 舞台布置（stage_desc）作为环境条件承载，供导演/旁白感知开场。
+        sim.world.facts = list(initial_facts)
+        stage_desc = str(scene.get("stage_desc") or "").strip()
+        if stage_desc:
+            sim.world.env_conds = [stage_desc]
         sim.director.ending_options = list(plan_cfg.ending_options)
         sim.action_order = [c for c in sim.characters]
+        # 空世界标记（characters 与 facts 皆空）：前端据此显示"配置上场角色"引导
+        if not sim.characters and not sim.world.facts:
+            sim.scratch["empty_world"] = True
         await self._inject_world_rules(sim, book_id)
 
         sid = f"sim-{uuid.uuid4().hex[:8]}"
-        await self.repo.init_schema()
         await self.repo.save(sid, sim)
         return {"sim_id": sid, "resumed": False}
 
@@ -623,6 +1297,7 @@ class SimulationService:
             # 回合归档：回退/查看任意回合
             self._archive_turn(sim, prev_events)
             await self.repo.save(sim_id, sim)
+            await self._sync_beliefs(sim)  # 信念账本草稿 → 书级 Belief 表（幂等）
             # 单回合内举手 → 暂停等作者拍板（外层 SSE 循环会因 pending 停止）
             if sim.director.raise_request.pending:
                 break
@@ -652,6 +1327,22 @@ class SimulationService:
         # 回合结束：主戏角色写回 + 归档 + 落库
         self._archive_turn(sim, prev_events)
         await self.repo.save(sim_id, sim)
+        await self._sync_beliefs(sim)  # 信念账本草稿 → 书级 Belief 表（幂等）
+
+    async def _sync_beliefs(self, sim: models.SimulationState) -> None:
+        """把 sim 运行时信念幂等 upsert 到书级 Belief 表（自动沉淀：edited=False，只增不删）。"""
+        if not sim.book_id:
+            return
+        for char_id, items in sim.beliefs.items():
+            for b in items:
+                key = f"{sim.book_id}:{char_id}:{b.fact_id}"
+                bid = f"bel-{hashlib.md5(key.encode('utf-8')).hexdigest()[:12]}"
+                await self.repo.save_belief({
+                    "id": bid, "book_id": sim.book_id, "char_id": char_id,
+                    "fact_id": b.fact_id, "source_event_id": b.source_event_id,
+                    "channel": b.channel.value if hasattr(b.channel, "value") else str(b.channel),
+                    "text": b.text, "confidence": b.confidence, "edited": False, "ts": b.ts,
+                })
 
     @staticmethod
     def _archive_turn(sim: models.SimulationState, prev_events: int) -> None:
@@ -736,21 +1427,115 @@ class SimulationService:
             sim.ended = False  # 举手暂停恢复：cleared by author approval
             text = payload.get("text", "")
             if text:
-                self._append_director_hint(sim, text)
+                await self._append_director_hint(sim, text)
         elif a in {"reject", "驳回"}:
             sim.director.raise_request.pending = False
         elif a == "inject_event":
             text = payload.get("text", "")
             if text:
-                self._append_director_hint(sim, text)
-        elif a in {"adjust_weight", "expose"}:
-            # 预留：导演工具（软引导走 plan()，intervene 仅处理举手 + 注入）
-            pass
+                await self._append_director_hint(sim, text)
+        elif a == "expose":
+            # 信息曝光：把某事实记为目标角色的 belief（来源 DIR，§6.1 信息差/筹码）
+            from app.services.engine.world import WorldEngine
+
+            fid = payload.get("fact_id", "")
+            target = payload.get("target_char_id", "")
+            fact = next((f for f in sim.world.facts if f.id == fid), None)
+            if fact is None:
+                raise InvalidActionError(f"无可曝光事实: {fid}")
+            if target not in sim.characters:
+                raise InvalidActionError(f"未知目标角色: {target}")
+            try:
+                channel = models.BeliefChannel(str(payload.get("channel") or "perceived"))
+            except ValueError:
+                raise InvalidActionError(f"非法 channel: {payload.get('channel')!r}")
+            WorldEngine(sim).record_belief(
+                char_id=target, fact_id=fact.id,
+                source_event_id="DIR", channel=channel, text=fact.text, confidence=0.8,
+            )
+        elif a == "adjust_weight":
+            # 目标权重调整：必须伴随剧情内因（§6.1 因果律）——内因以 hint 事件写回可感知
+            from app.services.engine.world import WorldEngine
+
+            char_id = payload.get("char_id", "")
+            goal_id = payload.get("goal_id", "")
+            delta = float(payload.get("delta") or 0)
+            reason = str(payload.get("reason") or "").strip()
+            if not reason:
+                raise InvalidActionError("目标权重调整必须附带剧情内因（§6.1 因果律）")
+            WorldEngine(sim).apply_goal_adjust(models.GoalAdjust(
+                char_id=char_id, goal_id=goal_id, delta=delta, reason=reason,
+            ))
+            await self._append_director_hint(sim, f"目标权重：{char_id}·{goal_id} {delta:+g}（因：{reason}）")
         else:
             raise InvalidActionError(f"未知介入动作: {action}")
         await self.repo.save(sim_id, sim)
+        await self._sync_beliefs(sim)  # expose 等介入会产生信念 → 同步书级账本
         return sim
 
+    async def get_inject_palette(self, sim_id: str) -> dict:
+        """介入工具的下拉数据源：当前运行时 facts（可曝光）+ 角色动态目标（可调权）。"""
+        sim = await self._load_sim(sim_id)
+        facts = [
+            {"id": f.id, "text": f.text, "kind": f.kind, "visible_to": f.visible_to}
+            for f in sim.world.facts if f.active
+        ]
+        characters = [
+            {
+                "id": cid, "name": c.name,
+                "dynamic_goals": [
+                    {"id": g.id, "text": g.text, "weight": g.weight}
+                    for g in c.dynamic_goals
+                ],
+            }
+            for cid, c in sim.characters.items()
+        ]
+        return {"turn": sim.world.turn, "facts": facts, "characters": characters}
+
+    # ---------------------------------------------------------------- 选角（Cast）
+    async def set_sim_cast(self, sim_id: str, character_ids: list[str]) -> dict:
+        """配置上场角色：以书级角色库重建 sim.characters / action_order。
+
+        cast 不重启局面：facts/events/turn 保留；beliefs 裁剪到仍上场的角色。
+        """
+        sim = await self._load_sim(sim_id)
+        if not sim.book_id:
+            raise InvalidActionError("该 sim 无书级上下文，无法选角")
+
+        book_chars = await self.repo.list_characters_by_book(sim.book_id)
+        by_id: dict[str, dict] = {}
+        for c in book_chars:
+            try:
+                card = models.CharacterCard.model_validate_json(c["spec_json"])
+            except Exception:  # noqa: BLE001 —— 坏卡跳过
+                continue
+            if not card.id:  # spec 未回填 id：跳过（无法作为上场角色）
+                continue
+            # 双 id 兼容：sim 侧以 spec.id 为 key（与 start 装配一致）；row id 兜底（旧数据/未回填）
+            by_id[card.id] = c
+            by_id.setdefault(c.get("id"), c)
+        unknown = [c for c in character_ids if c not in by_id]
+        if unknown:
+            raise InvalidActionError(f"以下角色不在该书角色库: {unknown}")
+
+        characters: dict[str, models.CharacterCard] = {}
+        for cid in character_ids:
+            row = by_id[cid]
+            try:
+                card = models.CharacterCard.model_validate_json(row["spec_json"])
+            except Exception:  # noqa: BLE001 —— spec 损坏跳过，不让坏卡上车
+                continue
+            characters[card.id] = card
+
+        sim.characters = characters
+        sim.action_order = [c for c in characters]
+        sim.beliefs = {k: v for k, v in sim.beliefs.items() if k in characters}
+        # 选角后不再视为"空世界"（即便无 facts，也有上场角色等待开场）
+        sim.scratch.pop("empty_world", None)
+        await self.repo.save(sim_id, sim)
+        return {"sim_id": sim_id, "characters": list(sim.characters.keys())}
+
+    @staticmethod
     async def _append_director_hint(sim: models.SimulationState, text: str) -> None:
         from app.services.engine.world import WorldEngine
 

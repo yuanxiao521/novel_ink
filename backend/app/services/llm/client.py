@@ -99,13 +99,13 @@ class LLMClient:
         """廉模型：导演/张力评估/成文。"""
         return await self._chat(settings.model_cheap, prompt, json_schema)
 
-    async def stream_cheap_text(self, prompt: str, temperature: float = 0.8,
-                                model: Optional[str] = None) -> AsyncIterator[str]:
-        """流式纯文本生成（成文/内心独白用）：逐 token yield 文本增量。
+    async def chat_stream(self, prompt: str, temperature: float = 0.8,
+                          model: Optional[str] = None) -> AsyncIterator[str]:
+        """流式纯文本生成（成文/对话/内心独白）：逐 token yield 文本增量。
 
-        model 缺省用廉模型；内部参数化以便角色思考层复用强模型。
-        不可用/失败则结束（调用方负责回退）。注意 OpenAI 兼容流式字段在
-        `choices[0].delta.content`。
+        model 缺省用廉模型（导演/主笔/成文）；角色独白等需要时可显式传强模型
+        （如 settings.model_strong）。不可用/失败则空流结束（调用方负责回退）。
+        注意 OpenAI 兼容流式字段在 `choices[0].delta.content`。
         """
         if not self.available:
             return
