@@ -1,18 +1,33 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { Sidebar } from '../components/backoffice/Sidebar';
 import { ThemeToggle } from '../components/backoffice/ThemeToggle';
+import { useDialog } from '../components/common/Dialog';
 import { API_BASE } from '../types/types';
 import {
   listBooks,
   fetchBookTree,
   listInspirations,
+  createBook,
   createInspiration,
   generateInspirations,
+  createChapter,
+  updateChapter,
+  deleteChapter,
+  createScene,
+  updateScene,
+  deleteScene,
+  replaceChapterScenes,
   setInspirationAdopted,
+  updateInspiration,
   chiefChat,
+  listChatHistory,
+  listMemories,
+  createMemory,
+  updateMemory,
+  deleteMemory,
 } from '../api/novel';
-import type { BookMeta, BookTree, InspirationCard } from '../api/novel';
+import type { BookMeta, BookTree, BookMemoryMeta, InspirationCard, MemoryTopic, SceneMeta, ScenePatchItem } from '../api/novel';
 
 /* ---------- 类型 ---------- */
 
@@ -42,23 +57,24 @@ const typeClassOf = (t: string): 'plot' | 'character' | 'world' =>
 const typeLabel = (t: string): string =>
   t === 'character' ? '人物' : t === 'world' ? '世界观' : '剧情';
 
-/* ---------- 初始数据（mock 回退：API 不可用时降级，不白屏） ---------- */
+/* 书级记忆 topic → 中文标签（主笔 · 记忆域） */
+const MEMORY_TOPIC_LABEL: Record<string, string> = {
+  direction: '方向',
+  setting: '设定',
+  constraint: '约束',
+  history: '历史',
+  preference: '偏好',
+};
 
-const INIT_MESSAGES: ChatMsg[] = [
-  { sender: 'user', text: '我想写一个废材复仇的玄幻小说，主角被宗门背叛，最后发现妹妹是神族钥匙。' },
-  {
-    sender: 'agent',
-    text: '已理解你的方向。我建议把主线拆成「玄脉被夺→古玉残魂→重返宗门→妹妹的踪迹」四个章节，先建立复仇动机，再逐步揭开世界观。',
-    toolCall: null,
-    miniOutline: [
-      { num: '第一章', title: '玄脉被夺' },
-      { num: '第二章', title: '古玉残魂' },
-      { num: '第三章', title: '重返宗门' },
-      { num: '第四章', title: '妹妹的踪迹' },
-    ],
-  },
-  { sender: 'agent', text: '我刚用工具生成了 5 张灵感卡，其中「双生妹妹」和「血脉真相」可以作为贯穿全书的伏笔，你觉得如何？', toolCall: '🔧 已生成 5 张灵感卡' },
+const MEMORY_TOPIC_OPTIONS: Array<[string, string]> = [
+  ['direction', '方向'],
+  ['setting', '设定'],
+  ['constraint', '约束'],
+  ['history', '历史'],
+  ['preference', '偏好'],
 ];
+
+/* ---------- 常量 ---------- */
 
 const TENSION = { chapters: ['开篇', '上升', '转折', '高潮', '回落', '结局'], tension: [12, 28, 55, 92, 48, 20] };
 
@@ -73,14 +89,23 @@ const zoneCls = (badge?: string) => {
 /* ---------- 页面 ---------- */
 
 export function MaestroPage() {
+  const { showPrompt, showConfirm } = useDialog();
+  const nav = useNavigate();
   const [books, setBooks] = useState<BookMeta[]>([]);
   const [bookId, setBookId] = useState('');
   const [tree, setTree] = useState<BookTree | null>(null);
 
+  // —— 结构编辑（原规划页功能并入：选节点 → 编辑/增删）——
+  const [selKind, setSelKind] = useState<'book' | 'chapter' | 'scene' | null>(null);
+  const [selId, setSelId] = useState('');
+  // 编辑草稿（选中章/场景的字段）：编辑完成后点「保存」落库
+  const [draft, setDraft] = useState<Record<string, string | number> | null>(null);
+  const [flash, setFlash] = useState('');
+
   const [direction, setDirection] = useState('废材少年因血脉被夺，发誓重返宗门讨回公道');
   const [directionOpen, setDirectionOpen] = useState(false);
   const [inspirations, setInspirations] = useState<InspirationCard[]>([]);
-  const [messages, setMessages] = useState<ChatMsg[]>(INIT_MESSAGES);
+  const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [showSkeleton, setShowSkeleton] = useState(true);
   const [agentState, setAgentState] = useState<'idle' | 'thinking' | 'tool'>('idle');
@@ -95,6 +120,23 @@ export function MaestroPage() {
 
   const [drawerOpen, setDrawerOpen] = useState(true);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  // 灵感卡编辑（内联表单）
+  const [cardEditing, setCardEditing] = useState<string | null>(null);
+  const [cardDraft, setCardDraft] = useState<{ title: string; desc: string; type: 'plot' | 'character' | 'world' }>({ title: '', desc: '', type: 'plot' });
+
+  // 书级记忆（主笔 · 记忆域）：列表 + 添加/编辑表单
+  const [memories, setMemories] = useState<BookMemoryMeta[]>([]);
+  const [memoryOpen, setMemoryOpen] = useState(false);
+  const [memoryFormOpen, setMemoryFormOpen] = useState(false);
+  const [memoryEditingId, setMemoryEditingId] = useState<string | null>(null);
+  const [memoryDraftTopic, setMemoryDraftTopic] = useState<MemoryTopic>('constraint');
+  const [memoryDraftContent, setMemoryDraftContent] = useState('');
+
+  // 章节场景编辑器（主笔升级 · 场景级部分修改）：整章场景列表内联编辑 → 批量保存
+  const [sceneEditorOpen, setSceneEditorOpen] = useState(false);
+  const [sceneEdits, setSceneEdits] = useState<ScenePatchItem[]>([]);
+  const [sceneSaving, setSceneSaving] = useState(false);
 
   const statusText = agentState === 'idle' ? '主笔空闲中' : agentState === 'thinking' ? '主笔思考中' : '调用工具中';
 
@@ -115,8 +157,12 @@ export function MaestroPage() {
     if (!bookId) {
       setTree(null);
       setInspirations([]);
+      setMemories([]);
+      setMessages([]);
       return;
     }
+    // 切换书时清空对话，加载该书历史
+    setMessages([]);
     void (async () => {
       try {
         const t = await fetchBookTree(bookId);
@@ -129,6 +175,23 @@ export function MaestroPage() {
         if (cards.length > 0) setInspirations(cards);
       } catch {
         /* API 失败保留现有数据（降级） */
+      }
+      try {
+        setMemories(await listMemories(bookId));
+      } catch {
+        /* API 失败保留现有数据（降级） */
+      }
+      // 加载该书对话历史
+      try {
+        const history = await listChatHistory(bookId);
+        if (history.length > 0) {
+          setMessages(history.map((h) => ({
+            sender: h.role === 'user' ? 'user' as const : 'agent' as const,
+            text: h.content,
+          })));
+        }
+      } catch {
+        /* 无历史或 API 失败，保持空白 */
       }
     })();
   }, [bookId]);
@@ -237,9 +300,25 @@ export function MaestroPage() {
     }
   };
 
+  const startEditCard = (card: InspirationCard) => {
+    setCardEditing(card.id);
+    setCardDraft({ title: card.title, desc: card.desc, type: card.type });
+  };
+
+  const saveCardEdit = async (card: InspirationCard) => {
+    if (!cardDraft.title.trim()) return;
+    try {
+      await updateInspiration(card.id, cardDraft);
+      setInspirations((prev) => prev.map((c) => (c.id === card.id ? { ...c, ...cardDraft } : c)));
+      setCardEditing(null);
+    } catch (e) {
+      console.warn('[灵感] 编辑失败：', e);
+    }
+  };
+
   const addCard = async () => {
     if (!bookId) return;
-    const title = window.prompt('输入灵感标题');
+    const title = await showPrompt('输入灵感标题');
     if (!title) return;
     try {
       const card = await createInspiration(bookId, {
@@ -383,6 +462,184 @@ export function MaestroPage() {
     setOutlineExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
+  /* ---------- 书级记忆（主笔 · 记忆域） ---------- */
+  const loadMemories = async () => {
+    if (!bookId) return;
+    try { setMemories(await listMemories(bookId)); } catch { /* 降级保留 */ }
+  };
+  const startAddMemory = () => {
+    setMemoryEditingId(null);
+    setMemoryDraftTopic('constraint');
+    setMemoryDraftContent('');
+    setMemoryFormOpen(true);
+  };
+  const startEditMemory = (m: BookMemoryMeta) => {
+    setMemoryEditingId(m.id);
+    setMemoryDraftTopic(m.topic);
+    setMemoryDraftContent(m.content);
+    setMemoryFormOpen(true);
+  };
+  const saveMemory = async () => {
+    const content = memoryDraftContent.trim();
+    if (!content) return;
+    try {
+      if (memoryEditingId) {
+        await updateMemory(memoryEditingId, { topic: memoryDraftTopic, content });
+      } else {
+        await createMemory(bookId, { topic: memoryDraftTopic, content });
+      }
+      setMemoryFormOpen(false);
+      await loadMemories();
+      briefFlash('记忆已保存');
+    } catch (e) {
+      briefFlash(`记忆保存失败：${String(e)}`);
+    }
+  };
+  const removeMemory = async (id: string) => {
+    const ok = await showConfirm('删除记忆', '删除后主笔将不再感知到这条设定，不可恢复。', true);
+    if (!ok) return;
+    try {
+      await deleteMemory(id);
+      await loadMemories();
+      briefFlash('已删除');
+    } catch (e) {
+      briefFlash(`删除失败：${String(e)}`);
+    }
+  };
+
+  /* ---------- 结构编辑（原规划页功能并入） ---------- */
+  const briefFlash = (t: string) => { setFlash(t); setTimeout(() => setFlash(''), 1500); };
+  const loadBooks = async () => {
+    try { const bs = await listBooks(); setBooks(bs); } catch { /* ignore */ }
+  };
+  const reload = async () => {
+    try { const t = await fetchBookTree(bookId); setTree(t); } catch { /* ignore */ }
+  };
+
+  /* ---------- 章节场景编辑器（场景级部分修改 · 整体保存） ---------- */
+  const openSceneEditor = () => {
+    const ch = tree?.chapters.find((c) => c.id === selId);
+    if (!ch) return;
+    setSceneEdits((ch.scenes ?? []).map((s) => ({
+      id: s.id,
+      title: s.title,
+      stage_desc: s.stage_desc ?? '',
+      goal: s.goal ?? '',
+      content_desc: s.content_desc ?? '',
+    })));
+    setSceneEditorOpen(true);
+  };
+  const setSceneEditField = (i: number, field: keyof ScenePatchItem, v: string) => {
+    setSceneEdits((prev) => prev.map((r, idx) => (idx === i ? { ...r, [field]: v } : r)));
+  };
+  const addSceneRow = () => setSceneEdits((prev) => [...prev, { title: '', stage_desc: '', goal: '', content_desc: '' }]);
+  const removeSceneRow = (i: number) => setSceneEdits((prev) => prev.filter((_, idx) => idx !== i));
+  const saveSceneEdits = async () => {
+    if (sceneSaving) return;
+    const cleaned = sceneEdits.filter((s) => (s.title ?? '').trim() || s.id);
+    if (cleaned.length === 0) { briefFlash('场景列表为空'); return; }
+    setSceneSaving(true);
+    try {
+      await replaceChapterScenes(selId, cleaned);
+      setSceneEditorOpen(false);
+      await reload();
+      briefFlash('场景已保存');
+    } catch (e) {
+      briefFlash(`保存失败：${String(e)}`);
+    } finally {
+      setSceneSaving(false);
+    }
+  };
+
+  const letDraft = (kind: 'chapter' | 'scene', id: string) => {
+    if (kind === 'chapter') {
+      const c = tree?.chapters.find((x) => x.id === id);
+      if (!c) return;
+      const d = { title: c.title, tone: c.tone ?? 'action', word_target: c.word_target ?? 0, summary: c.summary ?? '' };
+      setDraft(JSON.parse(JSON.stringify(d)));
+      setSelId(id); setSelKind('chapter');
+    } else {
+      const s = tree?.chapters.flatMap((x) => x.scenes).find((x) => x.id === id);
+      if (!s) return;
+      const d = {
+        title: s.title,
+        scenario_def: s.scenario_def ?? 'betrayal_night',
+        stage_desc: s.stage_desc ?? '',
+        goal: s.goal ?? '',
+        content_desc: s.content_desc ?? '',
+      };
+      setDraft(JSON.parse(JSON.stringify(d)));
+      setSelId(id); setSelKind('scene');
+    }
+  };
+
+  const saveDraft = async () => {
+    if (!draft) return;
+    try {
+      if (selKind === 'chapter') {
+        await updateChapter(selId, { title: draft.title as string, tone: draft.tone as string, word_target: Number(draft.word_target) || 0, summary: draft.summary as string });
+      } else if (selKind === 'scene') {
+        await updateScene(selId, {
+          title: draft.title as string,
+          scenario_def: draft.scenario_def as string,
+          stage_desc: draft.stage_desc as string,
+          goal: (draft.goal as string) ?? '',
+          content_desc: (draft.content_desc as string) ?? '',
+        });
+      }
+      await reload();
+      briefFlash('已保存');
+    } catch (e) {
+      briefFlash(`保存失败：${String(e)}`);
+    }
+  };
+  const setDraftField = (k: string, v: string) => setDraft((prev) => (prev ? { ...prev, [k]: v } : prev));
+
+  const onAddBook = async () => {
+    const title = await showPrompt('新书名', '新书');
+    if (!title) return;
+    try {
+      const b = await createBook({ title, genre: '玄幻', status: 'planned' });
+      await loadBooks();
+      setBookId(b.id);
+      briefFlash('已建书');
+    } catch (e) { briefFlash(`建书失败：${String(e)}`); }
+  };
+  const onAddChapter = async () => {
+    if (!tree) return;
+    const title = await showPrompt('章节名', `第 ${(tree.chapters.length || 0) + 1} 章`);
+    if (!title) return;
+    try {
+      await createChapter(tree.id, { title, order_no: tree.chapters.length || 0, tone: 'action' });
+      await reload(); briefFlash('已建章');
+    } catch (e) { briefFlash(`建章失败：${String(e)}`); }
+  };
+  const onAddScene = async () => {
+    const ch = tree?.chapters.find((c) => c.id === selId);
+    if (!ch) return;
+    const title = await showPrompt('场景名', `场景 ${(ch.scenes.length || 0) + 1}`);
+    if (!title) return;
+    try {
+      await createScene(selId, { title, scenario_def: 'betrayal_night', cursor_pos: 0, stage_desc: '' });
+      setSelKind(null); setSelId('');
+      await reload(); briefFlash('已建场景');
+    } catch (e) { briefFlash(`建场景失败：${String(e)}`); }
+  };
+  const onDeleteSel = async () => {
+    if (!selKind || !selId) return;
+    const ok = await showConfirm('删除节点', '将删除选中节点及其子级，不可恢复。', true);
+    if (!ok) return;
+    try {
+      if (selKind === 'chapter') await deleteChapter(selId);
+      else if (selKind === 'scene') await deleteScene(selId);
+      setSelKind(null); setSelId(''); setDraft(null);
+      await reload(); briefFlash('已删除');
+    } catch (e) { briefFlash(`删除失败：${String(e)}`); }
+  };
+  const enterDirector = (s: SceneMeta) => {
+    nav(`/director/${s.id}`, { state: { book_id: tree?.id, chapter_id: s.chapter_id } });
+  };
+
   const adoptable = inspirations.filter((c) => !c.adopted);
   const adopted = inspirations.filter((c) => c.adopted);
 
@@ -391,6 +648,7 @@ export function MaestroPage() {
       <Sidebar active="maestro" />
       <div className="main-col">
         <div className="maestro-workbench">
+          {flash && <div className="maestro-feedback">{flash}</div>}
           {/* 顶栏 */}
           <header className="maestro-topbar">
             <div className="topbar-left">
@@ -399,10 +657,20 @@ export function MaestroPage() {
                 <div className="book-title">
                   {tree ? tree.title : books.find((b) => b.id === bookId)?.title ?? '本书骨架'}
                 </div>
-                <div className="genre-tags">
-                  {(books.length > 1 ? books : []).slice(0, 3).map((b) => (
-                    <span className="genre-tag" key={b.id}>{b.genre || '玄幻'}</span>
-                  ))}
+                <div className="book-switch">
+                  <select
+                    className="char-scope-select"
+                    value={bookId}
+                    onChange={(e) => setBookId(e.target.value)}
+                    title="切换书"
+                    style={{ maxWidth: 220 }}
+                  >
+                    {books.length === 0 && <option value="">（暂无书）</option>}
+                    {books.map((b) => (
+                      <option key={b.id} value={b.id}>{b.title}</option>
+                    ))}
+                  </select>
+                  <button className="btn-icon" title="新建书" onClick={() => void onAddBook()}>＋</button>
                 </div>
               </div>
             </div>
@@ -473,17 +741,50 @@ export function MaestroPage() {
                 )}
                 {adoptable.map((card) => (
                   <div className="inspiration-card" key={card.id}>
-                    <div className="card-header">
-                      <div className={`card-icon ${typeClassOf(card.type)}`}>{card.icon}</div>
-                      <div className="card-title-wrap">
-                        <h4 className="card-title">{card.title}</h4>
-                        <p className="card-desc">{card.desc}</p>
+                    {cardEditing === card.id ? (
+                      <div className="card-edit-form">
+                        <input
+                          type="text"
+                          className="char-edit-input"
+                          value={cardDraft.title}
+                          onChange={(e) => setCardDraft({ ...cardDraft, title: e.target.value })}
+                        />
+                        <textarea
+                          className="char-edit-input"
+                          rows={2}
+                          value={cardDraft.desc}
+                          onChange={(e) => setCardDraft({ ...cardDraft, desc: e.target.value })}
+                        />
+                        <select
+                          className="char-scope-select"
+                          value={cardDraft.type}
+                          onChange={(e) => setCardDraft({ ...cardDraft, type: e.target.value as 'plot' | 'character' | 'world' })}
+                        >
+                          <option value="plot">剧情</option>
+                          <option value="character">人物</option>
+                          <option value="world">世界观</option>
+                        </select>
+                        <div className="card-footer">
+                          <button className="btn-adopt" onClick={() => void saveCardEdit(card)}>保存</button>
+                          <button className="btn-adopt" onClick={() => setCardEditing(null)}>取消</button>
+                        </div>
                       </div>
-                    </div>
-                    <div className="card-footer">
-                      <span className="type-tag">{typeLabel(card.type)}</span>
-                      <button className="btn-adopt" onClick={() => void toggleAdopt(card)}>采纳</button>
-                    </div>
+                    ) : (
+                      <>
+                        <div className="card-header">
+                          <div className={`card-icon ${typeClassOf(card.type)}`}>{card.icon}</div>
+                          <div className="card-title-wrap">
+                            <h4 className="card-title">{card.title}</h4>
+                            <p className="card-desc">{card.desc}</p>
+                          </div>
+                        </div>
+                        <div className="card-footer">
+                          <span className="type-tag">{typeLabel(card.type)}</span>
+                          <button className="btn-adopt" onClick={() => void toggleAdopt(card)}>采纳</button>
+                          <button className="btn-adopt" onClick={() => startEditCard(card)}>编辑</button>
+                        </div>
+                      </>
+                    )}
                   </div>
                 ))}
               </div>
@@ -528,7 +829,7 @@ export function MaestroPage() {
                     全部展开
                   </button>
                   <button className="btn-text" onClick={() => setOutlineExpanded({})}>全部折叠</button>
-                  <Link to="/planning" className="btn-text">完整编辑</Link>
+                  <button className="btn-text" onClick={() => void onAddChapter()} disabled={!tree} title={tree ? '新增章节' : '先选一本书'}>＋ 加章</button>
                 </div>
               </div>
 
@@ -556,6 +857,178 @@ export function MaestroPage() {
                 </div>
               )}
 
+              {/* 结构编辑：选中章/场景的上下文操作条 + 内联编辑器 */}
+              {selKind && !draft && (
+                <div className="inspiration-card" style={{ margin: '12px 16px 0' }}>
+                  <div className="card-header">
+                    <div className="card-title-wrap">
+                      <h4 className="card-title">
+                        {selKind === 'chapter' || selKind === 'scene'
+                          ? (selKind === 'chapter'
+                              ? tree?.chapters.find((c) => c.id === selId)?.title
+                              : tree?.chapters.flatMap((c) => c.scenes).find((s) => s.id === selId)?.title)
+                          : tree?.title}
+                      </h4>
+                    </div>
+                  </div>
+                  <div className="card-footer">
+                    <span className="type-tag">{selKind === 'chapter' ? '章节' : selKind === 'scene' ? '场景' : '书'}</span>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                      {selKind === 'chapter' && (
+                        <>
+                          <button className="btn-adopt" onClick={() => void onAddScene()}>＋ 加场景</button>
+                          <button className="btn-adopt" onClick={openSceneEditor}>✎ 编辑场景列表</button>
+                        </>
+                      )}
+                      {selKind !== 'book' && (
+                        <>
+                          <button className="btn-adopt" onClick={() => letDraft(selKind as 'chapter' | 'scene', selId)}>✎ 编辑</button>
+                          <button className="btn-adopt" onClick={() => void onDeleteSel()}>删除</button>
+                        </>
+                      )}
+                      {selKind === 'scene' && (
+                        <>
+                          <button
+                            className="btn-adopt"
+                            onClick={() => {
+                              const s = tree?.chapters.flatMap((c) => c.scenes).find((x) => x.id === selId);
+                              if (s) enterDirector(s);
+                            }}
+                          >
+                            ▶ 进入导演台
+                          </button>
+                          <button className="btn-adopt" onClick={() => nav(`/studio/${selId}`)}>✎ 正文协作</button>
+                        </>
+                      )}
+                      <button className="btn-adopt" onClick={() => { setSelKind(null); setSelId(''); }}>取消</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* 章节场景编辑器（场景级部分修改 · 整体保存） */}
+              {sceneEditorOpen && (
+                <div className="card-edit-form scene-editor" style={{ margin: '12px 16px 0', padding: 12 }}>
+                  <div className="scene-editor-title">
+                    章节场景列表 —— 编辑后整体保存（缺省的列表项将被删除）
+                  </div>
+                  {sceneEdits.map((s, i) => (
+                    <div className="scene-edit-row" key={i}>
+                      <div className="scene-edit-fields">
+                        <input
+                          className="char-edit-input"
+                          placeholder="场景标题"
+                          value={s.title}
+                          onChange={(e) => setSceneEditField(i, 'title', e.target.value)}
+                        />
+                        <input
+                          className="char-edit-input"
+                          placeholder="舞台布置 stage_desc"
+                          value={s.stage_desc ?? ''}
+                          onChange={(e) => setSceneEditField(i, 'stage_desc', e.target.value)}
+                        />
+                        <input
+                          className="char-edit-input"
+                          placeholder="本场目标 goal"
+                          value={s.goal ?? ''}
+                          onChange={(e) => setSceneEditField(i, 'goal', e.target.value)}
+                        />
+                        <textarea
+                          className="char-edit-input"
+                          rows={2}
+                          placeholder="场景内容描述（事件梗概/冲突点/环境细节）"
+                          value={s.content_desc ?? ''}
+                          onChange={(e) => setSceneEditField(i, 'content_desc', e.target.value)}
+                        />
+                      </div>
+                      <button className="btn-adopt" title="删除该场景" onClick={() => removeSceneRow(i)}>✕</button>
+                    </div>
+                  ))}
+                  <div className="card-footer">
+                    <button className="btn-adopt" onClick={addSceneRow}>＋ 添加场景</button>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button className="btn-adopt" onClick={() => setSceneEditorOpen(false)}>取消</button>
+                      <button className="btn-adopt" onClick={() => void saveSceneEdits()} disabled={sceneSaving}>
+                        {sceneSaving ? '保存中…' : '✓ 保存全部场景'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* 章/场景编辑草稿表单 */}
+              {draft && (
+                <div className="card-edit-form" style={{ margin: '12px 16px 0', padding: 12 }}>
+                  <input
+                    className="char-edit-input"
+                    placeholder="标题"
+                    value={String(draft.title ?? '')}
+                    onChange={(e) => setDraftField('title', e.target.value)}
+                  />
+                  {selKind === 'chapter' ? (
+                    <>
+                      <select
+                        className="char-scope-select"
+                        value={String(draft.tone ?? 'action')}
+                        onChange={(e) => setDraftField('tone', e.target.value)}
+                      >
+                        <option value="action">动作</option>
+                        <option value="tension">张力</option>
+                        <option value="reveal">揭秘</option>
+                        <option value="setup">铺垫</option>
+                      </select>
+                      <input
+                        className="char-edit-input"
+                        type="number"
+                        placeholder="目标字数"
+                        value={String(draft.word_target ?? 0)}
+                        onChange={(e) => setDraftField('word_target', e.target.value)}
+                      />
+                      <textarea
+                        className="char-edit-input"
+                        rows={2}
+                        placeholder="章末小结"
+                        value={String(draft.summary ?? '')}
+                        onChange={(e) => setDraftField('summary', e.target.value)}
+                      />
+                    </>
+                  ) : (
+                    <>
+                      <input
+                        className="char-edit-input"
+                        placeholder="场景方案（betrayal_night 等）"
+                        value={String(draft.scenario_def ?? '')}
+                        onChange={(e) => setDraftField('scenario_def', e.target.value)}
+                      />
+                      <textarea
+                        className="char-edit-input"
+                        rows={2}
+                        placeholder="舞台布置"
+                        value={String(draft.stage_desc ?? '')}
+                        onChange={(e) => setDraftField('stage_desc', e.target.value)}
+                      />
+                      <input
+                        className="char-edit-input"
+                        placeholder="本场目标 goal"
+                        value={String(draft.goal ?? '')}
+                        onChange={(e) => setDraftField('goal', e.target.value)}
+                      />
+                      <textarea
+                        className="char-edit-input"
+                        rows={2}
+                        placeholder="场景内容描述（事件梗概/冲突点/环境细节）"
+                        value={String(draft.content_desc ?? '')}
+                        onChange={(e) => setDraftField('content_desc', e.target.value)}
+                      />
+                    </>
+                  )}
+                  <div className="card-footer">
+                    <button className="btn-adopt" onClick={() => void saveDraft()}>保存</button>
+                    <button className="btn-adopt" onClick={() => setDraft(null)}>取消</button>
+                  </div>
+                </div>
+              )}
+
               <div className="outline-tree">
                 {!tree && (
                   <div style={{ color: 'var(--maestro-text-3)', fontSize: 13, padding: '16px 4px' }}>
@@ -567,8 +1040,8 @@ export function MaestroPage() {
                   return (
                     <div className="outline-chapter" key={ch.id}>
                       <div
-                        className={`outline-row chapter ${activeChapter === ch.id ? 'active' : ''}`}
-                        onClick={() => setActiveChapter(ch.id)}
+                        className={`outline-row chapter ${activeChapter === ch.id ? 'active' : ''} ${selKind === 'chapter' && selId === ch.id ? 'selected' : ''}`}
+                        onClick={() => { setActiveChapter(ch.id); setSelKind('chapter'); setSelId(ch.id); setDraft(null); }}
                       >
                         <span className="row-toggle" onClick={(e) => { e.stopPropagation(); toggleChapter(ch.id); }}>
                           {expanded ? '▾' : '▸'}
@@ -580,7 +1053,11 @@ export function MaestroPage() {
                       </div>
                       <div className={`outline-children ${expanded ? '' : 'collapsed'}`}>
                         {(ch.scenes ?? []).map((s) => (
-                          <div className="outline-row scene" key={s.id}>
+                          <div
+                            className={`outline-row scene ${selKind === 'scene' && selId === s.id ? 'selected' : ''}`}
+                            key={s.id}
+                            onClick={() => { setSelKind('scene'); setSelId(s.id); setDraft(null); }}
+                          >
                             <span className="row-title">{s.title}</span>
                             <div className="scene-meta">
                               <span className="scene-stage">舞台 {s.stage_desc || '未布置'}</span>
@@ -650,6 +1127,74 @@ export function MaestroPage() {
                   />
                   <button className="btn-send" onClick={sendMessage}>发送</button>
                 </div>
+              </div>
+
+              {/* 书级记忆（主笔 · 记忆域） */}
+              <div className="memory-section">
+                <div className="memory-header" onClick={() => setMemoryOpen(!memoryOpen)}>
+                  <span className="title-ico">◈</span>
+                  <span>书级记忆</span>
+                  <span className="panel-count">{memories.length}</span>
+                  <span className="memory-toggle">{memoryOpen ? '▾' : '▴'}</span>
+                </div>
+                {memoryOpen && (
+                  <div className="memory-body">
+                    {memories.length === 0 && (
+                      <div className="memory-empty">
+                        暂无记忆。写下方向/设定/约束，主笔每次对话与规划都会感知到。
+                      </div>
+                    )}
+                    <div className="memory-list">
+                      {memories.map((m) => (
+                        <div className="inspiration-card memory-card" key={m.id}>
+                          <div className="card-header">
+                            <div className="card-title-wrap">
+                              <p className="memory-content">{m.content}</p>
+                            </div>
+                          </div>
+                          <div className="card-footer">
+                            <span className="type-tag">{MEMORY_TOPIC_LABEL[m.topic] ?? m.topic}</span>
+                            <span className="memory-source">
+                              {m.source === 'author' ? '作者' : m.source === 'chief' ? '主笔' : '记账'}
+                            </span>
+                            <button className="btn-adopt" onClick={() => startEditMemory(m)}>编辑</button>
+                            <button className="btn-adopt" onClick={() => void removeMemory(m.id)}>删除</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    {memoryFormOpen ? (
+                      <div className="card-edit-form memory-form">
+                        <select
+                          className="char-scope-select"
+                          value={memoryDraftTopic}
+                          onChange={(e) => setMemoryDraftTopic(e.target.value as MemoryTopic)}
+                        >
+                          {MEMORY_TOPIC_OPTIONS.map(([v, l]) => (
+                            <option key={v} value={v}>{l}</option>
+                          ))}
+                        </select>
+                        <textarea
+                          className="char-edit-input"
+                          rows={2}
+                          placeholder="写一条记忆：方向 / 设定 / 写作约束……"
+                          value={memoryDraftContent}
+                          onChange={(e) => setMemoryDraftContent(e.target.value)}
+                        />
+                        <div className="card-footer">
+                          <button className="btn-adopt" onClick={() => void saveMemory()}>
+                            {memoryEditingId ? '保存修改' : '添加记忆'}
+                          </button>
+                          <button className="btn-adopt" onClick={() => setMemoryFormOpen(false)}>取消</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="memory-add">
+                        <button className="btn-adopt" onClick={startAddMemory}>＋ 写一条记忆</button>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </aside>
           </main>
