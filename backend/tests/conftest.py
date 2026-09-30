@@ -9,6 +9,23 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def _isolate_db_engine():
+    """用例级丢弃 app.db.engine 的全局单例 engine / sessionmaker（B17）。
+
+    成因：TestClient 会把 app 跑在自己的事件循环里并懒创建全局 engine；之后跑在
+    session loop 里的 DB 用例复用它 → asyncpg 抛 "attached to a different loop"，
+    而 repo 的 _query_or_mem 与测试探针都会把异常吞成"DB 不可用" → DB 用例静默
+    退化成内存态（假绿或误 skip，实测：单跑 test_db_orm 通过，跟在 test_api 后即 skip）。
+    丢弃引用后，每个用例在自己当前的循环里重建引擎，DB 路径才真正被覆盖。
+    """
+    import app.db.engine as engine_mod
+
+    engine_mod._engine = None
+    engine_mod._session_factory = None
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _disable_llm(monkeypatch):
     """autouse：每个测试默认令 LLM client 不可用 / call 返回 None（走确定性回退）。
 

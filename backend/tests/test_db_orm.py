@@ -34,19 +34,29 @@ def repo():
 
 
 async def _db_ready() -> bool:
+    """DB 可用性探针。
+
+    用**独立临时引擎**探测，而非 app 的全局单例引擎：单例引擎绑定在"第一个用到它的
+    用例"的事件循环上，pytest-asyncio 每个用例新开循环 → 后续用例 connect 抛
+    "attached to a different loop"，被 except 吞掉后误报"DB 不可用"→ 静默 skip
+    （实测：单跑 test_db_orm 4 passed，跟在 test_api 后面跑就 1 skipped）。
+    """
     if not settings.persist:
         return False
-    try:
-        from app.db.engine import get_async_engine
+    from sqlalchemy.ext.asyncio import create_async_engine
 
+    eng = create_async_engine(settings.dsn.replace("postgresql://", "postgresql+asyncpg://"))
+    try:
         async def _probe():
-            async with get_async_engine().connect() as conn:
+            async with eng.connect() as conn:
                 await conn.execute(text("SELECT 1"))
 
         await asyncio.wait_for(_probe(), timeout=5)  # 快速失败：DB 未开不至于拖慢 skip
         return True
     except Exception:  # noqa: BLE001
         return False
+    finally:
+        await eng.dispose()
 
 
 @pytest.mark.skipif(not settings.persist, reason="persist=False，走内存态")
