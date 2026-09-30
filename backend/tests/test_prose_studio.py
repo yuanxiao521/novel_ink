@@ -167,3 +167,53 @@ async def test_bookkeep_after_save_no_llm_returns_silently(svc):
     assert await svc.list_prose_notes("sc-1") == []
     assert await svc.repo.list_foreshadows("book-p") == []
     assert await svc.repo.list_beliefs("book-p") == []
+
+# ---------------------------------------------------------------- S2 前置：角色卡注入（B16 回归）
+class _PromptCaptureLLM:
+    """记录 prompt 的假 LLM：返回满足 DRAFT_VALIDATOR 的正文（≥20 字）。"""
+
+    def __init__(self):
+        self.available = True
+        self.calls: list[str] = []
+
+    async def call_cheap(self, prompt, json_schema=None):
+        self.calls.append(prompt)
+        return "破庙夜谈" * 6
+
+    async def call_strong(self, prompt, json_schema=None):
+        return await self.call_cheap(prompt, json_schema)
+
+
+async def test_draft_injects_character_card_fields():
+    """写手 prompt 必须带角色卡的真实字段（summary/traits/voice/bottom_lines），
+    而不是旧字段名 personality/tone/bottom_line 造成的「无详细设定」空块（B16 回归）。"""
+    import json
+
+    from app.services.engine.prose import draft_prose
+
+    spec = {
+        "id": "c-1", "name": "林尘", "summary": "落魄剑修",
+        "traits": ["隐忍", "护短"], "voice": "话少，短句，常以「嗯」应人",
+        "core_beliefs": ["剑不欺人"], "bottom_lines": ["不伤妇孺"],
+    }
+    llm = _PromptCaptureLLM()
+    await draft_prose(
+        llm, {"title": "破庙夜谈"}, "", characters=[
+            {"name": "林尘", "spec_json": json.dumps(spec, ensure_ascii=False)},
+        ],
+    )
+    prompt = llm.calls[0]
+    assert "落魄剑修" in prompt          # summary
+    assert "隐忍" in prompt               # traits
+    assert "话少，短句" in prompt         # voice（口吻锚点）
+    assert "不伤妇孺" in prompt           # bottom_lines
+    assert "（无详细设定）" not in prompt  # 旧字段名错位症状
+
+
+async def test_draft_marks_blank_card_explicitly():
+    """空卡（spec_json={}）→ 明确标注未填卡，不静默假装有设定。"""
+    from app.services.engine.prose import draft_prose
+
+    llm = _PromptCaptureLLM()
+    await draft_prose(llm, {"title": "破庙夜谈"}, "", characters=[{"name": "路人", "spec_json": "{}"}])
+    assert "未填角色卡" in llm.calls[0]

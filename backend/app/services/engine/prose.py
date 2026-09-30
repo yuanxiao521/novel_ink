@@ -47,7 +47,12 @@ def _scene_block(scene: dict) -> str:
 
 
 def _characters_block(characters: list[dict]) -> str:
-    """将角色卡列表格式化为 prompt 文本块。"""
+    """将角色卡列表格式化为 prompt 文本块。
+
+    字段名必须对齐 `schemas/models.py::CharacterCard`（summary/traits/voice/
+    core_beliefs/bottom_lines/system_prompt）——早期误用 personality/tone/bottom_line
+    旧名，导致每个角色都渲染成"（无详细设定）"，角色卡等于没注入（B16）。
+    """
     if not characters:
         return "（本场无指定角色）"
     lines = []
@@ -59,11 +64,25 @@ def _characters_block(characters: list[dict]) -> str:
             card = _j.loads(spec) if isinstance(spec, str) else spec
         except Exception:
             card = {}
-        personality = card.get("personality", "")
-        tone = card.get("tone", "")
-        bottom_line = card.get("bottom_line", "")
-        parts = [p for p in (personality, tone, bottom_line) if p]
-        desc = "；".join(parts) if parts else "（无详细设定）"
+        if not isinstance(card, dict):
+            card = {}
+        parts: list[str] = []
+        if card.get("summary"):
+            parts.append(str(card["summary"]))
+        traits = [str(t) for t in (card.get("traits") or []) if str(t).strip()]
+        if traits:
+            parts.append("特质：" + "、".join(traits))
+        if card.get("voice"):
+            parts.append("腔调：" + str(card["voice"]))
+        core = [str(x) for x in (card.get("core_beliefs") or []) if str(x).strip()]
+        if core:
+            parts.append("信条：" + "、".join(core))
+        bottom = [str(x) for x in (card.get("bottom_lines") or []) if str(x).strip()]
+        if bottom:
+            parts.append("底线：" + "；".join(bottom))
+        if card.get("system_prompt"):
+            parts.append("作者演绎要求：" + str(card["system_prompt"]))
+        desc = "；".join(parts) if parts else "（未填角色卡：请按名字自设一致腔调，勿套用通用音色）"
         lines.append(f"- {name}：{desc}")
     return "\n".join(lines)
 
