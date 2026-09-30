@@ -14,7 +14,7 @@ import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def client():
     from app.db.repo import Repo
     from app.api.deps import get_repo
@@ -27,12 +27,22 @@ def client():
 
     app.dependency_overrides[get_repo] = _fake_repo
 
+    # module scope：TestClient 只建一次（lifespan 只跑一次迁移），避免每个用例叩真库
     with TestClient(app) as c:
-        bid = c.post("/api/v1/books", json={"title": "青冥录", "genre": "玄幻"}).json()["id"]
-        c._book_id = bid
+        c._shared_repo = shared  # type: ignore[attr-defined]
         yield c, shared
 
     app.dependency_overrides.clear()
+
+
+@pytest.fixture(autouse=True)
+def _fresh(client):
+    """每用例重置内存态并重建测试书（module 级 client 复用的隔离补偿）。"""
+    c, shared = client
+    shared._mem.clear()
+    bid = c.post("/api/v1/books", json={"title": "青冥录", "genre": "玄幻"}).json()["id"]
+    c._book_id = bid  # type: ignore[attr-defined]
+    yield c, shared
 
 
 def _client_stream(inner) -> str:
@@ -63,21 +73,19 @@ def test_chief_chat_sse_fallback(client):
 
 
 def test_chief_chat_with_fake_stream(client, monkeypatch):
-    """有 fake 流式 LLM → 逐 token 增量渲染（模拟 available=True + stream_cheap_text）。"""
-    import importlib
-
+    """有 fake 流式 LLM → 逐 token 增量渲染（模拟 available=True + chat_stream）。"""
     class _StreamLLM:
         available = True
 
-        async def stream_cheap_text(self, prompt, temperature=0.8, model=None):
+        async def chat_stream(self, prompt, temperature=0.8, model=None):
             for ch in ["主", "笔", "回", "复"]:
                 yield ch
 
     fake = _StreamLLM()
-    # service.chief_chat_stream 内部 `from app.services.llm.client import client as llm_client`
-    # 在调用时读取模块属性，故 patch 模块级单例 client 即可（显式 importlib 避免同名坑）
-    client_mod = importlib.import_module("app.services.llm.client")
-    monkeypatch.setattr(client_mod, "client", fake)
+    # service.chief_chat_stream 现在模块级引用 llm_client（conftest 已全局替换），
+    # 测试内再覆盖为带流式的 fake 即可（覆盖 autouse 的 _disable_llm）
+    import app.services.service as service_mod
+    monkeypatch.setattr(service_mod, "llm_client", fake)
 
     c, _ = client
     bid = c._book_id

@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 
@@ -38,8 +39,11 @@ async def _db_ready() -> bool:
     try:
         from app.db.engine import get_async_engine
 
-        async with get_async_engine().connect() as conn:
-            await conn.execute(text("SELECT 1"))
+        async def _probe():
+            async with get_async_engine().connect() as conn:
+                await conn.execute(text("SELECT 1"))
+
+        await asyncio.wait_for(_probe(), timeout=5)  # 快速失败：DB 未开不至于拖慢 skip
         return True
     except Exception:  # noqa: BLE001
         return False
@@ -77,7 +81,9 @@ async def test_book_tree_aggregated(repo):
     assert len(ch0["scenes"]) == 1
     sc0 = ch0["scenes"][0]
     assert sc0["scenario_def"] == "betrayal_night"
-    assert len(sc0["characters"]) == 3  # 树里一次带出角色，无 N+1
+    assert len(sc0["characters"]) == 0  # 书级角色不内联进场景（避免每场景重复）
+    book_chars = await repo.list_characters_by_book("book-rain")
+    assert len(book_chars) == 3  # 书级角色库一次拉全，无 N+1
 
 
 @pytest.mark.skipif(not settings.persist, reason="persist=False，走内存态")

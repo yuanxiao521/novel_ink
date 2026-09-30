@@ -5,6 +5,7 @@ DB 不可用时测试跳过（persist=False 或连接失败）。
 """
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 
@@ -27,8 +28,11 @@ async def _db_ready() -> bool:
         from app.db.engine import get_async_engine
         from sqlalchemy import text
 
-        async with get_async_engine().connect() as conn:
-            await conn.execute(text("SELECT 1"))
+        async def _probe():
+            async with get_async_engine().connect() as conn:
+                await conn.execute(text("SELECT 1"))
+
+        await asyncio.wait_for(_probe(), timeout=5)  # 快速失败：DB 未开不至于拖慢 skip
         return True
     except Exception:  # noqa: BLE001
         return False

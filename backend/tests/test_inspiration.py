@@ -13,7 +13,7 @@ import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def client():
     from app.db.repo import Repo
     from app.api.deps import get_repo
@@ -26,14 +26,23 @@ def client():
 
     app.dependency_overrides[get_repo] = _fake_repo
 
+    # module scope：TestClient 只建一次（lifespan 只跑一次迁移），避免每个用例叩真库
     with TestClient(app) as c:
-        # 建书
-        r = c.post("/api/v1/books", json={"title": "青冥录", "genre": "玄幻"})
-        assert r.status_code in (200, 201), r.text
-        c._book_id = r.json()["id"]
+        c._shared_repo = shared  # type: ignore[attr-defined]
         yield c, shared
 
     app.dependency_overrides.clear()
+
+
+@pytest.fixture(autouse=True)
+def _fresh(client):
+    """每用例重置内存态并重建测试书（module 级 client 复用的隔离补偿）。"""
+    c, shared = client
+    shared._mem.clear()
+    r = c.post("/api/v1/books", json={"title": "青冥录", "genre": "玄幻"})
+    assert r.status_code in (200, 201), r.text
+    c._book_id = r.json()["id"]  # type: ignore[attr-defined]
+    yield c, shared
 
 
 def test_author_create_and_list(client):
