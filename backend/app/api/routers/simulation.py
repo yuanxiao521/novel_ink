@@ -441,6 +441,13 @@ async def get_dashboard(book_id: str, svc: SimulationService = Depends(get_servi
     return await svc.get_dashboard(book_id)
 
 
+@router.post("/scenes/{scene_id}/prose/quality-loop")
+async def prose_quality_loop(scene_id: str, body: ProseTextIn,
+                             svc: SimulationService = Depends(get_service)):
+    """A2 质量回环：自评（带证据）→ 达标不动 / 不达标重写一次 → 三闸复检；采纳落 polisher note。"""
+    return await svc.prose_quality_loop(scene_id, body.text)
+
+
 @router.get("/scenes/{scene_id}/script")
 async def scene_script(scene_id: str, thoughts: int = 1, tension: int = 0,
                        svc: SimulationService = Depends(get_service)):

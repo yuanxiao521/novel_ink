@@ -595,6 +595,20 @@ _CLICHE_TEXT = ("他深吸一口气，眼中闪过一丝犹豫，又深吸一口
                 "眼中闪过一丝决然，再次深吸一口气，缓缓开口。")
 
 
+def test_quality_loop_endpoint_without_llm(client):
+    """A2 端点连通：无 LLM → 明确失败且不改文（不抛 500）。"""
+    bid = client.post("/api/v1/books", json={"title": "质量书", "genre": "玄幻"}).json()["id"]
+    ch = client.post(f"/api/v1/books/{bid}/chapters", json={"title": "一", "order_no": 1}).json()
+    sc = client.post(f"/api/v1/chapters/{ch['id']}/scenes",
+                     json={"title": "场景", "goal": "g", "content_desc": "d"}).json()
+    text = "雨敲着窗格，烛火矮了一截。陈默把残页按在桌面，指节泛白。"
+    r = client.post(f"/api/v1/scenes/{sc['id']}/prose/quality-loop", json={"text": text})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["accepted"] is False and body["after"] == text
+    assert "LLM" in (body.get("error") or "")
+
+
 def test_ai_tone_scan_and_spot_fix_endpoints(client):
     """A3 两个端点连通：扫描落 editor note（payload.ai_tone）；定点修复在无 LLM 下明确失败。"""
     bid = client.post("/api/v1/books", json={"title": "AI味书", "genre": "玄幻"}).json()["id"]

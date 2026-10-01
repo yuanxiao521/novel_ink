@@ -830,6 +830,39 @@ class SimulationService:
                 return rows
         return []
 
+    async def prose_quality_loop(self, scene_id: str, text: str) -> dict:
+        """A2 质量回环：自评 → 门控 → （必要时）重写一次 → 三闸复检。
+
+        采纳时落 **polisher note**（before/after）→ 复用前端"应用"管线；
+        评分/复检明细落 note 的 payload_json.quality。
+        """
+        from app.services.engine.quality import quality_loop
+
+        scene, book_id = await self._scene_and_book(scene_id)
+        characters = await self.repo.list_characters_for_scene(scene_id) if scene_id else []
+        states = (await self.repo.list_world_states(book_id)) if book_id else []
+        out = await quality_loop(llm_client, text, characters=characters, world_states=states)
+        if out.get("accepted"):
+            before = out.get("before") or {}
+            after = out.get("after_score") or {}
+            sug = "质量回环：%s→%s（路由 %s，改 %d 处）" % (
+                before.get("total"), after.get("total"), out.get("route"),
+                len([c for c in (out.get("changes") or []) if c.get("applied")]))
+            await self.repo.save_prose_note({
+                "id": f"note-{uuid.uuid4().hex[:10]}",
+                "scene_id": scene_id, "kind": "polisher", "status": "pending",
+                "suggestion": sug[:300], "before": text,
+                "after": str(out.get("after") or text), "created_by": "a2_quality",
+                "payload_json": json.dumps({
+                    "source": "a2_quality",
+                    "quality": {"before": before, "after": after,
+                                "route": out.get("route"), "changes": out.get("changes") or []},
+                }, ensure_ascii=False),
+                "ts": int(time.time() * 1000),
+            })
+            out["note_status"] = "pending"
+        return out
+
     async def prose_ai_tone(self, scene_id: str, text: str) -> dict:
         """A3 反 AI 味扫描（0-token）→ editor note（pending，明细存 payload_json.ai_tone）。
 
