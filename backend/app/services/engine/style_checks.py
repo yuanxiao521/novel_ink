@@ -278,7 +278,9 @@ def elevation_endings(text: str) -> list[dict]:
     out: list[dict] = []
     for p in paragraphs(text):
         sents = split_sentences(p)
-        if not sents:
+        # 单句"段"多半是硬折行（每句一行）而非真段落 —— 不做"段末拔高"判定，
+        # 否则会把段中句误当段末（实测：四行硬折行文本直接误报 R-A3-4）。
+        if len(sents) < 2:
             continue
         last = sents[-1].strip("「」“”\"' \t")
         hit = next((w for w in ELEVATION_WORDS if w in last), None)

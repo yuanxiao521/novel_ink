@@ -116,6 +116,21 @@ def test_cliche_threshold_scales_with_text_length():
     assert "R-A3-1" not in _rules(ai_tone_report(long_text))
 
 
+def test_r_a3_4_ignores_hard_wrapped_lines():
+    """硬折行（每句一行）不能把段中句当段末：单句"段"一律不做拔高判定。
+
+    审计实测：四行硬折行文本 ["雨敲着窗格。/他推开门。/他知道。/李文抬起头。"]
+    会让"他知道。"被当成段末 → 误报 R-A3-4。
+    """
+    hard = "雨敲着窗格。\n他推开门。\n他知道。\n李文抬起头。"
+    assert elevation_endings(hard) == []
+    assert "R-A3-4" not in _rules(ai_tone_report(hard))
+
+    # 真段落（≥2 句）仍然可判
+    real = "夜里风停了。他知道。"
+    assert [h["rule"] for h in elevation_endings(real)] == ["R-A3-4"]
+
+
 def test_report_shape_and_metrics():
     """报告契约：rules/counts/cliches/metrics/clean 五件套齐全（前端与 note payload 依赖）。"""
     rep = ai_tone_report(CLEAN)
