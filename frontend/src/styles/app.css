@@ -2793,6 +2793,11 @@ body {
 .script-thought-row { font-size: 13px; margin-top: 3px; color: var(--text-primary); }
 .script-tag { display: inline-block; min-width: 62px; color: var(--text-muted); font-size: 12px; }
 .script-hit { font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--accent-gold-light); color: var(--accent-gold); }
+/* ===== T9 数据库降级横幅（降级不再静默） ===== */
+.degraded-banner { position: fixed; top: 0; left: 0; right: 0; z-index: 9999; display: flex; align-items: center; gap: 10px; padding: 6px 14px; background: #7f1d1d; color: #fff; font-size: 13px; }
+.degraded-dot { width: 8px; height: 8px; border-radius: 50%; background: #fca5a5; flex: none; }
+.degraded-text { flex: 1; }
+.degraded-close { background: none; border: 1px solid rgba(255,255,255,.5); color: #fff; border-radius: 999px; padding: 1px 10px; font-size: 12px; cursor: pointer; }
 
 .studio-polish-preview {
   font-family: var(--font-reader, serif);

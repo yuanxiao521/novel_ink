@@ -618,6 +618,28 @@ export interface GlobalView {
   barren_scenes: string[];
 }
 
+/* ---------- T9 降级可观测（/health） ---------- */
+
+export interface DegradedInfo {
+  active: boolean;
+  count: number;
+  structural: number;
+  last_reason: string;
+  last_op: string;
+  last_at: number;
+  kinds: Record<string, number>;
+}
+
+export interface HealthStatus {
+  status: string;
+  degraded: DegradedInfo;
+}
+
+/** T9：健康检查（含降级状态）—— 前端据此显示"降级中"横幅。 */
+export async function fetchHealth(): Promise<HealthStatus> {
+  return getJson<HealthStatus>(`${API_BASE}/health`);
+}
+
 /* ---------- S4 涌现产物（剧本 / 回合事件流 · v1.14） ---------- */
 
 export interface ScriptEvent {

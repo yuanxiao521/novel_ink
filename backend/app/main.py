@@ -100,4 +100,8 @@ async def unhandled_error_handler(request: Request, exc: Exception) -> JSONRespo
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    """健康检查。**T9：降级必须可见** —— degraded.active=true 表示有操作落内存态兜底，
+    structural>0 表示其中含"疑似 bug"的结构性错误（B18/B21 那类）。"""
+    from app.db.repo import degradation_status
+
+    return {"status": "ok", "degraded": degradation_status()}

@@ -7,12 +7,14 @@ import { DashboardPage } from './pages/DashboardPage';
 import { CharactersPage } from './pages/CharactersPage';
 import { MaestroPage } from './pages/MaestroPage';
 import { StudioPage } from './pages/StudioPage';
+import { DegradedBanner } from './components/common/DegradedBanner';
 
 export function App() {
   return (
     <ThemeProvider>
       <DialogProvider>
         <BrowserRouter>
+          <DegradedBanner />
           <Routes>
             <Route path="/" element={<HomePage />} />
             <Route path="/director" element={<DirectorPage />} />

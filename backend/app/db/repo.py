@@ -22,6 +22,50 @@ from app.schemas.models import CharacterCard, SimulationState
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------- T9 降级可观测
+# 背景：B18（列漂移）/B19（内存态语义）/B21（反序列化失败）/B22（被空局盖掉）都是
+# "异常被吞 → 静默落内存态"的同一根因。这里把降级事实集中记账并对外暴露（/health），
+# 且**区分两类**：DB 不可达（预期内，兜底可用）与结构性错误（bug，必须报警）。
+DEGRADATION: dict = {"count": 0, "structural": 0, "last_reason": "", "last_op": "",
+                     "last_at": 0, "kinds": {}}
+
+
+def note_degradation(e: Exception, op: str = "") -> None:
+    """记录一次降级。结构性错误按 ERROR 打日志（不再只 warning 后继续跑）。"""
+    import time as _time
+
+    import pydantic
+    from sqlalchemy import exc as sa_exc
+
+    structural = isinstance(e, (pydantic.ValidationError, sa_exc.ProgrammingError,
+                                sa_exc.IntegrityError))
+    DEGRADATION["count"] += 1
+    if structural:
+        DEGRADATION["structural"] += 1
+    reason = "%s: %s" % (type(e).__name__, str(e)[:200])
+    DEGRADATION["last_reason"] = reason
+    DEGRADATION["last_op"] = op
+    DEGRADATION["last_at"] = int(_time.time() * 1000)
+    kinds = DEGRADATION["kinds"]
+    kinds[type(e).__name__] = kinds.get(type(e).__name__, 0) + 1
+    if structural:
+        logger.error("[Repo] 结构性错误导致降级（疑似 bug，op=%s）：%s", op, reason)
+    else:
+        logger.warning("[Repo] 降级内存态（op=%s）：%s", op, reason)
+
+
+def degradation_status() -> dict:
+    """当前降级状态：active=是否发生过；structural 是"疑似 bug"的计数。"""
+    return {
+        "active": DEGRADATION["count"] > 0,
+        "count": DEGRADATION["count"],
+        "structural": DEGRADATION["structural"],
+        "last_reason": DEGRADATION["last_reason"],
+        "last_op": DEGRADATION["last_op"],
+        "last_at": DEGRADATION["last_at"],
+        "kinds": dict(DEGRADATION["kinds"]),
+    }
+
 
 class Repo:
     """多级存储门面：优先 ORM（异步），内存态兜底。"""
@@ -1010,7 +1054,7 @@ class Repo:
             async with self._session_factory() as session:
                 return await q(session)
         except Exception as e:  # noqa: BLE001
-            logger.warning("[Repo] 查询降级内存态：%s", e)
+            note_degradation(e, "query")     # T9：降级必须被记录（不再纯静默）
             return fallback
 
     async def _list_rows(self, model, mapper) -> list[dict]:
