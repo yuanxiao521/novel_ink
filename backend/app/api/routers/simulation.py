@@ -441,6 +441,25 @@ async def get_dashboard(book_id: str, svc: SimulationService = Depends(get_servi
     return await svc.get_dashboard(book_id)
 
 
+@router.get("/scenes/{scene_id}/script")
+async def scene_script(scene_id: str, thoughts: int = 1, tension: int = 0,
+                       svc: SimulationService = Depends(get_service)):
+    """S4 涌现产物：单场景剧本/对话记录（Markdown 剧本体 + JSON 结构化）。
+
+    thoughts=1 含各角色思考（内心独白/动机），tension=1 标注回合张力。
+    """
+    return await svc.scene_script(scene_id, with_thoughts=bool(thoughts),
+                                  with_tension=bool(tension))
+
+
+@router.get("/books/{book_id}/script")
+async def book_script(book_id: str, thoughts: int = 1, tension: int = 0,
+                      svc: SimulationService = Depends(get_service)):
+    """S4 涌现产物：全书剧本（按章/场景拼接，仅含有推演回合的场景）。"""
+    return await svc.book_script(book_id, with_thoughts=bool(thoughts),
+                                 with_tension=bool(tension))
+
+
 @router.get("/books/{book_id}/global-view")
 async def book_global_view(book_id: str, svc: SimulationService = Depends(get_service)):
     """S3 全局结构与张力视图（0-token 派生）：章级张力曲线 + 结构诊断 + 伏笔网络 + 评分。"""

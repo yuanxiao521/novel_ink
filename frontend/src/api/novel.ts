@@ -618,6 +618,54 @@ export interface GlobalView {
   barren_scenes: string[];
 }
 
+/* ---------- S4 涌现产物（剧本 / 回合事件流 · v1.14） ---------- */
+
+export interface ScriptEvent {
+  actor?: string;
+  kind?: string;
+  text?: string;
+}
+
+/** 角色思考（分层）：monologue=内心独白；reasoning=动机/推理依据（落正文用）。 */
+export interface ScriptThought {
+  char?: string;
+  char_id?: string;
+  monologue?: string;
+  reasoning?: string;
+  emotion?: string;
+}
+
+export interface ScriptTurn {
+  turn: number;
+  cls: string;
+  summary: string;
+  tension?: number;
+  tension_trend?: string;
+  events: ScriptEvent[];
+  thoughts: ScriptThought[];
+}
+
+export interface SceneScriptResult {
+  scene_id: string;
+  turns: number;
+  markdown: string;
+  json: { scene: Record<string, unknown>; turns: ScriptTurn[] };
+}
+
+/** S4：单场景剧本产物（回合事件流 + 各角色思考）。 */
+export async function fetchSceneScript(
+  sceneId: string,
+  opts?: { thoughts?: boolean; tension?: boolean },
+): Promise<SceneScriptResult> {
+  const qs = `?thoughts=${opts?.thoughts === false ? 0 : 1}&tension=${opts?.tension ? 1 : 0}`;
+  return getJson<SceneScriptResult>(`${API_BASE}/api/v1/scenes/${sceneId}/script${qs}`);
+}
+
+/** S4：剧本 Markdown 下载地址（浏览器直开）。 */
+export function sceneScriptUrl(sceneId: string, tension: boolean): string {
+  return `${API_BASE}/api/v1/scenes/${sceneId}/script?thoughts=1&tension=${tension ? 1 : 0}`;
+}
+
 /** S3 全局张力视图：曲线 + 结构诊断 + 伏笔呼应网络 + 结构分（0-token 派生）。 */
 export async function fetchGlobalView(bookId: string): Promise<GlobalView> {
   return getJson<GlobalView>(`${API_BASE}/api/v1/books/${bookId}/global-view`);

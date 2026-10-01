@@ -169,6 +169,10 @@ class TurnArchive(BaseModel):
     summary: str = ""
     prose: str = ""
     events: list[dict[str, Any]] = Field(default_factory=list)  # 本回合事件（轻量 dict）
+    # S4：本回合各角色"思考"留档（并增，旧档默认空）。分两层：
+    #   monologue=内心独白（第一人称心里话，剧本/心理素材）
+    #   reasoning=推理/动机依据（落正文时给写手的"为什么"）
+    thoughts: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class SimulationState(BaseModel):

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { ScriptView } from '../components/director/ScriptView';
 import { Link, useLocation, useParams } from 'react-router-dom';
 import { useTheme } from '../theme/ThemeContext';
 import { useDirectorSim } from '../hooks/useDirectorSim';
@@ -56,6 +57,7 @@ export function DirectorPage() {
     target.fresh,
   );
   const [view, setView] = useState<'workbench' | 'reader'>('workbench');
+  const [scriptOpen, setScriptOpen] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
   const [finalized, setFinalized] = useState<{ wordCount: number } | null>(null);
 
@@ -259,6 +261,9 @@ export function DirectorPage() {
 
       {sceneId && (
         <div className="view-switcher">
+          <button onClick={() => setScriptOpen(true)} title="把推演回合当剧本看（含角色思考）">
+            剧本台
+          </button>
           <button className={view === 'workbench' ? 'active' : ''} onClick={() => setView('workbench')}>
             作者工作台
           </button>
@@ -270,6 +275,10 @@ export function DirectorPage() {
             </button>
           )}
         </div>
+      )}
+
+      {scriptOpen && sceneId && (
+        <ScriptView sceneId={sceneId} onClose={() => setScriptOpen(false)} />
       )}
     </div>
   );

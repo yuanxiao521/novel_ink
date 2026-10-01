@@ -1518,6 +1518,22 @@ class SimulationService:
         summary = (briefing or prose or (acted[-1]["text"] if acted else "")).strip()
         if not summary:
             summary = f"回合 T-{turn:02d}"
+        # S4：把本回合各角色的"思考"归入归档，并**清空 scratch**。
+        # scratch["thoughts"] 按 char_id 覆盖，若不归集清空，第二回合就把上一回合的
+        # 思考冲掉了（时间线/回放/导出查不到当时的思考）。
+        thoughts: list[dict] = []
+        for cid, data in (sim.scratch.get("thoughts") or {}).items():
+            d = data if isinstance(data, dict) else {"thought": str(data)}
+            card = sim.characters.get(cid)
+            thoughts.append({
+                "char": getattr(card, "name", "") or cid,
+                "char_id": cid,
+                "monologue": str(d.get("thought") or d.get("monologue") or "").strip(),
+                "emotion": str(d.get("emotion") or "").strip(),
+                "reasoning": str(d.get("reasoning") or "").strip(),
+                "raw": d,
+            })
+        sim.scratch["thoughts"] = {}
         sim.turn_archives = [a for a in sim.turn_archives if a.turn != turn]
         sim.turn_archives.append(models.TurnArchive(
             turn=turn,
@@ -1527,7 +1543,59 @@ class SimulationService:
             summary=summary[:18] or f"回合 T-{turn:02d}",
             prose=prose,
             events=acted,
+            thoughts=thoughts,
         ))
+
+    # ---------------------------------------------------------------- S4 涌现产物（剧本）
+    async def _archives_by_scene(self, book_id: str) -> dict[str, list[dict]]:
+        """每场景最新 sim 的回合归档：{scene_id: [archive dict]}（S3/S4 共用）。"""
+        latest: dict[str, str] = {}
+        for s in await self.repo.list_sims_by_book(book_id):
+            sid = str(s.get("scene_id") or "")
+            if sid and sid not in latest:
+                latest[sid] = str(s.get("id"))
+        out: dict[str, list[dict]] = {}
+        for scene_id, sim_id in latest.items():
+            sim = await self.repo.load(sim_id)
+            if sim is not None:
+                out[scene_id] = [a.model_dump() for a in (sim.turn_archives or [])]
+        return out
+
+    async def scene_script(self, scene_id: str, with_thoughts: bool = True,
+                           with_tension: bool = False) -> dict:
+        """S4：单场景剧本产物（Markdown 剧本体 + JSON 结构化）。"""
+        from app.services.engine.emergence import render_script_json, render_script_md
+
+        scene, book_id = await self._scene_and_book(scene_id)
+        archives = (await self._archives_by_scene(book_id)).get(scene_id, []) if book_id else []
+        return {
+            "scene_id": scene_id, "turns": len(archives),
+            "markdown": render_script_md(scene, archives, with_thoughts=with_thoughts,
+                                         with_tension=with_tension),
+            "json": render_script_json(scene, archives),
+        }
+
+    async def book_script(self, book_id: str, with_thoughts: bool = True,
+                          with_tension: bool = False) -> dict:
+        """S4：全书剧本产物（按章节/场景顺序拼接，仅含有推演回合的场景）。"""
+        from app.services.engine.emergence import render_script_md
+
+        tree = await self.repo.get_book_tree(book_id)
+        chapters = sorted((tree or {}).get("chapters") or [], key=lambda c: c.get("order_no") or 0)
+        arch = await self._archives_by_scene(book_id)
+        parts: list[str] = []
+        scenes_n = turns_n = 0
+        for ch in chapters:
+            for sc in await self.repo.list_scenes_by_chapter(ch["id"]):
+                a = arch.get(str(sc.get("id")), [])
+                if not a:
+                    continue
+                scenes_n += 1
+                turns_n += len(a)
+                parts.append(render_script_md(sc, a, with_thoughts=with_thoughts,
+                                              with_tension=with_tension))
+        return {"book_id": book_id, "scenes": scenes_n, "turns": turns_n,
+                "markdown": "\n\n---\n\n".join(parts) if parts else "（本书尚无推演回合）"}
 
     # ---------------------------------------------------------------- 查看状态
     async def get_state(self, sim_id: str) -> models.SimulationState:
