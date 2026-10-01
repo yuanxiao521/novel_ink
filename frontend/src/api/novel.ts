@@ -557,6 +557,73 @@ export async function fetchDashboard(bookId: string): Promise<DashboardData> {
   return getJson<DashboardData>(`${API_BASE}/api/v1/books/${bookId}/dashboard`);
 }
 
+/* ---------- S3 全局张力视图（v1.12） ---------- */
+
+export interface GlobalViewChapter {
+  chapter_id: string;
+  title: string;
+  order_no: number;
+  status: 'done' | 'draft' | 'planned' | string;
+  scenes: number;
+  turns: number;
+  tension_avg: number | null;
+  tension_peak: number | null;
+  trend: string;
+  prose_chars: number;
+}
+
+export interface GlobalViewDiagnostic {
+  rule: string;
+  severity: 'high' | 'mid' | 'low' | string;
+  deduct: number;
+  title: string;
+  detail: string;
+  evidence: unknown[];
+}
+
+export interface GlobalViewForeshadowNode {
+  id: string;
+  type: string;
+  text: string;
+  status: string;
+  buried_chapter: number | null;
+  expected_chapter: number | null;
+  related_char_ids: string[];
+  overdue: boolean;
+}
+
+export interface GlobalView {
+  book_id: string;
+  title: string;
+  sims: number;
+  curve: GlobalViewChapter[];
+  summary: {
+    mean: number | null;
+    std: number | null;
+    peak_chapter: { chapter_id: string; title: string; order_no: number; tension_avg: number } | null;
+    flat_chapters: number[];
+    valid: number;
+    chapters: number;
+    done_chapters: number;
+    foreshadows_open: number;
+    foreshadows_closed: number;
+  };
+  diagnostics: GlobalViewDiagnostic[];
+  foreshadows: {
+    nodes: GlobalViewForeshadowNode[];
+    edges: Array<{ from_chapter: number; to_chapter: number; foreshadow_id: string }>;
+    overdue: GlobalViewForeshadowNode[];
+  };
+  structure_score: number;
+  barren_scenes: string[];
+}
+
+/** S3 全局张力视图：曲线 + 结构诊断 + 伏笔呼应网络 + 结构分（0-token 派生）。 */
+export async function fetchGlobalView(bookId: string): Promise<GlobalView> {
+  return getJson<GlobalView>(`${API_BASE}/api/v1/books/${bookId}/global-view`);
+}
+
+
 // ---------------------------------------------------------------------------
 // 正文协作工作区（阶段④ · 四角色 + 审计记录）
 // ---------------------------------------------------------------------------

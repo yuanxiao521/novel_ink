@@ -3,8 +3,9 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { Sidebar } from '../components/backoffice/Sidebar';
 import { ThemeToggle } from '../components/backoffice/ThemeToggle';
 import { useDialog } from '../components/common/Dialog';
-import { listBooks, createBook, fetchDashboard } from '../api/novel';
-import type { BookMeta, DashboardData } from '../api/novel';
+import { listBooks, createBook, fetchDashboard, fetchGlobalView } from '../api/novel';
+import type { BookMeta, DashboardData, GlobalView } from '../api/novel';
+import { TensionPanel } from '../components/dashboard/TensionPanel';
 
 const TODO_ICON: Record<string, { icon: string; char: string }> = {
   ok: { icon: 'success', char: '✓' },
@@ -19,6 +20,7 @@ export function DashboardPage() {
   const [books, setBooks] = useState<BookMeta[]>([]);
   const [bookId, setBookId] = useState('');
   const [data, setData] = useState<DashboardData | null>(null);
+  const [gview, setGview] = useState<GlobalView | null>(null);
   const [err, setErr] = useState('');
 
   // 书列表 + 初始选中：URL ?book= 优先；无效或缺失则取首本
@@ -43,6 +45,10 @@ export function DashboardPage() {
     fetchDashboard(bookId)
       .then(setData)
       .catch((e) => setErr(`概览加载失败：${e instanceof Error ? e.message : e}`));
+    // S3 全局张力视图（失败不影响概览主体，仅该区块显示加载态）
+    fetchGlobalView(bookId)
+      .then(setGview)
+      .catch(() => setGview(null));
   }, [bookId]);
 
   const newBook = async () => {
@@ -186,6 +192,8 @@ export function DashboardPage() {
                     </div>
                   )}
                 </section>
+
+                <TensionPanel view={gview} />
 
                 <section className="section-block">
                   <div className="section-header">

@@ -1297,3 +1297,29 @@
 .preview-chapter { border-top: 1px solid var(--border); padding-top: 8px; }
 .preview-ch-title { font-size: 13px; font-weight: 600; }
 .preview-scenes { font-size: 12px; color: var(--text-muted); }
+/* ===== S3 全局张力区块（曲线 + 诊断 + 伏笔网络） ===== */
+.tension-section .section-header { display: flex; align-items: center; justify-content: space-between; }
+.tension-score { font-size: 12px; padding: 3px 10px; border-radius: 999px; background: var(--bg-surface); border: 1px solid var(--border); color: var(--text-muted); }
+.tension-score.warn { color: #b45309; border-color: #f0c48a; }
+.tension-summary { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--text-muted); margin-bottom: 6px; }
+.tension-svg { width: 100%; height: 170px; display: block; }
+.tension-axis { stroke: var(--border); stroke-width: 1; }
+.tension-axis.faint { stroke-dasharray: 3 5; opacity: .5; }
+.tension-line { fill: none; stroke: #a33a2a; stroke-width: 2.2; stroke-linejoin: round; }
+.tension-dot { fill: var(--bg-page); stroke: #a33a2a; stroke-width: 2; }
+.tension-x-label { fill: var(--text-muted); font-size: 11px; text-anchor: middle; }
+.tension-hint { color: var(--text-muted); margin-top: 4px; }
+.diag-list { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.diag-item { display: flex; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-left-width: 3px; border-radius: 8px; background: var(--bg-surface); }
+.diag-item.danger { border-left-color: #b91c1c; }
+.diag-item.warn { border-left-color: #d97706; }
+.diag-item.info { border-left-color: #2563eb; }
+.diag-rule { font-size: 11px; font-weight: 700; color: var(--text-muted); min-width: 26px; }
+.diag-title { font-size: 13px; font-weight: 600; display: flex; gap: 8px; align-items: center; }
+.diag-deduct { font-size: 11px; color: var(--text-muted); }
+.diag-detail { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+.fs-net { margin-top: 10px; font-size: 12px; }
+.fs-net-head { color: var(--text-muted); margin-bottom: 4px; }
+.fs-overdue { margin: 0; padding-left: 18px; color: #b45309; }
+.fs-ok { color: var(--text-muted); }
+
