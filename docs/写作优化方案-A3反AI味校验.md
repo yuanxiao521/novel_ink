@@ -109,9 +109,26 @@ sentences_with(text, exclude) -> [{sentence, rules:[...]}]
 - `POST /scenes/{id}/prose/ai-tone` → `{report: {rules, flags, counts}, note_status}`（扫描 + 落 editor note，payload 存 `ai_tone`）；
 - `POST /scenes/{id}/prose/spot-fix` → `{after, changes:[{before, after, rule, reason}], report_after, accepted}`（定点重写 + 复检，落 polisher note）。
 
-### 3.5 前端（并入现有正文协作面板）
+### 3.5 前端（并入现有正文协作面板）—— 审计后的落地路径
 
-StudioPage/SceneStudioPanel 增「AI 味」区块：规则命中清单（带证据片段）+ 「定点修复」按钮（只显示被改句子 diff）；**不做**一键全文重写。
+**现状核查（2026-09-13）**：
+| 事实 | 证据 |
+| -- | -- |
+| 正文协作面板**已有** 6 个按钮：✍写手·初稿 / 🩺体检 / 🎨润色 / 🔍质检 / 保存 / **✓应用润色稿** | `SceneStudioPanel.tsx` L171-206 |
+| "应用改写"管线**已存在**：`polish.after → setText`（润色稿一键落地） | 同上 L203-205 |
+| 审计记录区**只渲染 `suggestion` 文本**，不读明细 | 同上 L238-256 |
+| **后端已返回 `payload_json`**（`repo._prose_note_dict` L674），但前端 `ProseNote` 类型未声明该字段 | `novel.ts` L633-644 |
+| 正文协作**无 SSE 事件流**（纯 POST/请求-响应）；SSE 只用于推演流与主笔/导演对话 | `simulation.py` 路由 |
+
+**因此落地优先级（比原计划更省力）**：
+1. **类型与展示打通**（最高优先，0 后端改动）：`ProseNote` 增 `payload_json?: string` → 解析后渲染
+   → **顺带把 S2 遗留的"口吻/先验明细看不见"一并解决**（同一字段、同一折叠区）；
+2. **复用"应用改写"管线**：`spot-fix` 落一条 **polisher note**（`before`/`after` = 原文/定点改写后全文）
+   → 前端沿用现有"✓ 应用润色稿"按钮落地，**不新造 diff UI**；按钮文案可加"（定点）"以示区别；
+3. **新增「AI 味」折叠区**：规则清单（`rule/severity/detail/evidence`）+ 两个按钮「AI 味扫描」「定点修复」；
+4. **不需要 SSE**：扫描是 0-token 瞬时，定点修复是一次 LLM 调用（约 7-10s），用按钮 loading 态即可。
+
+**明确不做**：一键全文重写、独立 diff 编辑器、事件流推送。
 
 ---
 
@@ -124,7 +141,8 @@ StudioPage/SceneStudioPanel 增「AI 味」区块：规则命中清单（带证�
 | `backend/app/services/service.py` | `prose_ai_tone` / `prose_spot_fix`（落 note + payload） | 低-中 |
 | `backend/app/api/routers/simulation.py` | 2 个并增端点 | 低 |
 | `backend/tests/test_ai_tone.py` | **新增**：6 条规则 + 闸门 + 复检 + 服务/接口 | 低 |
-| `frontend/src/components/backoffice/SceneStudioPanel.tsx` + `api/novel.ts` | 「AI 味」区块 + 定点修复 | 中（前端） |
+| `frontend/src/api/novel.ts` | **`ProseNote` 增 `payload_json?: string`**（打通明细展示；同时解决 S2 先验/口吻明细不可见） | 低 |
+| `frontend/src/components/backoffice/SceneStudioPanel.tsx` | 「AI 味」折叠区（规则清单 + 扫描/定点修复按钮）+ 复用现有"应用润色稿"管线 | 中（前端） |
 | `docs/写作痛点清单与优先级.md` / Wiki | A3 现状与版本记录 | 低 |
 
 ---
@@ -185,8 +203,8 @@ StudioPage/SceneStudioPanel 增「AI 味」区块：规则命中清单（带证�
 1. ✅ **勘察现状 + 出本方案**（本次；关键发现：底座已就绪、缺拦截与定点修复、D6 有实测量化证据）
 2. ✅ **（含审计修复：专名排除 + 阈值归一，见 §5-7/8）** 规则扩展 + `ai_tone_report()` + 单测：R-A3-1/2（既有信号升级）+ **R-A3-3 填充词**（修「声明了却不可达」）+ R-A3-4 段末拔高 + R-A3-5 同构排比（同首字 + 句长差 ≤2，防误伤）+ R-A3-6 高频实词（violation）；`test_ai_tone.py` 7 例（含干净文本 0 命中）
 3. ✅ spot-fix 落地：①**句子级定位 `sentences_with`**（§3.2.1）②**规则白名单 `rule_policy`**（§3.2.2：R-A3-2 只提示 / R-A3-5 每轮 ≤2 句）③`engine/ai_tone.py`：结构化重写 + 落地校验（原句须逐字存在）+ **事实闸门四类**（专名/数字/术语/台词，次数全等）+ **双闸复检**（句子级命中数↓ + 口吻不劣化）+ 幂等空操作 + LLM 不可用回退；④`test_ai_tone_spotfix.py` **11 例**（含跳过纯台词/只提示规则、闸门四类、回退）
-4. ⬜ 服务 + 2 个并增端点 + 接口测试
-5. ⬜ 前端「AI 味」区块 + `tsc` 零错误
+4. ⬜ 服务 + 2 个并增端点 + 接口测试（**无需改 payload 暴露**：`repo._prose_note_dict` 已返回 `payload_json`）；spot-fix 落 **polisher note**（before/after）以复用前端"应用"管线
+5. ⬜ 前端：①`ProseNote.payload_json` 类型打通 + 明细折叠区（**顺带修 S2 明细不可见**）②「AI 味」区块（规则清单 + 扫描/定点修复按钮）③复用现有"应用润色稿"落地 + `tsc` 零错误
 6. ⬜ 真数据验收 + `scripts/accept_a3.py` + 文档归档（痛点清单 A3 现状、Wiki 版本行、§11）
 
 ---
