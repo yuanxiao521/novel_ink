@@ -30,6 +30,14 @@ HOMO_MIN = 3               # R-A3-5 连续同构句数下限
 HOMO_LEN_DIFF = 2          # R-A3-5 句长差上限（同构判据）
 CONTENT_TOP_RATIO = 0.08   # R-A3-6 高频实词占正文比下限
 CONTENT_TOP_MIN = 5        # R-A3-6 高频实词出现次数下限
+# ---- step3 前置：规则白名单（哪些规则允许 spot-fix 改写）----
+FIXABLE_RULES = ("R-A3-1", "R-A3-3", "R-A3-4", "R-A3-6")   # 可直接改写
+CONSERVATIVE_RULES = ("R-A3-5",)                           # 保守改写（每轮上限）
+CONSERVATIVE_MAX = 2                                       # 同构排比每轮最多拆几句
+HINT_ONLY_RULES = ("R-A3-2",)                              # 只提示不改（标点实测正常，B20）
+FILLER_SENT_PER_100 = 20.0   # 句级填充词密度上限（比全文级 16 更保守）
+FILLER_SENT_MIN = 3          # 句级填充词最少个数（防短句噪声）
+FILLER_SENT_MIN_LEN = 12     # 句级判定最小句长
 
 # R-A3-4：段末"升华/总结"词表（抽象情绪、顿悟、收束感）
 ELEVATION_WORDS = (
@@ -351,6 +359,65 @@ def top_content_words(text: str, exclude: set[str] | None = None) -> list[dict]:
                         "evidence": g})
         if len(out) >= 3:
             break
+    return out
+
+
+def rule_policy(rule: str) -> dict:
+    """规则 → 动作策略（step3 白名单）：fix 可直接改 / conservative 限句数 / hint 只提示。"""
+    if rule in HINT_ONLY_RULES:
+        return {"fixable": False, "mode": "hint"}
+    if rule in CONSERVATIVE_RULES:
+        return {"fixable": True, "mode": "conservative", "max": CONSERVATIVE_MAX}
+    if rule in FIXABLE_RULES:
+        return {"fixable": True, "mode": "fix"}
+    return {"fixable": False, "mode": "unknown"}
+
+
+def sentences_with(text: str, exclude: set[str] | None = None) -> list[dict]:
+    """句子级定位（step3 前置）：返回每个"命中句"及命中的规则。
+
+    ai_tone_report 的 R-A3-1/2/3 是全文聚合指标（没有句子定位），spot-fix 需要
+    "只改哪几句" → 这里把同一批规则**按句**重算一遍。不可改写的规则（R-A3-2）
+    也会出现在结果里（供前端提示），是否改写由 rule_policy 决定。
+    """
+    ex = {str(e) for e in (exclude or set()) if e}
+    text = text or ""
+    para_last: set[str] = set()
+    for p in paragraphs(text):
+        sents = split_sentences(p)
+        if len(sents) >= 2:
+            para_last.add(sents[-1].strip())
+    homo: set[str] = set()
+    for h in homogeneous_runs(text):
+        for s in split_sentences(str(h.get("evidence") or "")):
+            homo.add(s.strip())
+    hot = {str(h.get("evidence") or "") for h in top_content_words(text, ex)}
+
+    out: list[dict] = []
+    for i, raw in enumerate(split_sentences(text)):
+        s = raw.strip()
+        if not s:
+            continue
+        rules: list[str] = []
+        if any(t in s for t in CLICHES):
+            rules.append("R-A3-1")
+        if "——" in s or "—" in s:
+            rules.append("R-A3-2")
+        # 句级填充词判定要更保守：短句里两三个虚词就超"每百字 16"（全文级阈值），
+        # 会把"他顿了顿——然后笑了。"这种正常句判成拖沓（实现时踩过）。
+        fillers = sum(s.count(ch) for ch in FILLERS)
+        if len(s) >= FILLER_SENT_MIN_LEN and fillers >= FILLER_SENT_MIN and \
+                fillers * 100 / len(s) > FILLER_SENT_PER_100:
+            rules.append("R-A3-3")
+        if (s in para_last and any(w in s for w in ELEVATION_WORDS)
+                and len(s) <= ELEVATION_MAX_LEN):
+            rules.append("R-A3-4")
+        if s in homo:
+            rules.append("R-A3-5")
+        if hot and any(g and g in s for g in hot):
+            rules.append("R-A3-6")
+        if rules:
+            out.append({"index": i, "sentence": s, "rules": rules})
     return out
 
 
