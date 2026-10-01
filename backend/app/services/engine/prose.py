@@ -138,6 +138,12 @@ _DRAFT_PROMPT = """你是小说正文【写手】。根据场景设定、出场�
 书级记忆（务必遵守）：
 {memory}
 
+涌现素材（作者已采纳的剧本高光，当素材参考、不必照抄）：
+{emergence}
+
+角色动机依据（来自推演回合的角色推理，用于对齐"为什么这么做"）：
+{motives}
+
 {existing_block}"""
 
 _REVIEW_PROMPT = """你是小说【审核体检员】。审读下面正文，给结构化体检报告（结构/逻辑/节奏/人设一致性/用词问题）。
@@ -299,10 +305,34 @@ async def _run_role(
         return fallback
 
 
+def _emergence_block(materials: list[dict] | None) -> str:
+    """S4 桥接：作者已采纳的涌现高光素材（title：desc）。"""
+    rows = []
+    for m in materials or []:
+        title = str((m or {}).get("title") or "").strip()
+        desc = str((m or {}).get("desc") or "").strip()
+        if title or desc:
+            rows.append("- %s：%s" % (title, desc))
+    return "\n".join(rows) if rows else "（无）"
+
+
+def _motives_block(motives: list[dict] | None) -> str:
+    """S4 桥接：角色动机依据（thoughts.reasoning）—— 与"内心独白"分开，只给动机。"""
+    rows = []
+    for m in motives or []:
+        char = str((m or {}).get("char") or "").strip()
+        why = str((m or {}).get("reasoning") or "").strip()
+        if why:
+            rows.append("- %s：%s" % (char, why))
+    return "\n".join(rows) if rows else "（无）"
+
+
 async def draft_prose(llm_client: Any, scene: dict, memory: str,
                       existing: str = "", characters: list[dict] | None = None,
                       prev_prose: str = "",
-                      world_states: list[dict] | None = None) -> str:
+                      world_states: list[dict] | None = None,
+                      emergence: list[dict] | None = None,
+                      motives: list[dict] | None = None) -> str:
     """写手：正文初稿（自由文本，非结构化；无 LLM → 空串由调用方提示）。"""
     if not llm_client.available:
         return ""
@@ -313,6 +343,8 @@ async def draft_prose(llm_client: Any, scene: dict, memory: str,
         world_states=_world_states_block(world_states),
         prev_prose=prev_prose or "（无前文，本场为开场）",
         memory=memory or "（无）",
+        emergence=_emergence_block(emergence),
+        motives=_motives_block(motives),
         existing_block=existing_block,
     )
     raw = await validate_and_retry(llm_client, prompt, None, DRAFT_VALIDATOR)

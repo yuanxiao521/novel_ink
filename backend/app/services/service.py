@@ -728,8 +728,13 @@ class SimulationService:
             except Exception:
                 pass
 
+        # S4 桥接：已采纳的涌现高光（灵感池 source=emergence 且 adopted=True）+ 角色动机依据
+        emergence = await self._emergence_materials(book_id) if book_id else []
+        motives = await self._scene_motives(scene_id, book_id) if book_id else []
+
         text = await draft_prose(llm_client, scene, memory, existing,
                                  characters=characters, prev_prose=prev_prose,
+                                 emergence=emergence, motives=motives,
                                  world_states=world_states)
         await self.repo.save_prose_note({
             "id": f"note-{uuid.uuid4().hex[:10]}",
@@ -822,6 +827,22 @@ class SimulationService:
             "ts": int(time.time() * 1000),
         })
         return {"opinion": opinion, "note_status": "pending"}
+
+    async def _emergence_materials(self, book_id: str) -> list[dict]:
+        """S4 桥接素材：灵感池里 source=emergence 且**已采纳**（作者勾选）的高光卡。"""
+        cards = await self.repo.list_inspirations(book_id)
+        return [c for c in cards
+                if str(c.get("source") or "") == "emergence" and c.get("adopted") is True]
+
+    async def _scene_motives(self, scene_id: str, book_id: str) -> list[dict]:
+        """S4 桥接动机：该场景**最近一个有 reasoning 的回合**里各角色的动机依据。"""
+        archives = (await self._archives_by_scene(book_id)).get(scene_id, [])
+        for a in sorted(archives, key=lambda x: x.get("turn") or 0, reverse=True):
+            rows = [m for m in (a.get("thoughts") or [])
+                    if str((m or {}).get("reasoning") or "").strip()]
+            if rows:
+                return rows
+        return []
 
     async def prose_ai_tone(self, scene_id: str, text: str) -> dict:
         """A3 反 AI 味扫描（0-token）→ editor note（pending，明细存 payload_json.ai_tone）。

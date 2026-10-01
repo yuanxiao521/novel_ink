@@ -186,3 +186,45 @@ async def test_scene_script_includes_hits_and_adopt_creates_cards(svc):
     only_turn2 = await svc.adopt_emergence_hits("sc-1", turns=[2])
     assert only_turn2["picked"] == 1
 
+@pytest.mark.asyncio
+async def test_draft_prompt_injects_emergence_and_motives(svc, monkeypatch):
+    """S4 桥接：已采纳高光（adopted=True）+ 角色动机依据进写手 prompt；
+    未采纳素材**不注入**（作者掌控）；动机只取 reasoning（不含内心独白）。
+    """
+    import app.services.service as service_mod
+
+    cards = [
+        {"id": "insp-1", "source": "emergence", "adopted": True, "title": "剧本高光 T-02",
+         "desc": "【涌现高光·冲突回合】翻脸｜台词：你书房门没锁"},
+        {"id": "insp-2", "source": "emergence", "adopted": False, "title": "未采纳高光",
+         "desc": "不该出现的内容"},
+        {"id": "insp-3", "source": "author", "adopted": True, "title": "作者手写灵感",
+         "desc": "也不该出现"},
+    ]
+
+    async def _fake_list(_book_id):
+        return cards
+
+    monkeypatch.setattr(svc.repo, "list_inspirations", _fake_list)
+    calls: list[str] = []
+
+    class _CapLLM:
+        available = True
+
+        async def call_cheap(self, prompt, json_schema=None):
+            calls.append(prompt)
+            return "雨敲着窗格，烛火矮了一截。" * 3
+
+    monkeypatch.setattr(service_mod, "llm_client", _CapLLM())
+    out = await svc.prose_draft("sc-1")
+    assert out.get("text")
+    prompt = calls[0]
+    assert "涌现素材" in prompt and "角色动机依据" in prompt
+    assert "剧本高光 T-02" in prompt                 # 已采纳 → 注入
+    assert "不该出现的内容" not in prompt             # 涌现但未采纳 → 不进"涌现素材"块
+    # 注：作者灵感卡本就会经"书级记忆"(chief_perceive) 进 prompt —— 那是既有行为，
+    # 与本方案的"涌现素材"通道互不干扰，故不对此断言。
+    assert "只给半句 = 不信任" in prompt              # reasoning → 注入动机
+    assert "他在试探我。" not in prompt               # 内心独白不进正文 prompt
+
+
