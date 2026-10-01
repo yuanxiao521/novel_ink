@@ -9,6 +9,7 @@
 
 | 版本         | 日期             | 变更摘要                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | 作者            |
 | ---------- | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
+| **v1.10.1** | 2026-09-13    | 文档：外部《涌现式六层 Agent 设计》评审结论入档 —— **不按该方案重构**（其 `agents/*` 目录与 `services/engine/*` 语义 1:1 重复、改动面涉及 65 端点 + 前端；「主笔纯回溯」会丢现有骨架/commit 资产）；仅把可用点收进《写作痛点清单与优先级》**§5 待考虑项候选池 T1–T8**（场景快照层 / 文学减法层 / 主笔回溯脉络 / 成文叙事选择 / 角色非理性授权 / 角色卡扩展字段 / 事实不可变硬闸门 / 四类约束表），池内不参与定级、触发再立方案；§10 增指向 | 主笔 Agent |
 | **v1.10**  | 2026-09-13     | ★**S2 角色口吻一致性（注入 + 体检回环）交付**：①**B16 修复** `_characters_block` 字段名错位（personality/tone/bottom_line → summary/traits/voice/core_beliefs/bottom_lines）：原本每张角色卡都渲染成"（无详细设定）"，**等于没注入**（人物口吻漂移根因）；②**写手口吻纪律**：`_DRAFT_PROMPT` 增反同质/称呼一致硬要求（口号→约束）；③**体检回环**：`review_prose` 增 `characters` 形参 + `REVIEW_SCHEMA.voice_findings` + 防幻觉闸门 `_sanitize_voice_findings`（须有角色名 + 正文逐字原句，否则丢弃），服务层注入出场角色卡并把 `voice_findings` 落 editor note 的 `payload_json`；④**B17 修复**：DB 用例跨事件循环静默降级（TestClient 在自有 loop 懒建全局 engine → 后续用例 connect 抛错被 `_query_or_mem` 吞成"DB 不可用"→ 假绿/误 skip）→ conftest 按用例丢弃 engine 单例 + 探针改独立临时引擎；⑤**真 LLM 实测**：3 卡腔调逐字进 prompt、初稿三把声线可区分、越界正文被 `voice_findings` 命中；pytest **80 passed, 0 skipped（DB 起，2.8s）** | 主笔 Agent      |
 | **v1.9**   | 2026-09-13     | ★主线转为「AI 写小说痛点治理」（sourcing 多项目 → 建档`docs/写作痛点清单与优先级.md` S1–S4/A1–A4/B1/C1）→ **S1 世界状态账本交付**：①**建档**：痛点清单+优先级（一文索引，方案逐条另立）；②**S1 方案**`docs/写作优化方案-S1世界状态.md`（真实代码对照=现状盘点/新表/写入/感知/验收）；③**建表**`world_states`（迁移 0012 + `WorldState` ORM + repo：`list_world_states`/`list_world_states_by_key`/`save/delete`）；④**verify_prose 扩 schema** 增 `state_deltas`（kind/name/key/value/previous_value，五字段校验）；⑤**写入端**：`_apply_verify_bookkeeping` 第三段写世界状态（真 upsert，按 `(kind,key)` 匹配复用 id，幂等）；`prose_verify`/`_bookkeep_after_save` 传 world_states + scene_no；⑥**感知注入**：`draft_prose` 增参 world_states + `_world_states_block` helper，`service.prose_draft` 只喂相关状态（cast 名匹配 character/item/term + time/numeric 全局），`chief_perceive` 增「世界状态现状」段；⑦**LLM 平台切换**：base_url 改阿里云百炼 `dashscope.aliyuncs.com/compatible-mode/v1`，key 更新，模型 `deepseek-v4-flash`（官方 DeepSeek 余额 402 弃用）；⑧**真实验收**：真实 LLM 闭环 verify→写入→写手感知全通；修复 Bug A（真 upsert 防同 key 插重）+ Bug B（item/character value 语义=持续态非动作）；pytest **17 passed（prose/bookkeep 相关）**；B14 记录 | 主笔 Agent      |
 | **v1.8**   | 2026-09-02     | ★主笔 Agent 升级·阶段①记忆地基 + ②场景级部分修改 + ③纠错循环 + ④正文协作工作区 + ⑤记账 Agent + 骨架重复 bug 修复：①**书级记忆**（`book_memories` + 迁移 0007，按 book_id 隔离）+ **主笔感知装配**（`chief_perceive`：书树+记忆+灵感+伏笔→注入对话/规划）；②**场景级部分修改**（迁移 0008：`scenes`+`goal`/`content_desc`；`PUT /chapters/{id}/scenes` 整章 diff 替换 + 骨架树「编辑场景列表」）；③**纠错循环**（`engine/schema_retry.py` `validate_and_retry`：0-token 校验→反馈重试→plan 失败不落库/cards 回退模板/rules 回退空）；④**正文协作工作区**（`engine/prose.py` 四角色：✍写手/🩺体检员/🎨润色师(反AI味·只改写法)/🔍质检员(伏笔·信念·因果) + `prose_notes` 审计表（迁移 0009，作者审阅） + 7 个 `/scenes/{id}/prose/*` 接口 + Maestro「✎ 正文协作」面板）；⑤**记账 Agent**（迁移 0010 payload_json：质检明细持久化；approve verifier → `_apply_verify_bookkeeping` 真正落账——伏笔推进/信念新增/未知容错；保存正文→后台自动记账（幂等 unchanged 不触发，审计 created_by=bookkeeping））；⑥**前端记忆入口**：Maestro 右栏「书级记忆」折叠区；⑦**骨架重复修复**（B13）：`commit_book_plan` 改全量替换；设计文档 `docs/主笔Agent升级设计.md` v0.2；测试 **74 passed** + tsc 零错误 | 主笔 Agent      |
@@ -312,7 +313,7 @@ _apply_verify_bookkeeping 第一/二段：伏笔推进 + 信念新增
 
 ### 7.1 排查 bug 的标准动作
 
-1. 看日志：`backend/logs/app.log`（业务 INFO 全量，5MB×3 轮转），比终端全
+1. 看日志：`backend/app/logs/app.log`（业务 INFO 全量，5MB×3 轮转；`main.py` 的 `_LOG_DIR = app/`），比终端全
 2. 确认服务三连：`netstat -ano | findstr ":5433"` / `:8000` / `:5173`
 3. 跑最小测试集：`cd backend && .venv\Scripts\python.exe -m pytest -q test_core.py test_world_rules.py`
 4. 前端类型：`cd frontend && npx tsc --noEmit`
@@ -372,14 +373,16 @@ cd backend
 
 **已交付（原 P0 全部完成，v1.1）**：灵感池接口（CRUD + 主笔 generate + 采纳持久化）、主笔共创对话 SSE、灵感→骨架落地（commit 引用已采纳灵感）、前端 MaestroPage 全部接真。
 
+> **2026-09-13 待考虑项池**：外部「六层 Agent」方案的可用点已收进《写作痛点清单与优先级》**§5（T1–T8）**——不参与定级、不改变推进顺序，触发条件成立或被点名时才立独立方案文档。主线仍按 **S1 → S2 → S3 → S4 / A / B / C** 推进。
+
 **导演台全流程对齐盘点（2026-08-26 v1.1.1）**：启动/恢复（四层装配）、SSE 事件级流、播放/暂停/单步、举手同意/拒绝、导演对话（token 流式）、时间线查看/回退、收束汇报（director\_close）、自动续场（next\_scene）、书树反查 + 场景切换 —— **前后端已全部对齐，无缺端点**。
 
 剩余缺口（按"推演 → 成书"闭环排序）：
 
 | 优先级    | 项           | 现状 → 目标                                                          | 涉及文件                                       |
 | ------ | ----------- | ---------------------------------------------------------------- | ------------------------------------------ |
-| **P0** | **正文落库/导出** | prose 仅内存展示，收束/换场后不持久化 → 场景收束时定稿正文落库（章节维度聚合），支持导出 markdown       | service（收束钩子）+ repo + 新迁移/字段 + 新端点         |
-| P1     | 阅读台接真       | ReaderView 纯静态 → 渲染已落库章节正文 + 翻章                                  | ReaderView\.tsx + 新查询端点                    |
+| ~~**P0**~~ | ~~**正文落库/导出**~~ | ✅ **已交付（v1.2）**：`scenes.final_prose` + 手动定稿 + 章节维度聚合 + 全书 md 导出 | service + repo + 迁移 0004 |
+| ~~P1~~     | ~~阅读台接真~~       | ✅ **已交付（v1.2）**：ReaderView 渲染已落库章节正文 + 翻章 + 导出                | ReaderView.tsx + 查询端点 |
 | P1     | 伏笔追踪面板      | 仅收束汇报文字提及 → 独立伏笔面板（三态时间线，`GET /books/{id}/foreshadows` 已有，前端未消费） | 新组件 + DirectorPage/侧边"伏笔"入口                |
 | P1     | 作者自定义介入     | intervene 仅 accept/reject → 支持注入自由指令（如"让陈默突然翻脸"）                 | simulation.py intervene 扩展 + DirectorPanel |
 | P2     | 角色 CRUD UI  | 后端 API 已有（POST/PUT/DELETE /characters）→ 前端增删改查入口                 | CharRail / CharactersPage                  |

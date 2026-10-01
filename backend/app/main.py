@@ -32,7 +32,7 @@ def _setup_logging() -> None:
     - 终端：basicConfig 只在 root 无 handler 时生效（独立运行脚本命中）；
       uvicorn 接管后 root 已有 handler，此时靠下面的 setLevel 让 INFO 可见。
     - 文件：RotatingFileHandler 挂 root（5MB×3 轮转，UTF-8），无论终端怎么缓冲，
-      backend/logs/app.log 一定能看到 [think-stream]/[decide]/[director-*] 全文。
+      backend/app/logs/app.log 一定能看到 [think-stream]/[decide]/[director-*] 全文。
     """
     fmt = logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s", "%H:%M:%S")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
