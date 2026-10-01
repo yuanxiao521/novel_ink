@@ -83,6 +83,39 @@ def test_clean_text_has_no_rules():
     assert rep["counts"] == {"total": 0, "violation": 0, "by_rule": {}}
 
 
+# ---------------------------------------------------------------- 审计发现的误报（回归）
+CAST_PROSE = ("林尘推门进来。林尘把伞靠在墙边。林尘看了一眼桌上的残页。"
+              "李文皱眉问：林尘，你查到了什么？林尘没有回答，只把残页推过去。"
+              "林尘说：这半句剑诀，林尘在夹层里见过。林尘又补充道：后山那具遗骸也对得上。")
+
+
+def test_r_a3_6_excludes_proper_nouns():
+    """R-A3-6 必须能排除专名：主角名在一段里出现 8 次是正常叙事，不是"复读"。
+
+    审计实测：不排除时"林尘"被判 violation（96 字里占 10%）——若真去 spot-fix，
+    会去"修"主角名；因此 exclude 是**正确性要求**，不是可选优化。
+    """
+    rep = ai_tone_report(CAST_PROSE, exclude={"林尘", "李文"})
+    assert "R-A3-6" not in _rules(rep), rep
+
+    rep2 = ai_tone_report(CAST_PROSE)
+    assert "R-A3-6" in _rules(rep2)
+    hit = next(r for r in rep2["rules"] if r["rule"] == "R-A3-6")
+    assert "未提供专名清单" in hit["detail"]        # 诚实标注可能误判
+
+
+def test_cliche_threshold_scales_with_text_length():
+    """套话阈值按字数归一：同样的 3 次套话在短句里该报、在长章里不该报。
+
+    审计发现原实现是绝对阈值 6 —— 长章必然命中、短句几乎不可能命中，两端都错。
+    """
+    short = "他深吸一口气，眼中闪过一丝犹豫，又深吸一口气。"
+    assert "R-A3-1" in _rules(ai_tone_report(short))
+
+    long_text = short + "正常叙事。" * 150          # ~800 字
+    assert "R-A3-1" not in _rules(ai_tone_report(long_text))
+
+
 def test_report_shape_and_metrics():
     """报告契约：rules/counts/cliches/metrics/clean 五件套齐全（前端与 note payload 依赖）。"""
     rep = ai_tone_report(CLEAN)

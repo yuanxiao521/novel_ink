@@ -22,6 +22,8 @@ FILLER_PER_100 = 16.0      # 对话里"了/是/的/就/都"密度上限（每百
 DASH_PER_1000 = 6.0        # 破折号密度上限
 ELLIPSIS_PER_1000 = 6.0    # 省略号密度上限
 CLICHE_TOTAL = 6           # 套话命中总次数上限（A3 底座，阈值先宽松）
+CLICHE_MIN = 3             # 套话命中下限（短文本；阈值按字数归一后的地板）
+CLICHE_PER_1000 = 6        # 每千字允许的套话命中上限（长章不能沿用绝对 6）
 # ---- A3 反 AI 味：新增规则阈值 ----
 ELEVATION_MAX_LEN = 26     # R-A3-4 段末"拔高句"长度上限（短句 + 抽象情绪词）
 HOMO_MIN = 3               # R-A3-5 连续同构句数下限
@@ -249,9 +251,11 @@ def ai_tone_scan(text: str) -> dict:
     fillers = sum(text.count(ch) for ch in FILLERS)
     flags: list[dict] = []
     total_cliche = sum(c["count"] for c in cliches)
-    if total_cliche >= CLICHE_TOTAL:
+    # 阈值按字数归一（长章沿用绝对 6 会必然命中；短文本有地板值）
+    cliche_limit = max(CLICHE_MIN, round(CLICHE_PER_1000 * n / 1000))
+    if total_cliche >= cliche_limit:
         flags.append({"kind": "cliche", "char": "", "evidence": "",
-                      "detail": f"套话命中 {total_cliche} 次：" +
+                      "detail": f"套话命中 {total_cliche} 次（阈值 {cliche_limit}）：" +
                                 "、".join(f"{c['term']}×{c['count']}" for c in cliches[:5])})
     if dash * 1000 / n > DASH_PER_1000:
         flags.append({"kind": "dash", "char": "", "evidence": "",
@@ -312,11 +316,15 @@ def homogeneous_runs(text: str) -> list[dict]:
     return out
 
 
-def top_content_words(text: str) -> list[dict]:
+def top_content_words(text: str, exclude: set[str] | None = None) -> list[dict]:
     """R-A3-6：高频实词集中（2-gram 近似分词）→ 词穷式复读。
 
     判据：出现 ≥5 次 且占正文汉字数 ≥8%；命中即 violation（比"套话"更伤文本）。
+
+    **必须传 exclude（角色名 + 世界状态术语）**：专名高频出现是正常的
+    （主角名在一段里出现 8 次很普通），实测过不排除就会把"林尘"判成复读 violation。
     """
+    ex = {str(e) for e in (exclude or set()) if e}
     chars = [c for c in (text or "") if "\u4e00" <= c <= "\u9fff"]
     total = len(chars) or 1
     grams: dict[str, int] = {}
@@ -324,24 +332,29 @@ def top_content_words(text: str) -> list[dict]:
         g = chars[i] + chars[i + 1]
         if any(ch in STOPWORDS for ch in g):
             continue
+        if any(g in name for name in ex):   # 专名（角色名/术语）不算复读
+            continue
         grams[g] = grams.get(g, 0) + 1
     out: list[dict] = []
     for g, n in sorted(grams.items(), key=lambda kv: -kv[1]):
         if n >= CONTENT_TOP_MIN and n / total >= CONTENT_TOP_RATIO:
+            note = "" if ex else "（未提供专名清单，可能误判专名）"
             out.append({"rule": "R-A3-6", "severity": "violation",
-                        "detail": "实词「%s」出现 %d 次（占正文 %.0f%%，阈值 %d 次 / %.0f%%）→ 复读"
-                                  % (g, n, 100 * n / total, CONTENT_TOP_MIN, 100 * CONTENT_TOP_RATIO),
+                        "detail": "实词「%s」出现 %d 次（占正文 %.0f%%，阈值 %d 次 / %.0f%%）→ 复读%s"
+                                  % (g, n, 100 * n / total, CONTENT_TOP_MIN,
+                                     100 * CONTENT_TOP_RATIO, note),
                         "evidence": g})
         if len(out) >= 3:
             break
     return out
 
 
-def ai_tone_report(text: str) -> dict:
+def ai_tone_report(text: str, exclude: set[str] | None = None) -> dict:
     """A3 反 AI 味报告：既有信号（R-A3-1 套话 / R-A3-2 标点 / R-A3-3 填充词）
     + 新增 R-A3-4 段末拔高 / R-A3-5 同构排比 / R-A3-6 高频实词，统一带 rule/severity/evidence。
 
     与 ai_tone_scan（S2 先验用）**并存不回改**：scan 给"信号"，report 给"可拦截的规则清单"。
+    exclude：角色名 + 世界状态术语（R-A3-6 必须排除专名，否则主角名会被判"复读"）。
     """
     tone = ai_tone_scan(text)
     rules: list[dict] = []
@@ -359,7 +372,7 @@ def ai_tone_report(text: str) -> dict:
                       "detail": "填充词（了/是/的/就/都…）密度 %.1f/百字（阈值 %.1f）→ 语感拖沓"
                                 % (filler, FILLER_PER_100),
                       "evidence": ""})
-    rules += elevation_endings(text) + homogeneous_runs(text) + top_content_words(text)
+    rules += elevation_endings(text) + homogeneous_runs(text) + top_content_words(text, exclude)
     by_rule: dict[str, int] = {}
     for r in rules:
         by_rule[r["rule"]] = by_rule.get(r["rule"], 0) + 1

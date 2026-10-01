@@ -283,11 +283,14 @@ _apply_verify_bookkeeping 第一/二段：伏笔推进 + 信念新增
 | test\_style\_checks.py      | **0-token 口吻先验**（S2 step5 / A3 共用底座）：切句（引号内不切）/台词归属（含连续引号同人、防串台）/句长与语气词分账/同质判定/称呼表/套话与破折号密度 | 快速（纯函数，无 LLM/DB） |
 | test\_global\_view.py       | **S3 全局张力**（纯函数 + 内存态装配）：曲线/峰值派生、R1-R7 七条诊断、护栏（样本不足不报/张力 0 不按 0 计）、服务装配与"每场景取最新 sim" | 快速（纯函数）+ 内存态 |
 
+| test\_ai\_tone.py           | **A3 反 AI 味规则**：R-A3-1~6（套话阈值归一 / 标点 / 填充词 / 段末拔高 / 同构排比 / 高频实词）+ 干净文本 0 命中 + **专名排除回归** | 快速（纯函数） |
+
 > 2026-08-26 v1.1.1 基线：**44 passed, 6 skipped**（6 个 skipped = test\_db\_orm 需 docker；test\_api 含章节反查回归 `test_chapter_detail_lookup`）。
 > 全量测试约 6 分钟（部分用例含 sleep），快速迭代可只跑 `pytest -q tests/test_core.py tests/test_world_rules.py`.
 > 前端检查：`cd frontend && npx tsc --noEmit`（当前零错误）。
 >
 > **验收脚本**：`python backend/scripts/accept_s2.py [--live]`（S2 口吻一致性；退出码 0=全通过）。
+> **2026-09-13 基线（A3 进行中）**：**118 passed, 0 skipped**（含 S3 全量 + A3 step2；A3 验收脚本待 step6）。
 > **2026-09-13 基线（v1.11）**：**96 passed, 0 skipped**（DB 已起，约 3s）；S2 验收 **11/11**。
 > **2026-09-13 基线（v1.10.3）**：**94 passed, 0 skipped**（DB 已起，3.0s）。演进：69/6（B17 静默降级）→ 80/0（B17 修复）→ 85（S2 step4 + 结构对齐守卫）→ **94**（S2 step5 先验 9 例）。DB 未起时 DB 用例优雅 skip、其余全绿。
 
