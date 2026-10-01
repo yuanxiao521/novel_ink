@@ -72,21 +72,24 @@ def extract_dialogues(text: str, cast_names: list[str]) -> list[dict]:
     """抽取引号台词并做**演讲人归属**（0-token 启发式，归类不了就留 None）。
 
     归属优先级：①引号前紧邻「名：」；②引号前 24 字内「名+说/道/问…」；
-    ③引号后 14 字内「名+说/道…」；④同句内唯一出现的角色名；
-    ⑤**紧邻上一个引号**（中间只有标点空白）→ 继承上一说话人（中文连续引号同人惯例）。
-    都失败 → speaker=None（宁可留空，不硬猜）。
+    ③引号后 14 字内「名+说/道…」；③b**引号后紧跟角色名**（无言语动词也算：中文常见
+    中置归属「…」陈默没回头，「…」，两个引号同属该角色）；④本引号之前、同句内唯一
+    角色名；⑤**紧邻上一个引号**（中间只有标点空白）→ 继承上一说话人。
+    都失败 → speaker=None（宁可留空，不硬猜；代词「他/她」不做猜测）。
     """
     text = text or ""
     names = [n for n in (cast_names or []) if n]
     out: list[dict] = []
     last_speaker: str | None = None
     prev_end = 0  # 上一个引号的结束位置：用它限定归属窗口，避免"串台"
-    for m in _QUOTE_RE.finditer(text):
+    matches = list(_QUOTE_RE.finditer(text))
+    for idx, m in enumerate(matches):
         content = m.group(1)
-        # 关键：before 只看"上一个引号之后 → 本引号之前"的归属段，
-        # 否则会把上一句台词的"李文笑了笑"当成这一句的说话人（实测踩过）。
+        nxt = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
+        # 关键：before 只看"上一个引号之后 → 本引号之前"的归属段，after 不越过下一个引号，
+        # 否则会把上一句/下一句的说话人算到这一句头上（实测踩过两种串台）。
         before = text[max(prev_end, m.start() - 24):m.start()]
-        after = text[m.end():m.end() + 14]
+        after = text[m.end():min(m.end() + 14, nxt)]
         speaker = None
         for n in names:  # ① 名：紧邻
             if re.search(rf"{re.escape(n)}[：:]\s*$", before):
@@ -102,6 +105,13 @@ def extract_dialogues(text: str, cast_names: list[str]) -> list[dict]:
                 if re.search(rf"^[，,、]?\s*{re.escape(n)}[^。！？…\n]{{0,6}}[{SPEECH_VERBS}]", after):
                     speaker = n
                     break
+        if speaker is None:  # ③b 中置归属：「…」名+动作，「…」（区间内无「：」才算）
+            seg = text[m.end():nxt]
+            if "：" not in seg and ":" not in seg:
+                for n in names:
+                    if re.match(rf"^[，,、]?\s*{re.escape(n)}", seg):
+                        speaker = n
+                        break
         if speaker is None:  # ④ 本引号之前、同句内唯一角色名（同样限定窗口）
             sent_start = max((text.rfind(c, 0, m.start()) for c in _SENT_END), default=-1) + 1
             window = text[max(sent_start, prev_end, m.start() - 40):m.start()]
@@ -256,8 +266,15 @@ def voice_prior(text: str, characters: list[dict] | None = None) -> dict:
     addr = address_terms(text, characters)
     tone = ai_tone_scan(text)
     flags += homo["flagged"] + addr["findings"] + tone["flags"]
+    # 未归属台词计数：代词/无归属写法（如"他低声道：「…」"）诚实标注，供人工复核
+    names = [str((c or {}).get("name") or "").strip() for c in (characters or [])]
+    unresolved = len([d for d in extract_dialogues(text, [n for n in names if n])
+                      if not d["speaker"]])
+    if unresolved:
+        flags.append({"kind": "unresolved", "char": "", "evidence": "",
+                      "detail": "%d 句台词无法归属（代词/无归属写法）→ 分账只按已归属部分计" % unresolved})
     return {"per_char": metrics, "homogeneity": homo, "address": addr,
-            "ai_tone": tone, "flags": flags}
+            "ai_tone": tone, "unresolved": unresolved, "flags": flags}
 
 
 def prior_block(prior: dict, limit: int = 6) -> str:
@@ -272,6 +289,8 @@ def prior_block(prior: dict, limit: int = 6) -> str:
                      f"语气词「{''.join(m.get('particles') or []) or '无'}」")
     if not lines:
         lines.append("- （正文未识别到可归属的台词）")
+    if prior.get("unresolved"):
+        lines.append("- 另有 %d 句无法归属（代词/无归属写法），分账仅按已归属部分" % prior["unresolved"])
     flags = prior.get("flags") or []
     if flags:
         lines.append("- 确定性信号：" + "；".join(str(f.get("detail") or "") for f in flags[:limit]))

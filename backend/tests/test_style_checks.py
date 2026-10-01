@@ -91,3 +91,19 @@ def test_voice_prior_collects_flags_and_renders_prompt_block():
     assert "avg_len" in kinds                                  # 陈默 4 句极短 → 标红
     block = prior_block(prior)
     assert "陈默" in block and "字/句" in block and "确定性信号" in block
+
+def test_dialogue_mid_attribution_between_two_quotes():
+    """中置归属：「A。」陈默没回头，「B。」→ 两句都属陈默（真实 LLM 文风常见写法）。"""
+    text = "“文兄来得正好。”陈默没回头，指尖顿了顿，“后山那具遗骸，你当年可曾碰过？”"
+    ds = extract_dialogues(text, ["陈默", "李文"])
+    assert [d["speaker"] for d in ds] == ["陈默", "陈默"]
+
+
+def test_unresolved_pronoun_quotes_counted_not_guessed():
+    """代词归属（他低声道：「…」）不硬猜；但必须计入 unresolved 并给 flag（诚实标注）。"""
+    text = "他低声道：“原来如此。”李文站在门槛上：“这么晚还不歇？”"
+    prior = voice_prior(text, CAST)
+    assert prior["unresolved"] == 1
+    assert [d["speaker"] for d in extract_dialogues(text, ["陈默", "李文"])] == [None, "李文"]
+    assert any(f["kind"] == "unresolved" for f in prior["flags"])
+
