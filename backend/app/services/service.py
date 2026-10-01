@@ -23,6 +23,7 @@ from app.db.repo import Repo
 from app.errors import InvalidActionError, SceneNotFoundError, SimNotFoundError
 from app.schemas import models
 from app.services.engine.director import PlanCfg
+from app.services.engine.style_checks import voice_prior as style_voice_prior
 from app.services.llm.client import client as llm_client  # 模块级引用：便于测试统一替换（conftest）
 
 logger = logging.getLogger(__name__)
@@ -705,7 +706,10 @@ class SimulationService:
 
         scene, _ = await self._scene_and_book(scene_id)
         characters = await self.repo.list_characters_for_scene(scene_id) if scene_id else []
-        report = await review_prose(llm_client, scene, text, characters=characters)
+        # S2 step5：0-token 口吻先验（成本 0，跑在体检之前；与 A3 共用底座）
+        prior = style_voice_prior(text, characters)
+        report = await review_prose(llm_client, scene, text, characters=characters,
+                                    voice_prior=prior)
         issues = report.get("issues") or []
         voice = report.get("voice_findings") or []
         summary = "；".join(f"[{i.get('severity')}] {i.get('text')}"
@@ -714,15 +718,21 @@ class SimulationService:
             summary += "；口吻：" + "；".join(
                 f"{v.get('char')}（{str(v.get('issue') or '')[:40]}）" for v in voice[:2]
             )
+        prior_flags = prior.get("flags") or []
+        if prior_flags:
+            summary += "；先验信号：" + "；".join(
+                str(f.get("detail") or "")[:60] for f in prior_flags[:2]
+            )
         await self.repo.save_prose_note({
             "id": f"note-{uuid.uuid4().hex[:10]}",
             "scene_id": scene_id, "kind": "editor", "status": "pending",
             "suggestion": f"{report.get('overall') or ''}\n{summary}"[:600],
             "before": text, "after": "", "created_by": "editor",
-            "payload_json": json.dumps({"voice_findings": voice}, ensure_ascii=False),
+            "payload_json": json.dumps(
+                {"voice_findings": voice, "voice_prior": prior}, ensure_ascii=False),
             "ts": int(time.time() * 1000),
         })
-        return {"report": report, "note_status": "pending"}
+        return {"report": report, "voice_prior": prior, "note_status": "pending"}
 
     async def prose_polish(self, scene_id: str, text: str) -> dict:
         """润色师：去 AI 味润色（只改写法）→ polisher note（pending，after 供 [应用]）。"""

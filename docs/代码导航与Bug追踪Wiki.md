@@ -9,6 +9,7 @@
 
 | 版本         | 日期             | 变更摘要                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | 作者            |
 | ---------- | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
+| **v1.10.3** | 2026-09-13    | ★**S2 step5 交付**：新增 `engine/style_checks.py`（**0-token 确定性底座**，S2 先验与 A3 反 AI 腔共用）——①切句（引号内不切）；②台词归属（名：/名前+言语动词/引号后+言语动词/同句唯一名/**紧邻引号继承**；归属窗口限定在上一引号之后，防"串台"）；③各角色句长+语气词+填充词分账；④语气词集合 Jaccard → 疑似同质（≥3 种才判定，样本小不下结论）；⑤称呼表（卡内认可 vs 待确认）；⑥`ai_tone_scan`：套话表/破折号/省略号密度（**A3 底座就绪**）。跑位=体检前，结果作为"确定性事实"注入 `_REVIEW_PROMPT` 并落 editor note `payload_json.voice_prior`；**真实数据实测**（DB 中 254 字真初稿）：陈默 7.5 字/句、李文 20.0、周婶 11.0（声线量化可区分），破折号密度 11.8/千字被标红；用例 9 例、全套 **94 passed** | 主笔 Agent |
 | **v1.10.2** | 2026-09-13    | ★**S2 step4 交付**（质检口吻风险）：①`VERIFY_SCHEMA` 增 `voice_risks`（char/evidence/risk/suggestion，并增）；②`_VERIFY_PROMPT` 注入出场角色卡 + evidence **逐字摘录**硬要求；③校验器 lambda → `_validate_verify`：**逐一点名缺失字段**（纠错重试反馈可执行）+ voice_risks 非数组拦截；④防幻觉闸门泛化为 `_sanitize_grounded`（体检 voice_findings / 质检 voice_risks 共用，只留「有角色名 + 正文逐字原句」）；⑤命中项**并增一行到 `risks`**（前端零改动即见）；⑥服务层 `prose_verify`/`_bookkeep_after_save` 传角色卡、摘要带口吻风险；用例 4 例、全套 **85 passed**；真 LLM 实测命中陈默越界台词并落 note payload | 主笔 Agent |
 | **v1.10.1** | 2026-09-13    | 文档：外部《涌现式六层 Agent 设计》评审结论入档 —— **不按该方案重构**（其 `agents/*` 目录与 `services/engine/*` 语义 1:1 重复、改动面涉及 65 端点 + 前端；「主笔纯回溯」会丢现有骨架/commit 资产）；仅把可用点收进《写作痛点清单与优先级》**§5 待考虑项候选池 T1–T8**（场景快照层 / 文学减法层 / 主笔回溯脉络 / 成文叙事选择 / 角色非理性授权 / 角色卡扩展字段 / 事实不可变硬闸门 / 四类约束表），池内不参与定级、触发再立方案；§10 增指向 | 主笔 Agent |
 | **v1.10**  | 2026-09-13     | ★**S2 角色口吻一致性（注入 + 体检回环）交付**：①**B16 修复** `_characters_block` 字段名错位（personality/tone/bottom_line → summary/traits/voice/core_beliefs/bottom_lines）：原本每张角色卡都渲染成"（无详细设定）"，**等于没注入**（人物口吻漂移根因）；②**写手口吻纪律**：`_DRAFT_PROMPT` 增反同质/称呼一致硬要求（口号→约束）；③**体检回环**：`review_prose` 增 `characters` 形参 + `REVIEW_SCHEMA.voice_findings` + 防幻觉闸门 `_sanitize_voice_findings`（须有角色名 + 正文逐字原句，否则丢弃），服务层注入出场角色卡并把 `voice_findings` 落 editor note 的 `payload_json`；④**B17 修复**：DB 用例跨事件循环静默降级（TestClient 在自有 loop 懒建全局 engine → 后续用例 connect 抛错被 `_query_or_mem` 吞成"DB 不可用"→ 假绿/误 skip）→ conftest 按用例丢弃 engine 单例 + 探针改独立临时引擎；⑤**真 LLM 实测**：3 卡腔调逐字进 prompt、初稿三把声线可区分、越界正文被 `voice_findings` 命中；pytest **80 passed, 0 skipped（DB 起，2.8s）** | 主笔 Agent      |
@@ -277,12 +278,13 @@ _apply_verify_bookkeeping 第一/二段：伏笔推进 + 信念新增
 | test\_schema\_retry.py      | 主笔纠错循环：validate\_and\_retry 重试/熔断 + plan/cards/rules 三接入点（内存态） | 快速                |
 | test\_prose\_studio.py      | 阶段④正文协作：四角色无 LLM 回退 + prose\_notes 生命周期（approve 记账/reject 不写库）+ 幂等保存（内存态） | 快速                |
 | test\_inspiration.py        | 灵感池 CRUD + plan inspiration\_ids 透传      | 快速                |
+| test\_style\_checks.py      | **0-token 口吻先验**（S2 step5 / A3 共用底座）：切句（引号内不切）/台词归属（含连续引号同人、防串台）/句长与语气词分账/同质判定/称呼表/套话与破折号密度 | 快速（纯函数，无 LLM/DB） |
 
 > 2026-08-26 v1.1.1 基线：**44 passed, 6 skipped**（6 个 skipped = test\_db\_orm 需 docker；test\_api 含章节反查回归 `test_chapter_detail_lookup`）。
 > 全量测试约 6 分钟（部分用例含 sleep），快速迭代可只跑 `pytest -q tests/test_core.py tests/test_world_rules.py`.
 > 前端检查：`cd frontend && npx tsc --noEmit`（当前零错误）。
 >
-> **2026-09-13 基线（v1.10）**：**80 passed, 0 skipped**（DB 已起，2.8s；此前 69 passed/6 skipped 全因 B17 静默降级）。DB 未起时 DB 用例优雅 skip、其余全绿。
+> **2026-09-13 基线（v1.10.3）**：**94 passed, 0 skipped**（DB 已起，3.0s）。演进：69/6（B17 静默降级）→ 80/0（B17 修复）→ 85（S2 step4 + 结构对齐守卫）→ **94**（S2 step5 先验 9 例）。DB 未起时 DB 用例优雅 skip、其余全绿。
 
 ***
 

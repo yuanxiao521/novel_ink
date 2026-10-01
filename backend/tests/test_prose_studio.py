@@ -370,3 +370,38 @@ async def test_verify_note_payload_keeps_voice_risks(svc):
     payload = json.loads(notes[0].get("payload_json") or "{}")
     assert payload.get("voice_risks") == []
 
+# ---------------------------------------------------------------- S2 step5：0-token 口吻先验
+async def test_review_prompt_carries_voice_prior():
+    """0-token 先验必须进体检 prompt（给确定性事实锚点，不靠模型自行估算）。"""
+    import json
+
+    from app.services.engine.prose import review_prose
+    from app.services.engine.style_checks import voice_prior
+
+    text = "陈默：「嗯。」「好。」「行。」李文：「我帮你查了这么久，你才肯拿出来？」"
+    chars = [
+        {"name": "陈默", "spec_json": json.dumps({"name": "陈默", "voice": "话不多"}, ensure_ascii=False)},
+        {"name": "李文", "spec_json": json.dumps({"name": "李文", "voice": "看似大方"}, ensure_ascii=False)},
+    ]
+    prior = voice_prior(text, [{"name": "陈默"}, {"name": "李文"}])
+    llm = _FakeReportLLM({"issues": [], "voice_findings": [], "overall": "ok"})
+    await review_prose(llm, {"title": "夜谈"}, text, characters=chars, voice_prior=prior)
+    prompt = llm.calls[0]
+    assert "0-token 口吻先验" in prompt
+    assert "字/句" in prompt
+    assert "确定性信号" in prompt            # 陈默 3 句极短 → 先验标红
+
+
+async def test_review_note_payload_keeps_voice_prior(svc):
+    """服务层：体检 note 的 payload_json 落 0-token 先验（作者/前端可审计）。"""
+    import json
+
+    await svc.repo.save_character({"id": "c-vp", "book_id": "book-p", "name": "主角",
+                                   "spec_json": "{}"})
+    out = await svc.prose_review("sc-1", "主角：「嗯。」「好。」「行。」")
+    assert "per_char" in out["voice_prior"]
+    notes = await svc.list_prose_notes("sc-1")
+    payload = json.loads(notes[0].get("payload_json") or "{}")
+    assert "voice_prior" in payload and "per_char" in payload["voice_prior"]
+
+

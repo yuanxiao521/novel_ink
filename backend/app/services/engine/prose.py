@@ -147,6 +147,9 @@ _REVIEW_PROMPT = """你是小说【审核体检员】。审读下面正文，给
 出场角色卡（口吻体检基准，逐字对照其"腔调"）：
 {characters}
 
+0-token 口吻先验（确定性统计，可直接引用，不必自行估算；与角色卡矛盾时优先怀疑正文）：
+{voice_prior}
+
 正文：
 {text}
 
@@ -317,14 +320,22 @@ async def draft_prose(llm_client: Any, scene: dict, memory: str,
 
 
 async def review_prose(llm_client: Any, scene: dict, text: str,
-                       characters: list[dict] | None = None) -> dict:
-    """体检员：结构化体检报告（含口吻检点，对照角色卡）；回退 → 空问题报告。"""
+                       characters: list[dict] | None = None,
+                       voice_prior: dict | None = None) -> dict:
+    """体检员：结构化体检报告（含口吻检点，对照角色卡）；回退 → 空问题报告。
+
+    voice_prior：S2 step5 的 0-token 先验（由调用方用 style_checks.voice_prior() 算好），
+    作为"确定性事实"注入 prompt，让体检有客观锚点、少靠模型自行估算。
+    """
+    from app.services.engine.style_checks import prior_block
+
     cast_names = {str(c.get("name") or "").strip() for c in (characters or []) if c.get("name")}
     report = await _run_role(
         llm_client,
         _REVIEW_PROMPT.format(
             scene=_scene_block(scene),
             characters=_characters_block(characters or []),
+            voice_prior=prior_block(voice_prior or {}),
             text=text or "（空）",
         ),
         REVIEW_SCHEMA, REVIEW_VALIDATOR,
