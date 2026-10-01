@@ -155,7 +155,10 @@ class GuardStats(BaseModel):
     last_turn_blocks: int = 0
     total_intercepts: int = 0
     fuse_counts: dict[str, int] = Field(default_factory=dict)   # 层 -> 熔断数
-    last_intercept_reason: dict[str, str] = Field(default_factory=dict)
+    # 值类型放宽为 Any：护栏写入的 rules 是**列表**（graph._guard_and_record），
+    # 此前声明 dict[str, str] → 落库后反序列化必然校验失败 → repo.load 静默落内存态
+    # → 依赖读 sim 的功能（S3 张力曲线 / S4 剧本 / 回放）全部拿到空（B21）。
+    last_intercept_reason: dict[str, Any] = Field(default_factory=dict)
 
 
 # --------------------------------------------------------------------------- 顶层黑板（编排器持有）

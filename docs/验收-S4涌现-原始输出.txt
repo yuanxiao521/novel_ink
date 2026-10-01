@@ -1,0 +1,36 @@
+[PASS] ① 思考落档：monologue/reasoning 分层 + 归集后清空 scratch
+[PASS] ② 思考不进 events（不污染行动/账本）
+[PASS] ① 不跨回合覆盖（第 3 回合思考仍在）
+[PASS] ③ 旧档兼容（无 thoughts 字段仍可渲染）
+[PASS] ④ 剧本 Markdown：场景/台词/动作/独白/动机/张力标注
+[PASS] ④ 开关生效（关掉后无独白/张力）
+[PASS] ④ JSON 结构完整（scene + turns + thoughts）
+[PASS] ⑤ 高光：冲突+峰值+密集台词+收束合并进同一回合
+[PASS] ⑤ 边界：空归档 → 无高光；单回合不算收束
+[PASS] ⑤ 采纳：高光 → 灵感卡（source=emergence / adopted=false）
+[PASS] ⑥ 桥接：已采纳素材 + 动机依据注入写手 prompt
+[PASS] ⑥ 内心独白不进正文 prompt（只给 reasoning）
+[PASS] ⑦ 回归：全量 pytest 全绿 — 141 passed in 4.25s
+
+== --live 真实后端核对 ==
+   剧本接口 200：turns=0 hits=0 md_len=29
+[PASS] ⑧ 剧本接口连通且结构完整
+   采纳接口 200：picked=0 adopted=0
+[PASS] ⑧ 高光采纳接口连通
+
+==== S4 验收汇总：15/15 通过 ====
+  [OK] ① 思考落档：monologue/reasoning 分层 + 归集后清空 scratch
+  [OK] ② 思考不进 events（不污染行动/账本）
+  [OK] ① 不跨回合覆盖（第 3 回合思考仍在）
+  [OK] ③ 旧档兼容（无 thoughts 字段仍可渲染）
+  [OK] ④ 剧本 Markdown：场景/台词/动作/独白/动机/张力标注
+  [OK] ④ 开关生效（关掉后无独白/张力）
+  [OK] ④ JSON 结构完整（scene + turns + thoughts）
+  [OK] ⑤ 高光：冲突+峰值+密集台词+收束合并进同一回合
+  [OK] ⑤ 边界：空归档 → 无高光；单回合不算收束
+  [OK] ⑤ 采纳：高光 → 灵感卡（source=emergence / adopted=false）
+  [OK] ⑥ 桥接：已采纳素材 + 动机依据注入写手 prompt
+  [OK] ⑥ 内心独白不进正文 prompt（只给 reasoning）
+  [OK] ⑦ 回归：全量 pytest 全绿 — 141 passed in 4.25s
+  [OK] ⑧ 剧本接口连通且结构完整
+  [OK] ⑧ 高光采纳接口连通

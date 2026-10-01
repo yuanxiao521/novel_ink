@@ -33,6 +33,16 @@ def _sim() -> models.SimulationState:
     return sim
 
 
+def test_sim_state_tolerates_list_intercept_rules():
+    """B21 回归：护栏写的 rules 是 list，SimulationState 必须能反序列化（否则 sim 读不出库）。"""
+    dump = {"scenario": "t", "guard": {"last_intercept_reason": {
+        "layer": "world_rule:禁飞", "attempt": "0", "rules": [{"rule": "禁飞"}]}}}
+    sim = models.SimulationState(**dump)          # 以前这里直接 ValidationError
+    assert sim.guard.last_intercept_reason["rules"]
+    # 空列表同样必须可读（真实库里就是 []）
+    assert models.SimulationState(guard={"last_intercept_reason": {"rules": []}}).guard
+
+
 def test_archive_collects_thoughts_and_clears_scratch():
     """思考归入归档后清空 scratch：第二回合不会覆盖第一回合的思考。"""
     sim = _sim()
