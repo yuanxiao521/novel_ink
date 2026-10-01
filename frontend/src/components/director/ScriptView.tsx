@@ -119,6 +119,12 @@ export function ScriptView({ sceneId, onClose }: { sceneId: string; onClose: () 
               </div>
 
               {t.summary && <div className="script-summary">· {t.summary}</div>}
+              {t.prose && (
+                <div className="script-prose">
+                  <span className="script-tag">成文</span>
+                  {t.prose}
+                </div>
+              )}
               {(t.events ?? []).map((e, i) => (
                 <div className="script-line" key={i}>
                   {e.kind === 'dialogue'

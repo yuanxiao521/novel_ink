@@ -166,6 +166,81 @@ async def plan_skelly(direction: str, context: str = "", inspirations: list[dict
     return raw
 
 
+CHARACTERS_SCHEMA = [{
+    "name": "str 姓名（2-4 字）",
+    "summary": "str 一句话人设（身份+处境）",
+    "traits": ["str 人格特质 2-4 个"],
+    "voice": "str 说话腔调（句长/语气词/用词层级，必须具体可辨）",
+    "core_beliefs": ["str 核心信条 1-2 条"],
+    "bottom_lines": ["str 性格底线 1-2 条（护栏依据）"],
+    "goals": ["str 本阶段目标（可被导演调权）"],
+}]
+
+_CHARACTERS_PROMPT = """你是小说主笔。为这本书设计 3-5 个**主要角色卡**（供角色引擎演绎）。
+要求：
+1. 每个角色必须有**可区分的腔调**（voice 要具体：句长、口头禅、用词层级；禁止"性格开朗"这类套话）；
+2. bottom_lines 是硬底线（护栏会据此拦 OOC 行为）；
+3. goals 是本阶段的可调权目标（会随剧情调整）；
+4. 角色之间要有张力（立场/利益/误解），不要一团和气。
+已有信息：{context}
+方向：{direction}
+请严格按给定 JSON schema 输出数组。"""
+
+
+def _validate_characters(raw) -> str | None:
+    if not isinstance(raw, list) or not raw:
+        return "角色卡必须是数组"
+    for i, c in enumerate(raw):
+        if not isinstance(c, dict) or not str(c.get("name") or "").strip():
+            return f"characters[{i}] 缺少 name"
+        if not str(c.get("summary") or "").strip():
+            return f"characters[{i}] 缺少 summary（一句话人设）"
+        if not str(c.get("voice") or "").strip():
+            return f"characters[{i}] 缺少 voice（腔调必须可辨）"
+    return None
+
+
+async def generate_characters(direction: str, context: str = "") -> list[dict]:
+    """主笔生成角色卡（补上"从零开局"缺的那一环）。
+
+    之前角色卡**只能作者手写**（或 seed 灌）→ "骨架自动生成，角色为空，推演空转"。
+    """
+    prompt = _CHARACTERS_PROMPT.format(direction=direction or "（未提供，按经典玄幻开局）",
+                                       context=context or "（无）")
+    try:
+        raw = await validate_and_retry(llm_client, prompt, CHARACTERS_SCHEMA, _validate_characters)
+    except ValueError:
+        raw = None
+    if not raw:
+        raw = [
+            {"name": "林尘", "summary": "落魄剑修，背负灭门旧案",
+             "traits": ["隐忍", "护短"], "voice": "话少，短句，常以「嗯」应人",
+             "core_beliefs": ["剑不欺人"], "bottom_lines": ["不伤妇孺"], "goals": ["查明灭门真相"]},
+            {"name": "苏晚", "summary": "药堂女掌柜，暗中查一桩旧毒案",
+             "traits": ["冷静", "执拗"], "voice": "语气客气但句句试探，爱用反问",
+             "core_beliefs": ["毒可杀人亦可救人"], "bottom_lines": ["不拿病人做试"],
+             "goals": ["找出下毒者"]},
+            {"name": "赵擎", "summary": "宗门执法堂主，与旧案有关",
+             "traits": ["威严", "多疑"], "voice": "官腔，长句，常以前辈口吻训诫",
+             "core_beliefs": ["规矩高于人情"], "bottom_lines": ["不亲手杀同门"],
+             "goals": ["封住旧案"]},
+        ]
+    out: list[dict] = []
+    for c in raw:
+        name = str(c.get("name") or "").strip()
+        if not name:
+            continue
+        out.append({
+            "name": name[:12], "summary": str(c.get("summary") or "").strip(),
+            "traits": [str(t) for t in (c.get("traits") or [])][:4],
+            "voice": str(c.get("voice") or "").strip(),
+            "core_beliefs": [str(t) for t in (c.get("core_beliefs") or [])][:2],
+            "bottom_lines": [str(t) for t in (c.get("bottom_lines") or [])][:2],
+            "goals": [str(t) for t in (c.get("goals") or [])][:2],
+        })
+    return out
+
+
 async def generate_cards(direction: str) -> list[dict]:
     """主笔生成灵感卡（3~5 张）。LLM 不可用/产出非法 → 确定性回退模板卡。
 

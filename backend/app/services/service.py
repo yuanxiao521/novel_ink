@@ -38,7 +38,8 @@ def _ensure_cast(sim: models.SimulationState) -> None:
     """
     if not sim.characters:
         raise InvalidActionError(
-            "尚未配置上场角色，无法推演：请先选角（导演台『配置上场角色』或人物页建角色卡）")
+            "尚未配置上场角色，无法推演：可在导演台『配置上场角色』选角，"
+            "或到人物页点『✨ 让主笔生成角色』一键补齐角色卡")
 
 
 def _scene_plan_cfg(plan_cfg_json: str, static_cfg: PlanCfg) -> PlanCfg:
@@ -93,6 +94,36 @@ class SimulationService:
     async def get_scene_characters(self, scene_id: str) -> list[dict]:
         """场景可用角色 = 本书书级角色 + 场景特设角色。"""
         return await self.repo.list_characters_for_scene(scene_id)
+
+    async def generate_book_characters(self, book_id: str, direction: str = "") -> dict:
+        """主笔生成角色卡（补齐"从零开局"缺的一环）：生成 → 落书级角色卡（作者可编辑）。
+
+        背景：骨架能自动生成、角色卡却只能手写/seed → "空 cast 推演空转"（P0 已拦）。
+        这里给出**一步解决**的出口：方向/书名 → 3-5 张可区分腔调的卡。
+        """
+        from app.services.engine.chief_planner import generate_characters
+
+        book = await self.repo.get_book(book_id) or {}
+        existing = await self.repo.list_characters_by_book(book_id)
+        context = "书名：%s；已有角色：%s" % (
+            book.get("title") or "", "、".join(str(c.get("name") or "") for c in existing) or "无")
+        cards = await generate_characters(direction, context)
+        created: list[dict] = []
+        for c in cards:
+            cid = f"char-{uuid.uuid4().hex[:8]}"
+            spec = {
+                "id": cid, "name": c["name"], "summary": c["summary"],
+                "traits": c["traits"], "voice": c["voice"],
+                "core_beliefs": c["core_beliefs"], "bottom_lines": c["bottom_lines"],
+                "dynamic_goals": [{"id": f"g-{uuid.uuid4().hex[:6]}", "text": g, "weight": 0.5}
+                                  for g in c["goals"]],
+                "system_prompt": "", "think_schema": "", "decide_schema": "", "static_world": "",
+            }
+            data = {"id": cid, "book_id": book_id, "name": c["name"], "scene_id": None,
+                    "spec_json": json.dumps(spec, ensure_ascii=False)}
+            await self.repo.save_character(data)
+            created.append(data)
+        return {"book_id": book_id, "created": len(created), "characters": created}
 
     async def get_book_characters(self, book_id: str) -> list[dict]:
         """书级角色库（人物页数据源）。"""

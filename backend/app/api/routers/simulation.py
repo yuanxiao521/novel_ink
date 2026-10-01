@@ -366,6 +366,17 @@ async def save_scene_prose(scene_id: str, body: ProseTextIn,
     return await svc.save_scene_prose(scene_id, body.text)
 
 
+class CharacterGenIn(models.BaseModel):
+    direction: str = ""      # 可选：一句话方向（留空按书名/已有信息推导）
+
+
+@router.post("/books/{book_id}/characters/generate")
+async def generate_book_characters(book_id: str, body: CharacterGenIn,
+                                   svc: SimulationService = Depends(get_service)):
+    """主笔生成角色卡（并增）：空 cast 时一键补齐，作者可再编辑。"""
+    return await svc.generate_book_characters(book_id, body.direction)
+
+
 @router.get("/books/{book_id}/characters")
 async def list_book_characters(book_id: str, svc: SimulationService = Depends(get_service)):
     """书级角色库（全书共享，一次编辑到处生效）。"""

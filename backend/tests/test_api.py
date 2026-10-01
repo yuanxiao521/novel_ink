@@ -595,6 +595,29 @@ _CLICHE_TEXT = ("他深吸一口气，眼中闪过一丝犹豫，又深吸一口
                 "眼中闪过一丝决然，再次深吸一口气，缓缓开口。")
 
 
+def test_generate_characters_then_step_allowed(client):
+    """流程打通回归：空 cast → 主笔生成角色卡 → 建局（自动装配）→ 步进不再被拦。"""
+    bid = client.post("/api/v1/books", json={"title": "生成角色书", "genre": "玄幻"}).json()["id"]
+    ch = client.post(f"/api/v1/books/{bid}/chapters", json={"title": "一", "order_no": 1}).json()
+    sc = client.post(f"/api/v1/chapters/{ch['id']}/scenes",
+                     json={"title": "场景", "goal": "g", "content_desc": "d"}).json()
+
+    # 无 LLM → 走确定性回退模板卡（3 张），仍验证"生成→落库→可装配"链路
+    r = client.post(f"/api/v1/books/{bid}/characters/generate", json={"direction": "玄幻开局"})
+    assert r.status_code == 200, r.text
+    assert r.json()["created"] >= 3
+    cards = client.get(f"/api/v1/books/{bid}/characters").json()
+    assert len(cards) >= 3
+    assert all(c.get("name") for c in cards)
+
+    sim = client.post("/api/v1/sims", json={"book_id": bid, "chapter_id": ch["id"],
+                                            "scene_id": sc["id"]})
+    assert sim.status_code in (200, 201), sim.text
+    sim_id = sim.json().get("sim_id") or sim.json().get("id")
+    r2 = client.post(f"/api/v1/sims/{sim_id}/step?n=1")
+    assert r2.status_code == 200, r2.text      # 有角色 → 不再被空 cast 拦
+
+
 def test_step_blocked_when_no_cast(client):
     """P0 回归：**空 cast 不许推演**。
 

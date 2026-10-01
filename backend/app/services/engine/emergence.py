@@ -34,6 +34,9 @@ def _turn_lines(archive: dict, with_thoughts: bool, with_tension: bool) -> list[
         if not text:
             continue
         lines.append("%s：%s" % (actor, text) if kind == "dialogue" else "（%s %s）" % (actor, text))
+    prose = str(archive.get("prose") or "").strip()
+    if prose:
+        lines.append("〔成文〕%s" % prose)
     if with_thoughts:
         for th in archive.get("thoughts") or []:
             char = str(th.get("char") or "")
@@ -130,6 +133,7 @@ def render_script_json(scene: dict, archives: list[dict]) -> dict:
         "turns": [
             {"turn": a.get("turn"), "cls": a.get("cls"), "summary": a.get("summary"),
              "tension": a.get("tension"), "tension_trend": a.get("tension_trend"),
+             "prose": a.get("prose") or "",
              "events": a.get("events") or [], "thoughts": a.get("thoughts") or []}
             for a in sorted(archives or [], key=lambda a: a.get("turn") or 0)
         ],

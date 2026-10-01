@@ -704,6 +704,8 @@ export interface ScriptTurn {
   turn: number;
   cls: string;
   summary: string;
+  /** 本回合成文段落（TurnArchive.prose）—— 以前只落在库里，界面看不到（已补渲染）。 */
+  prose?: string;
   tension?: number;
   tension_trend?: string;
   events: ScriptEvent[];
@@ -736,6 +738,14 @@ export async function adoptEmergenceHits(
   turns?: number[],
 ): Promise<{ scene_id: string; picked: number; adopted: number }> {
   return send('POST', `/api/v1/scenes/${sceneId}/emergence-hits`, { turns: turns ?? [] });
+}
+
+/** 主笔生成角色卡（空 cast 一键补齐；作者可再编辑）。 */
+export async function generateBookCharacters(
+  bookId: string,
+  direction = '',
+): Promise<{ book_id: string; created: number }> {
+  return send('POST', `/api/v1/books/${bookId}/characters/generate`, { direction });
 }
 
 /** S4：单场景剧本产物（回合事件流 + 各角色思考）。 */

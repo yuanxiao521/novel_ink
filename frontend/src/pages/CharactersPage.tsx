@@ -10,6 +10,7 @@ import {
   listBooks,
   listBookCharacters,
   createBookCharacter,
+  generateBookCharacters,
   updateCharacter,
   deleteCharacter,
   listBookBeliefs,
@@ -96,6 +97,21 @@ export function CharactersPage() {
   const [draft, setDraft] = useState<CharacterSpec | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+
+  /** 让主笔生成角色卡（空 cast 一键补齐）→ 重新拉角色库。 */
+  const genChars = async () => {
+    if (!bookId) return;
+    setBusy(true);
+    try {
+      const r = await generateBookCharacters(bookId);
+      setChars(await listBookCharacters(bookId));
+      setMsg({ kind: 'ok', text: `主笔已生成 ${r.created} 张角色卡（可直接编辑）` });
+    } catch (e) {
+      setMsg({ kind: 'err', text: '生成失败：' + (e instanceof Error ? e.message : String(e)) });
+    } finally {
+      setBusy(false);
+    }
+  };
   const { showConfirm } = useDialog();
   // ---- 信念账本（v1.5 接真）----
   const [beliefs, setBeliefs] = useState<BeliefMeta[]>([]);
@@ -306,9 +322,13 @@ export function CharactersPage() {
               <button className="add-char-btn" onClick={addChar} disabled={!bookId || busy} title="在选中的书新建角色卡（全书共享）">
                 <span>+</span>
               </button>
+              <button className="gen-char-btn" onClick={genChars} disabled={!bookId || busy}
+                title="让主笔按书名/方向生成 3-5 张角色卡（腔调可辨，生成后可再编辑）">
+                {busy ? '生成中…' : '✨ 主笔生成'}
+              </button>
             </div>
             {chars.length === 0 ? (
-              <div className="char-empty">该书暂无角色<br />点「+」新建</div>
+              <div className="char-empty">该书暂无角色<br />点「+」新建，或点「✨ 主笔生成」一次补齐</div>
             ) : (
               <div className="char-list">
                 {chars.map((c) => {

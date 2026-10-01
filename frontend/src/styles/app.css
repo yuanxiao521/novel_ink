@@ -2793,6 +2793,10 @@ body {
 .script-thought-row { font-size: 13px; margin-top: 3px; color: var(--text-primary); }
 .script-tag { display: inline-block; min-width: 62px; color: var(--text-muted); font-size: 12px; }
 .script-hit { font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--accent-gold-light); color: var(--accent-gold); }
+.gen-char-btn { margin-left: 8px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border); background: linear-gradient(180deg, var(--bg-elevated), var(--bg-surface, var(--bg-elevated))); color: var(--text-primary); font-size: 12px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.05); }
+.gen-char-btn:hover:not(:disabled) { border-color: var(--accent-gold, #b8860b); }
+.gen-char-btn:disabled { opacity: .5; cursor: not-allowed; }
+.script-prose { margin-top: 6px; padding: 7px 10px; border-radius: 8px; background: var(--bg-elevated); border-left: 3px solid var(--accent-gold, #b8860b); font-family: var(--font-reader, serif); font-size: 14px; line-height: 1.75; }
 /* ===== T9 数据库降级横幅（降级不再静默） ===== */
 .degraded-banner { position: fixed; top: 0; left: 0; right: 0; z-index: 9999; display: flex; align-items: center; gap: 10px; padding: 6px 14px; background: #7f1d1d; color: #fff; font-size: 13px; }
 .degraded-dot { width: 8px; height: 8px; border-radius: 50%; background: #fca5a5; flex: none; }
