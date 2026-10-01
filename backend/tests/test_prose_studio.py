@@ -285,3 +285,88 @@ async def test_review_note_payload_keeps_voice_findings(svc):
     notes = await svc.list_prose_notes("sc-1")
     payload = json.loads(notes[0].get("payload_json") or "{}")
     assert payload.get("voice_findings") == []
+
+
+# ---------------------------------------------------------------- S2 step4：质检口吻风险（voice_risks）
+class _SequenceLLM(_PromptCaptureLLM):
+    """按顺序返回预设响应（用于验证纠错重试的反馈内容）。"""
+
+    def __init__(self, responses):
+        super().__init__()
+        self._responses = list(responses)
+
+    async def call_cheap(self, prompt, json_schema=None):
+        self.calls.append(prompt)
+        return self._responses.pop(0) if self._responses else None
+
+
+async def test_verify_validator_names_missing_keys():
+    """质检校验失败必须**逐一点名**缺失字段（供纠错重试精准补齐）；voice_risks 非数组也拦。"""
+    from app.services.engine.prose import _validate_verify
+
+    ok = {"foreshadow_updates": [], "belief_deltas": [], "causal": [], "risks": [],
+          "voice_risks": [], "state_deltas": []}
+    assert _validate_verify(ok) is None
+    err = _validate_verify({"foreshadow_updates": []})
+    assert err and "belief_deltas" in err and "risks" in err and "state_deltas" in err
+    assert _validate_verify("不是对象")
+    bad = dict(ok, voice_risks="应为数组")
+    assert "voice_risks" in (_validate_verify(bad) or "")
+
+
+async def test_verify_retry_feedback_names_missing_keys():
+    """首次输出缺字段 → 重试 prompt 必须带上缺失字段名（0-token 反馈闸门生效）。"""
+    from app.services.engine.prose import verify_prose
+
+    good = {"foreshadow_updates": [], "belief_deltas": [], "causal": [], "risks": [],
+            "voice_risks": [], "state_deltas": []}
+    llm = _SequenceLLM([{}, good])
+    out = await verify_prose(llm, "这是一段足够长的正文用于校验。", [], [], [], characters=[])
+    assert out["voice_risks"] == []
+    assert len(llm.calls) == 2
+    assert "belief_deltas" in llm.calls[1]     # 反馈点名缺失字段
+    assert "纠错" in llm.calls[1]
+
+
+async def test_verify_grounds_voice_risks_and_mirrors_into_risks():
+    """质检：①角色卡逐字进 prompt；②voice_risks 只留「有角色名 + 有正文原句」；③并增到 risks。"""
+    import json
+
+    from app.services.engine.prose import verify_prose
+
+    text = "“夹层里。”陈默说。李文却笑了笑：“我帮你查了这么久，你才肯拿出来？”"
+    opinion = {
+        "foreshadow_updates": [], "belief_deltas": [], "causal": [],
+        "risks": ["既有风险"],
+        "voice_risks": [
+            {"char": "陈默", "evidence": "“夹层里。”陈默说。", "risk": "话太多，与卡内寡言不符",
+             "suggestion": "删掉后半句"},
+            {"char": "陈默", "evidence": "（正文没有这句）", "risk": "幻觉", "suggestion": "x"},
+            {"char": "周婶", "evidence": "“夹层里。”陈默说。", "risk": "伪角色", "suggestion": "x"},
+        ],
+        "state_deltas": [],
+    }
+    llm = _FakeReportLLM(opinion)
+    chars = [{"name": "陈默", "spec_json": json.dumps(
+        {"name": "陈默", "voice": "话不多，句句见血"}, ensure_ascii=False)}]
+    out = await verify_prose(llm, text, [], [], [], characters=chars)
+    assert "话不多，句句见血" in llm.calls[0]      # 角色卡进质检 prompt
+    assert "voice_risks" in llm.calls[0]
+    assert [v["char"] for v in out["voice_risks"]] == ["陈默"]     # 仅留可核对的一条
+    assert out["voice_risks"][0]["risk"] == "话太多，与卡内寡言不符"
+    assert "既有风险" in out["risks"]
+    assert any(str(r).startswith("口吻：陈默") for r in out["risks"])   # 并增到 risks
+
+
+async def test_verify_note_payload_keeps_voice_risks(svc):
+    """服务层：质检 note 的 payload_json 落 voice_risks（键始终存在，作者审阅可见）。"""
+    import json
+
+    await svc.repo.save_character({"id": "c-vr", "book_id": "book-p", "name": "主角",
+                                   "spec_json": "{}"})
+    out = await svc.prose_verify("sc-1", "测试正文。")
+    assert out["opinion"]["voice_risks"] == []
+    notes = await svc.list_prose_notes("sc-1")
+    payload = json.loads(notes[0].get("payload_json") or "{}")
+    assert payload.get("voice_risks") == []
+

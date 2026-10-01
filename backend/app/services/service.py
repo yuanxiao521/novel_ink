@@ -748,13 +748,20 @@ class SimulationService:
         foreshadows = (await self.repo.list_foreshadows(book_id)) if book_id else []
         beliefs = (await self.repo.list_beliefs(book_id)) if book_id else []
         world_states = (await self.repo.list_world_states(book_id)) if book_id else []
-        opinion = await verify_prose(llm_client, text, foreshadows, beliefs, world_states)
+        characters = await self.repo.list_characters_for_scene(scene_id) if scene_id else []
+        opinion = await verify_prose(llm_client, text, foreshadows, beliefs, world_states,
+                                     characters=characters)
         sug = (
             f"伏笔推进 {len(opinion.get('foreshadow_updates') or [])} 条；"
             f"信念变化 {len(opinion.get('belief_deltas') or [])} 条；"
             f"因果 {len(opinion.get('causal') or [])} 条；"
             f"状态变化 {len(opinion.get('state_deltas') or [])} 条"
         )
+        voice_risks = opinion.get("voice_risks") or []
+        if voice_risks:
+            sug += "；口吻风险：" + "；".join(
+                f"{v.get('char')}（{str(v.get('risk') or '')[:40]}）" for v in voice_risks[:2]
+            )
         if opinion.get("risks"):
             sug += "；风险：" + "；".join(str(r) for r in opinion["risks"][:2])[:300]
         await self.repo.save_prose_note({
@@ -923,7 +930,9 @@ class SimulationService:
             beliefs = await self.repo.list_beliefs(book_id)
             world_states = await self.repo.list_world_states(book_id)
             scene_no = scene.get("cursor_pos") or 0
-            opinion = await verify_prose(llm_client, text, foreshadows, beliefs, world_states)
+            characters = await self.repo.list_characters_for_scene(scene_id)
+            opinion = await verify_prose(llm_client, text, foreshadows, beliefs, world_states,
+                                         characters=characters)
             written = await self._apply_verify_bookkeeping(
                 book_id, opinion, source_event_id="PROSE_SAVE", scene_no=scene_no)
             sug = (

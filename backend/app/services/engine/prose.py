@@ -33,6 +33,12 @@ VERIFY_SCHEMA = {
     "belief_deltas": [{"char": "str 角色名", "text": "str 认知变化", "channel": "str: perceived|told|inferred"}],
     "causal": ["str 因果补记"],
     "risks": ["str 一致性风险提示"],
+    "voice_risks": [{
+        "char": "str 角色名",
+        "evidence": "str 正文原句（逐字摘录，不得改写）",
+        "risk": "str 口吻风险（与卡内腔调/底线/称呼/用词层级不一致之处）",
+        "suggestion": "str 改成什么更贴卡",
+    }],
     "state_deltas": [{
         "kind": "str: character|item|time|term|numeric",
         "name": "str 状态对象名（林尘/屠龙剑/第3天/灵石/境界）",
@@ -162,13 +168,17 @@ _VERIFY_PROMPT = """你是小说【质检员】。对照这本书的伏笔账本
 2. belief_deltas：正文是否改变了某角色认知（对账本中已有信念角色）；
 3. causal：正文中的新事实/事件的因果补记；
 4. risks：与设定/账本冲突的提示；
-5. state_deltas：正文揭示的状态变化（当前值/持续态，不是一次性动作）。value 严格填**有据的持续性状态值**——
+5. voice_risks：逐条指出"某角色的台词/动作**不像其卡内腔调**"的口吻风险。每条必须带 char（角色名）与
+   evidence（正文原句，**逐字摘录、不得改写**）；找不到原句的猜测一律不要输出；各角色腔调都立得住则给空数组。
+6. state_deltas：正文揭示的状态变化（当前值/持续态，不是一次性动作）。value 严格填**有据的持续性状态值**——
    - character：境界/位置/身份/受伤度等（如 "元婴初期"）
    - item：携带/缺失/耗尽/损坏等（如 "携带"，不是 "震颤/挥剑"）
    - time：当前叙事日/时间（如 "第3天"）
    - term：锁定术语的标准叫法（如 "灵石"）
    - numeric：年龄/战力/金钱/距离（如 "战力=1200"）
    previous_value 用账本当前值；正文首次出现的关键状态则留空。只报变化或新关键状态。
+出场角色卡（口吻质检基准，逐字对照其"腔调"）：
+{characters}
 伏笔账本现状：
 {foreshadows}
 信念账本现状：
@@ -194,10 +204,25 @@ POLISH_VALIDATOR: Callable[[Any], str | None] = lambda raw: (
     None if isinstance(raw, dict) and str(raw.get("after") or "").strip()
     else "润色输出必须是含非空 after 的对象"
 )
-VERIFY_VALIDATOR: Callable[[Any], str | None] = lambda raw: (
-    None if isinstance(raw, dict) and all(k in raw for k in ("foreshadow_updates", "belief_deltas", "causal", "risks", "state_deltas"))
-    else "质检意见缺少必需的五个字段"
-)
+def _validate_verify(raw: Any) -> str | None:
+    """质检意见：五个必需字段 + voice_risks 若给出必须是数组。
+
+    校验失败时**逐一点名缺失字段**（而非笼统"缺字段"），让 validate_and_retry
+    的反馈重试能精准补齐（S2 step4）。
+    """
+    if not isinstance(raw, dict):
+        return "质检意见必须是对象"
+    need = ("foreshadow_updates", "belief_deltas", "causal", "risks", "state_deltas")
+    missing = [k for k in need if k not in raw]
+    if missing:
+        return "质检意见缺少必需字段：" + "、".join(missing)
+    vr = raw.get("voice_risks")
+    if vr is not None and not isinstance(vr, list):
+        return "voice_risks 必须是数组（无问题也要给空数组）"
+    return None
+
+
+VERIFY_VALIDATOR: Callable[[Any], str | None] = _validate_verify
 DRAFT_VALIDATOR: Callable[[Any], str | None] = lambda raw: (
     None if isinstance(raw, str) and len(raw.strip()) >= 20
     else "正文过短（<20 字）"
@@ -206,17 +231,18 @@ DRAFT_VALIDATOR: Callable[[Any], str | None] = lambda raw: (
 _QUOTE_CHARS = str.maketrans({c: "" for c in "“”\"‘’ \t\n"})
 
 
-def _sanitize_voice_findings(report: Any, text: str, cast_names: set[str] | None = None) -> Any:
-    """口吻检点的防幻觉闸门（0 token）。
+def _sanitize_grounded(report: Any, text: str, cast_names: set[str] | None,
+                      field: str, note_key: str) -> Any:
+    """逐字证据闸门（0 token）——体检口吻检点 / 质检口吻风险共用。
 
     保留条件：①char 非空且在出场名单内；②evidence 非空且能在正文里逐字找到。
     任一不满足 → 丢弃该条（宁可漏报，不可编造"某句不像他说的"）。
     """
     if not isinstance(report, dict):
         return report
-    raw = report.get("voice_findings")
+    raw = report.get(field)
     if not isinstance(raw, list):
-        report["voice_findings"] = []
+        report[field] = []
         return report
     haystack = (text or "").translate(_QUOTE_CHARS)
     kept: list[dict] = []
@@ -234,11 +260,21 @@ def _sanitize_voice_findings(report: Any, text: str, cast_names: set[str] | None
         kept.append({
             "char": char,
             "evidence": evidence,
-            "issue": str(item.get("issue") or "").strip(),
+            note_key: str(item.get(note_key) or "").strip(),
             "suggestion": str(item.get("suggestion") or "").strip(),
         })
-    report["voice_findings"] = kept
+    report[field] = kept
     return report
+
+
+def _sanitize_voice_findings(report: Any, text: str, cast_names: set[str] | None = None) -> Any:
+    """体检员：voice_findings 逐字证据闸门（保留 issue 字段）。"""
+    return _sanitize_grounded(report, text, cast_names, "voice_findings", "issue")
+
+
+def _sanitize_voice_risks(report: Any, text: str, cast_names: set[str] | None = None) -> Any:
+    """质检员：voice_risks 逐字证据闸门（保留 risk 字段）。"""
+    return _sanitize_grounded(report, text, cast_names, "voice_risks", "risk")
 
 
 # ---------------------------------------------------------------- role runtimes
@@ -308,17 +344,30 @@ async def polish_prose(llm_client: Any, text: str) -> dict:
 
 
 async def verify_prose(llm_client: Any, text: str, foreshadows: list[dict],
-                       beliefs: list[dict], world_states: list[dict] | None = None) -> dict:
-    """质检员：伏笔/信念/因果/世界状态对照；回退 → 空意见。"""
+                       beliefs: list[dict], world_states: list[dict] | None = None,
+                       characters: list[dict] | None = None) -> dict:
+    """质检员：伏笔/信念/因果/世界状态/口吻风险对照；回退 → 空意见。"""
+    cast_names = {str(c.get("name") or "").strip() for c in (characters or []) if c.get("name")}
     f_txt = "\n".join(f"- {f.get('text')}（{f.get('status')}）" for f in foreshadows) or "（无未回收伏笔）"
     b_txt = "\n".join(f"- {b.get('char_id')}：{b.get('text')}" for b in beliefs if b.get("text")) or "（无信念记录）"
     ws_txt = "\n".join(
         f"- [{s.get('kind')}] {s.get('name')}：{s.get('value')}"
         for s in (world_states or []) if s.get("name")
     ) or "（无世界状态记录）"
-    return await _run_role(
+    report = await _run_role(
         llm_client,
-        _VERIFY_PROMPT.format(foreshadows=f_txt, beliefs=b_txt, world_states=ws_txt, text=text or "（空）"),
+        _VERIFY_PROMPT.format(
+            characters=_characters_block(characters or []),
+            foreshadows=f_txt, beliefs=b_txt, world_states=ws_txt, text=text or "（空）",
+        ),
         VERIFY_SCHEMA, VERIFY_VALIDATOR,
-        {"foreshadow_updates": [], "belief_deltas": [], "causal": [], "risks": [], "state_deltas": []},
+        {"foreshadow_updates": [], "belief_deltas": [], "causal": [], "risks": [],
+         "voice_risks": [], "state_deltas": []},
     )
+    report = _sanitize_voice_risks(report, text, cast_names)
+    # 口吻风险同时在 risks 里补一行人类可读提示（并增：前端不改也能在质检摘要看到）
+    for v in report.get("voice_risks") or []:
+        line = f"口吻：{v.get('char')}「{str(v.get('evidence') or '')[:24]}」{str(v.get('risk') or '')}"
+        if isinstance(report.get("risks"), list) and line not in report["risks"]:
+            report["risks"].append(line)
+    return report
