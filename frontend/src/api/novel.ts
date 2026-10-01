@@ -618,6 +618,49 @@ export interface GlobalView {
   barren_scenes: string[];
 }
 
+/* ---------- A2 质量回环 ---------- */
+
+export interface QualityWeakPoint {
+  dim?: string;
+  evidence?: string;
+  why?: string;
+}
+
+export interface QualityReport {
+  total: number;
+  llm_total?: number;
+  scores: Record<string, number>;
+  weak_points?: QualityWeakPoint[];
+  hard?: Record<string, unknown>;
+}
+
+export interface QualityChange {
+  before?: string;
+  after?: string;
+  rule?: string;
+  applied?: boolean;
+}
+
+export interface QualityLoopResult {
+  after: string;
+  accepted: boolean;
+  route?: string;
+  rewrites?: number;
+  skipped?: string;
+  reason?: string;
+  error?: string;
+  reverted?: boolean;
+  before?: QualityReport;
+  after_score?: QualityReport;
+  changes?: QualityChange[];
+  note_status?: string;
+}
+
+/** A2：质量回环（自评 → 达标不动 / 不达标重写一次 → 三闸复检）。 */
+export async function runQualityLoop(sceneId: string, text: string): Promise<QualityLoopResult> {
+  return send('POST', `/api/v1/scenes/${sceneId}/prose/quality-loop`, { text });
+}
+
 /* ---------- T9 降级可观测（/health） ---------- */
 
 export interface DegradedInfo {

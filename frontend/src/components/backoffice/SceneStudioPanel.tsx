@@ -11,14 +11,26 @@ import {
   saveSceneProse,
   scanAiTone,
   spotFixProse,
+  runQualityLoop,
 } from '../../api/novel';
 import type {
   AiToneReport,
   ProseNote,
+  QualityLoopResult,
   SceneDetail,
   SpotFixResult,
   VerifyOpinion,
 } from '../../api/novel';
+
+const DIM_LABEL: Record<string, string> = {
+  coherence: '连贯',
+  character: '人物',
+  pacing: '节奏',
+  imagery: '画面',
+  ending: '收尾',
+};
+
+const scoreCls = (v: number) => (v >= 80 ? 'good' : v >= 70 ? 'mid' : 'bad');
 
 /* ---------- 常量 ---------- */
 
@@ -90,12 +102,14 @@ export function SceneStudioPanel({ sceneId, onClose }: Props) {
   const [scene, setScene] = useState<SceneDetail | null>(null);
   const [text, setText] = useState('');
   const [notes, setNotes] = useState<ProseNote[]>([]);
-  const [busy, setBusy] = useState<'' | 'draft' | 'review' | 'polish' | 'verify' | 'save' | 'note' | 'aitone' | 'spotfix'>('');
+  const [busy, setBusy] = useState<'' | 'draft' | 'review' | 'polish' | 'verify' | 'save' | 'note' | 'aitone' | 'spotfix' | 'quality'>('');
   const [report, setReport] = useState<{ issues: Array<{ severity: string; text: string; suggestion: string }>; overall: string } | null>(null);
   const [polish, setPolish] = useState<{ after: string; summary: string } | null>(null);
   const [opinion, setOpinion] = useState<VerifyOpinion | null>(null);
   const [aiTone, setAiTone] = useState<AiToneReport | null>(null);
   const [spot, setSpot] = useState<SpotFixResult | null>(null);
+  const [quality, setQuality] = useState<QualityLoopResult | null>(null);
+  const qualityWeak = quality?.before?.weak_points ?? [];   // 派生值：避免 JSX 内失窄化
   const [toast, setToast] = useState('');
 
   const flash = (t: string) => {
@@ -158,6 +172,14 @@ export function SceneStudioPanel({ sceneId, onClose }: Props) {
     const r = await verifySceneProse(sceneId, text);
     setOpinion(r.opinion);
     flash('质检完成（确认后才记账）');
+  });
+
+  const onQuality = () => void run('quality', async () => {
+    const r = await runQualityLoop(sceneId, text);
+    setQuality(r);
+    if (r.accepted) flash('质量回环：已改写并采纳（可查看分数卡）');
+    else if (r.skipped === 'score-ok') flash('质量回环：分数达标，未改动');
+    else flash('质量回环：未采纳（见分数卡原因）');
   });
 
   const onAiTone = () => void run('aitone', async () => {
@@ -246,6 +268,8 @@ export function SceneStudioPanel({ sceneId, onClose }: Props) {
             onClick={onAiTone}>{busy === 'aitone' ? '扫描中…' : '🧹 AI 味扫描'}</button>
           <button className="studio-btn" disabled={busy !== '' || !text.trim()}
             onClick={onSpotFix}>{busy === 'spotfix' ? '修复中…' : '🪄 定点修复'}</button>
+          <button className="studio-btn studio-btn-primary" disabled={busy !== '' || !text.trim()}
+            onClick={onQuality}>{busy === 'quality' ? '评估中…' : '🎯 质量回环'}</button>
         </div>
 
         {/* 最近产出 */}
@@ -275,6 +299,75 @@ export function SceneStudioPanel({ sceneId, onClose }: Props) {
               </button>
               <button className="studio-btn" onClick={() => setPolish(null)}>忽略</button>
             </div>
+          </div>
+        )}
+
+        {quality && (
+          <div className="studio-role-out quality-card">
+            <div className="quality-head">
+              <div className="quality-title">🎯 质量回环</div>
+              <div className={`quality-score ${scoreCls(quality.after_score?.total ?? quality.before?.total ?? 0)}`}>
+                <span className="quality-score-num">{quality.before?.total ?? '—'}</span>
+                {quality.after_score && (
+                  <>
+                    <span className="quality-arrow">→</span>
+                    <span className="quality-score-num">{quality.after_score.total}</span>
+                  </>
+                )}
+              </div>
+            </div>
+            <div className="quality-verdict">
+              {quality.accepted
+                ? `✓ 已采纳（${quality.route === 'spot' ? '定点' : '全文'}重写 · ${quality.rewrites} 次）`
+                : quality.skipped === 'score-ok'
+                  ? `未触发：${quality.reason ?? '分数达标'}`
+                  : `已回退：${quality.reason ?? quality.error ?? '未采纳'}`}
+            </div>
+            {quality.before?.scores && (
+              <div className="quality-dims">
+                {Object.entries(quality.before.scores).map(([k, v]) => {
+                  const av = quality.after_score?.scores?.[k];
+                  return (
+                    <div className="quality-dim" key={k}>
+                      <span className="quality-dim-name">{DIM_LABEL[k] ?? k}</span>
+                      <div className="quality-bar">
+                        <div className={`quality-bar-fill ${scoreCls(v)}`} style={{ width: (v + '%') }} />
+                      </div>
+                      <span className="quality-dim-val">
+                        {v}
+                        {typeof av === 'number' && av !== v ? ` → ${av}` : ''}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {qualityWeak.length > 0 && (
+              <div className="quality-weaks">
+                {qualityWeak.slice(0, 3).map((w, i) => (
+                  <div className="quality-weak" key={i}>
+                    <span className="quality-weak-dim">{DIM_LABEL[w.dim ?? ''] ?? w.dim}</span>
+                    <span className="quality-weak-ev">「{w.evidence}」</span>
+                    {w.why && <span className="quality-weak-why">{w.why}</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+            {quality.accepted && (
+              <div className="studio-inline-actions">
+                <button
+                  className="studio-btn studio-btn-primary"
+                  onClick={() => {
+                    setText(quality.after);
+                    setQuality(null);
+                    flash('已应用质量回环改写');
+                  }}
+                >
+                  ✓ 应用改写
+                </button>
+                <button className="studio-btn" onClick={() => setQuality(null)}>忽略</button>
+              </div>
+            )}
           </div>
         )}
 

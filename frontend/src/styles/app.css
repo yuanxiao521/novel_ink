@@ -2798,6 +2798,41 @@ body {
 .degraded-dot { width: 8px; height: 8px; border-radius: 50%; background: #fca5a5; flex: none; }
 .degraded-text { flex: 1; }
 .degraded-close { background: none; border: 1px solid rgba(255,255,255,.5); color: #fff; border-radius: 999px; padding: 1px 10px; font-size: 12px; cursor: pointer; }
+/* ===== 视觉升级：角色产出卡片（原来偏"扁平" → 加层次/质感/入场动效） ===== */
+.studio-role-out {
+  border: 1px solid var(--border-light);
+  border-left: 3px solid var(--accent-gold, #b8860b);
+  border-radius: 12px;
+  background: linear-gradient(180deg, var(--bg-elevated), var(--bg-surface, var(--bg-elevated)));
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .06);
+  padding: 13px 15px;
+  animation: studioCardIn .22s ease;
+}
+@keyframes studioCardIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+/* ===== A2 质量回环分数卡 ===== */
+.quality-card { border-left-color: #2f7d4f; }
+.quality-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.quality-title { font-size: 14px; font-weight: 700; letter-spacing: .02em; }
+.quality-score { display: flex; align-items: baseline; gap: 6px; font-variant-numeric: tabular-nums; }
+.quality-score-num { font-size: 23px; font-weight: 800; line-height: 1; }
+.quality-arrow { color: var(--text-muted); font-size: 13px; }
+.quality-score.good .quality-score-num { color: #2f7d4f; }
+.quality-score.mid .quality-score-num { color: #b45309; }
+.quality-score.bad .quality-score-num { color: #b91c1c; }
+.quality-verdict { margin: 7px 0 11px; font-size: 12px; color: var(--text-muted); }
+.quality-dims { display: grid; gap: 7px; }
+.quality-dim { display: grid; grid-template-columns: 42px 1fr 62px; align-items: center; gap: 9px; font-size: 12px; }
+.quality-dim-name { color: var(--text-muted); }
+.quality-bar { height: 8px; border-radius: 999px; background: var(--border-light); overflow: hidden; }
+.quality-bar-fill { height: 100%; border-radius: 999px; transition: width .4s cubic-bezier(.22,.61,.36,1); background: linear-gradient(90deg, #7ba888, #2f7d4f); }
+.quality-bar-fill.mid { background: linear-gradient(90deg, #e0b45f, #b45309); }
+.quality-bar-fill.bad { background: linear-gradient(90deg, #dd8a7a, #b91c1c); }
+.quality-dim-val { text-align: right; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.quality-weaks { margin-top: 11px; display: grid; gap: 7px; }
+.quality-weak { font-size: 12px; border-left: 3px solid var(--border-light); padding-left: 9px; line-height: 1.55; }
+.quality-weak-dim { font-weight: 700; margin-right: 6px; color: var(--text-secondary); }
+.quality-weak-ev { color: var(--text-primary); }
+.quality-weak-why { color: var(--text-muted); margin-left: 6px; }
 
 .studio-polish-preview {
   font-family: var(--font-reader, serif);
