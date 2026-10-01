@@ -246,8 +246,11 @@ def ai_tone_scan(text: str) -> dict:
             cliches.append({"term": term, "count": cnt,
                             "evidence": _snippet(text, idx, idx + len(term), 10)})
     cliches.sort(key=lambda x: -x["count"])
-    dash = text.count("——") + text.count("—")
-    ellipsis = text.count("……") + text.count("...")
+    # 计数必须先把"成对写法"摘掉再数单字符：中文破折号是两个字宽字符（——），
+    # 旧的 count("——") + count("—") 会把每处算成 3 处 → S2 先验与 A3 R-A3-2 全线误报。
+    dash = text.count("——") + text.replace("——", "").count("—")
+    ellipsis = (text.count("……") + text.replace("……", "").count("…")
+                + text.count("..."))
     fillers = sum(text.count(ch) for ch in FILLERS)
     flags: list[dict] = []
     total_cliche = sum(c["count"] for c in cliches)

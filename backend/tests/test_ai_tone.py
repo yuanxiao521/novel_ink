@@ -131,6 +131,26 @@ def test_r_a3_4_ignores_hard_wrapped_lines():
     assert [h["rule"] for h in elevation_endings(real)] == ["R-A3-4"]
 
 
+def test_dash_and_ellipsis_count_double_wide_marks_once():
+    """破折号/省略号计数：中文成对标点必须算 1 处（审计实锤的计数 bug）。
+
+    旧实现 text.count("——") + text.count("—") 把每处破折号算成 3 处，
+    导致 S2 先验与 A3 R-A3-2 全线误报：真实文本 1 处/250 字被报成
+    "3 处 / 11.8 千字（阈值 6）"，把"破折号狂飙"这个印象凭空造了出来。
+    """
+    from app.services.engine.style_checks import ai_tone_scan
+
+    assert ai_tone_scan("他顿了顿——然后笑了。")["dash"] == 1
+    assert ai_tone_scan("他顿了顿——然后笑了——又停下。")["dash"] == 2
+    assert ai_tone_scan("没有破折号的句子。")["dash"] == 0
+    assert ai_tone_scan("他说……然后走了。")["ellipsis"] == 1
+    assert ai_tone_scan("他说……然后走了……又回头。")["ellipsis"] == 2
+
+    # 真实量级：1 处 / 300 字 ≈ 3.3/千字 → 不该触发阈值 6
+    m = ai_tone_scan("x" * 299 + "——")
+    assert m["dash"] == 1 and m["dash"] * 1000 / 300 < 6
+
+
 def test_report_shape_and_metrics():
     """报告契约：rules/counts/cliches/metrics/clean 五件套齐全（前端与 note payload 依赖）。"""
     rep = ai_tone_report(CLEAN)
