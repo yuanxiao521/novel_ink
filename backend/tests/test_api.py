@@ -595,6 +595,26 @@ _CLICHE_TEXT = ("他深吸一口气，眼中闪过一丝犹豫，又深吸一口
                 "眼中闪过一丝决然，再次深吸一口气，缓缓开口。")
 
 
+def test_step_blocked_when_no_cast(client):
+    """P0 回归：**空 cast 不许推演**。
+
+    否则导演照常跑回合，每回合只有导演提示事件（不计入角色行动）→ 归档里无行动/
+    无对话/无成文，前端表现为"没配角色却在演绎、还没有对话、文也不见"（真实数据实测
+    19 个空回合：events=0 / prose=0）。
+    """
+    bid = client.post("/api/v1/books", json={"title": "空角书", "genre": "玄幻"}).json()["id"]
+    ch = client.post(f"/api/v1/books/{bid}/chapters", json={"title": "一", "order_no": 1}).json()
+    sc = client.post(f"/api/v1/chapters/{ch['id']}/scenes",
+                     json={"title": "场景", "goal": "g", "content_desc": "d"}).json()
+    sim = client.post("/api/v1/sims", json={"book_id": bid, "chapter_id": ch["id"],
+                                            "scene_id": sc["id"]})
+    assert sim.status_code in (200, 201), sim.text
+    sim_id = sim.json().get("sim_id") or sim.json().get("id")
+    r = client.post(f"/api/v1/sims/{sim_id}/step?n=1")
+    assert r.status_code in (400, 422), r.text
+    assert "角色" in r.text
+
+
 def test_quality_loop_endpoint_without_llm(client):
     """A2 端点连通：无 LLM → 明确失败且不改文（不抛 500）。"""
     bid = client.post("/api/v1/books", json={"title": "质量书", "genre": "玄幻"}).json()["id"]

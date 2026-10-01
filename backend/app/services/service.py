@@ -29,6 +29,18 @@ from app.services.llm.client import client as llm_client  # 模块级引用：�
 logger = logging.getLogger(__name__)
 
 
+def _ensure_cast(sim: models.SimulationState) -> None:
+    """空 cast 硬拦（P0）：没有上场角色时**不许推演**。
+
+    否则导演会照常跑回合，但每回合只有导演提示事件（不计入角色行动）→ 归档里
+    无行动/无对话/无成文，前端显示成"演绎了但什么都没有"（真实数据实测 19 个空回合）。
+    正确路径：先选角（PUT /sims/{id}/cast）再推演。
+    """
+    if not sim.characters:
+        raise InvalidActionError(
+            "尚未配置上场角色，无法推演：请先选角（导演台『配置上场角色』或人物页建角色卡）")
+
+
 def _scene_plan_cfg(plan_cfg_json: str, static_cfg: PlanCfg) -> PlanCfg:
     """融合 DB 场景配置（优先）与静态回退：缺哪个补哪个。"""
     db = json.loads(plan_cfg_json or "{}")
@@ -1460,6 +1472,7 @@ class SimulationService:
             # 终止：真正完结（收束/超上限）才停；举手(pending)是暂停，accept 后可继续
             if sim.ended or sim.director.converged:
                 break
+            _ensure_cast(sim)     # 空 cast 硬拦：不许"没角色也在演绎"（空转回合无任何产出）
             prev_events = len(sim.events)
             state = await graph.ainvoke({"sim": sim, "last_main_actor": sim.last_main_actor or None})
             # 主戏角色写回 sim（跨回合轮换记忆持久化）
@@ -1488,6 +1501,7 @@ class SimulationService:
 
         if sim.ended or sim.director.converged:
             return
+        _ensure_cast(sim)     # 空 cast 硬拦（SSE 同样不许空转）
         prev_events = len(sim.events)
         async for event in graph.astream(
             {"sim": sim, "last_main_actor": sim.last_main_actor or None},
