@@ -129,3 +129,44 @@ async def test_old_simulation_row_compatible(repo):
     assert loaded.last_main_actor == ""
     assert loaded.world.scene_id == "s"
     await repo.delete("sim-legacy-check")
+
+
+async def test_schema_matches_orm_no_drift():
+    """结构对齐守卫（B18 回归）：DB 实际列必须与 ORM 元数据一致。
+
+    0001 用 `Base.metadata.create_all` 建表、0006/0011 用 `op.create_table`（表已存在即跳过）
+    → 老库会出现「迁移跑过、结构没改」的静默漂移：beliefs 仍为 sim 级旧结构、缺
+    id/book_id → `list_beliefs` 恒抛 UndefinedColumn → `_query_or_mem` 静默落内存态，
+    v1.5 信念账本在 DB 模式实际失效（0 报错、0 落库）。
+    本用例把漂移变成红灯（迁移 0013 已对齐 0012 期间的两处漂移）。
+    """
+    import app.db.models  # noqa: F401  确保全部 ORM 注册
+    from app.db.base import Base
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    if not await _db_ready():
+        pytest.skip("DB 不可用")
+    url = settings.dsn.replace("postgresql://", "postgresql+asyncpg://")
+    eng = create_async_engine(url)
+    try:
+        async with eng.connect() as conn:
+            rows = (await conn.execute(text(
+                "select table_name, column_name from information_schema.columns "
+                "where table_schema='public'"))).all()
+    finally:
+        await eng.dispose()
+    db: dict = {}
+    for tbl, col in rows:
+        db.setdefault(tbl, set()).add(col)
+
+    problems = []
+    for name, table in sorted(Base.metadata.tables.items()):
+        orm = {c.name for c in table.columns}
+        actual = db.get(name)
+        if actual is None:
+            problems.append(f"{name}: 表缺失")
+            continue
+        miss, extra = sorted(orm - actual), sorted(actual - orm)
+        if miss or extra:
+            problems.append(f"{name}: DB 缺 {miss} / DB 多 {extra}")
+    assert not problems, "ORM 与 DB 结构漂移（需补对齐迁移）：" + "；".join(problems)
