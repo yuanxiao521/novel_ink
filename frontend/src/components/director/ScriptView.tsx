@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { fetchSceneScript, sceneScriptUrl } from '../../api/novel';
-import type { SceneScriptResult, ScriptTurn } from '../../api/novel';
+import { adoptEmergenceHits, fetchSceneScript, sceneScriptUrl } from '../../api/novel';
+import type { SceneScriptResult, ScriptHit, ScriptTurn } from '../../api/novel';
 
 const CLS_LABEL: Record<string, string> = {
   'type-conflict': '冲突',
@@ -8,6 +8,18 @@ const CLS_LABEL: Record<string, string> = {
   'type-action': '行动',
   'type-info': '信息',
 };
+
+const HIT_LABEL: Record<string, string> = {
+  conflict: '冲突',
+  peak: '峰值',
+  long_dialogue: '密集台词',
+  closing: '收束',
+};
+
+/** 该回合的确定性高光（S4 step2：冲突/峰值/密集台词/收束）。 */
+function hitOf(data: SceneScriptResult | null, turn: number): ScriptHit | undefined {
+  return (data?.hits ?? []).find((h) => h.turn === turn);
+}
 
 /**
  * S4 剧本台：把"推演回合"当剧本产物看（不再转叙述正文）。
@@ -20,6 +32,16 @@ export function ScriptView({ sceneId, onClose }: { sceneId: string; onClose: () 
   const [tension, setTension] = useState(false);
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
   const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [flash, setFlash] = useState('');
+
+  const onAdopt = () => {
+    setBusy(true);
+    adoptEmergenceHits(sceneId)
+      .then((r) => setFlash('已采纳 ' + r.adopted + ' 条高光 → 灵感池（adopted=false，可在主笔页筛选）'))
+      .catch((e) => setFlash('采纳失败：' + (e instanceof Error ? e.message : String(e))))
+      .finally(() => setBusy(false));
+  };
 
   useEffect(() => {
     setErr('');
@@ -54,8 +76,12 @@ export function ScriptView({ sceneId, onClose }: { sceneId: string; onClose: () 
           <a className="studio-btn" href={sceneScriptUrl(sceneId, tension)} target="_blank" rel="noreferrer">
             ⬇ 导出剧本 Markdown
           </a>
+          <button className="studio-btn" disabled={busy || !(data?.hits?.length ?? 0)} onClick={onAdopt}>
+            {busy ? '采纳中…' : '✨ 采纳高光 ' + (data?.hits?.length ?? 0) + ' 条 → 灵感池'}
+          </button>
           <span className="studio-metric">{turns.length} 回合</span>
         </div>
+        {flash && <div className="tension-hint">{flash}</div>}
 
         {err && <div className="studio-empty-hint">{err}</div>}
         {!err && turns.length === 0 && (
@@ -76,6 +102,11 @@ export function ScriptView({ sceneId, onClose }: { sceneId: string; onClose: () 
                     张力 {t.tension ?? '—'} {t.tension_trend ?? ''}
                   </span>
                 )}
+                {(hitOf(data, t.turn)?.kinds ?? []).map((k) => (
+                  <span className="script-hit" key={k}>
+                    ✨{HIT_LABEL[k] ?? k}
+                  </span>
+                ))}
                 {(t.thoughts?.length ?? 0) > 0 && (
                   <button
                     className="script-think-toggle"

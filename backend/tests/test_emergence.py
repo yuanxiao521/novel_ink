@@ -98,3 +98,91 @@ def test_render_md_shapes_and_toggles():
     assert j["scene"]["title"] == "书房夜谈" and j["turns"][0]["thoughts"][0]["char"] == "陈默"
 
     assert "尚无推演回合" in render_script_md(SCENE, [])
+
+# ---------------------------------------------------------------- S4 step2：确定性高光
+import pytest  # noqa: E402
+import pytest_asyncio  # noqa: E402
+
+from app.services.engine.emergence import extract_hits  # noqa: E402
+
+
+def _arch(turn, cls, tension, events, summary="看" ):
+    return {"turn": turn, "cls": cls, "tension": tension, "tension_trend": "up",
+            "summary": summary, "events": events, "thoughts": []}
+
+
+def test_extract_hits_merges_kinds():
+    """同一回合命中多条 → 合并进 kinds（不重复出条目）；收束回合只认最后一回合。"""
+    archives = [
+        _arch(1, "type-dialogue", 20, [{"actor": "陈默", "kind": "dialogue", "text": "夹层里。"}]),
+        _arch(2, "type-conflict", 80,
+              [{"actor": "李文", "kind": "dialogue",
+                "text": "你书房门没锁，我进来讨本书看，犯法？"}]),
+    ]
+    hits = extract_hits({"id": "sc-1"}, archives)
+    assert [h["turn"] for h in hits] == [2]          # 回合 1 平淡，不出条目
+    kinds = hits[0]["kinds"]
+    assert "conflict" in kinds and "peak" in kinds
+    assert "long_dialogue" in kinds and "closing" in kinds   # 长台词 + 末回合
+    assert len(kinds) == len(set(kinds))             # 不重复
+    assert "犯法？" in hits[0]["quote"] and hits[0]["chars"] == ["李文"]
+
+
+def test_extract_hits_edge_cases():
+    """边界：空归档 → []；单回合不算"收束"；张力全 0 不报峰值。"""
+    assert extract_hits({"id": "s"}, []) == []
+    one = extract_hits({"id": "s"}, [_arch(1, "type-info", 0,
+                                           [{"actor": "A", "kind": "action", "text": "走"}])])
+    assert one == []
+    two = extract_hits({"id": "s"}, [
+        _arch(1, "type-info", 0, [{"actor": "A", "kind": "action", "text": "走"}]),
+        _arch(2, "type-info", 0, [{"actor": "A", "kind": "action", "text": "停"}]),
+    ])
+    assert [h["kinds"] for h in two] == [["closing"]]   # 只有收束，没有假峰值
+
+
+@pytest_asyncio.fixture
+async def svc():
+    """内存态：1 书 1 章 1 场景 + 1 个含 2 回合归档的 sim（含思考）。"""
+    from app.db.repo import Repo
+    from app.services.service import SimulationService
+
+    repo = Repo(use_db=False)
+    service = SimulationService(repo)
+    await repo.save_book({"id": "b1", "title": "涌现测试书"})
+    await repo.save_chapter({"id": "ch1", "book_id": "b1", "title": "第一章", "order_no": 1})
+    await repo.save_scene({"id": "sc-1", "chapter_id": "ch1", "title": "书房夜谈",
+                           "stage_desc": "雨夜书房", "goal": "试探身份", "final_prose": ""})
+    sim = models.SimulationState(scenario="t", book_id="b1", chapter_id="ch1", scene_id="sc-1")
+    sim.turn_archives = [
+        models.TurnArchive(turn=1, cls="type-dialogue", tension=20, tension_trend="up",
+                           summary="试探",
+                           events=[{"actor": "陈默", "kind": "dialogue", "text": "夹层里。"}],
+                           thoughts=[{"char": "陈默", "monologue": "他在试探我。",
+                                      "reasoning": "只给半句 = 不信任"}]),
+        models.TurnArchive(turn=2, cls="type-conflict", tension=80, tension_trend="up",
+                           summary="翻脸",
+                           events=[{"actor": "李文", "kind": "dialogue",
+                                    "text": "你书房门没锁，我进来讨本书看，犯法？"}]),
+    ]
+    await repo.save("sim-1", sim)
+    return service
+
+
+@pytest.mark.asyncio
+async def test_scene_script_includes_hits_and_adopt_creates_cards(svc):
+    """剧本接口带高光；采纳后进灵感池（source=emergence、adopted=false）。"""
+    out = await svc.scene_script("sc-1", with_thoughts=True)
+    assert out["turns"] == 2 and out["hits"]
+    assert "内心独白·陈默" in out["markdown"]
+
+    res = await svc.adopt_emergence_hits("sc-1")
+    assert res["adopted"] == len(out["hits"]) >= 1
+    assert res["cards"] and all(c["source"] == "emergence" for c in res["cards"])
+    assert all(c["adopted"] is False for c in res["cards"])
+    assert "涌现高光" in res["cards"][0]["desc"]
+    assert len(await svc.repo.list_inspirations("b1")) >= res["adopted"]   # 确实落库
+
+    only_turn2 = await svc.adopt_emergence_hits("sc-1", turns=[2])
+    assert only_turn2["picked"] == 1
+

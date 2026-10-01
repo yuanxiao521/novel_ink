@@ -645,11 +645,32 @@ export interface ScriptTurn {
   thoughts: ScriptThought[];
 }
 
+/** S4 确定性高光（冲突 / 张力峰值 / 信息密集台词 / 收束回合）。 */
+export interface ScriptHit {
+  scene_id?: string;
+  turn: number;
+  kinds: string[];
+  tension?: number;
+  tension_trend?: string;
+  summary?: string;
+  quote?: string;
+  chars?: string[];
+}
+
 export interface SceneScriptResult {
   scene_id: string;
   turns: number;
   markdown: string;
   json: { scene: Record<string, unknown>; turns: ScriptTurn[] };
+  hits?: ScriptHit[];
+}
+
+/** S4 step2：把确定性高光采纳为灵感卡（source=emergence）。turns 为空 = 全部。 */
+export async function adoptEmergenceHits(
+  sceneId: string,
+  turns?: number[],
+): Promise<{ scene_id: string; picked: number; adopted: number }> {
+  return send('POST', `/api/v1/scenes/${sceneId}/emergence-hits`, { turns: turns ?? [] });
 }
 
 /** S4：单场景剧本产物（回合事件流 + 各角色思考）。 */

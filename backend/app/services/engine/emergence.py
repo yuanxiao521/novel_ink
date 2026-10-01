@@ -67,6 +67,60 @@ def render_script_md(scene: dict, archives: list[dict], *,
     return "\n".join(lines)
 
 
+HIT_LABEL = {"conflict": "冲突回合", "peak": "张力峰值",
+             "long_dialogue": "信息密集台词", "closing": "收束回合"}
+
+
+def extract_hits(scene: dict, archives: list[dict], *, peak_ratio: float = 0.8,
+                 min_dialogue_len: int = 12) -> list[dict]:
+    """确定性高光提炼（0-token）：冲突回合 / 张力峰值 / 信息密集台词 / 收束回合。
+
+    - 同一回合命中多条 → 合并进 kinds（不重复出条目）；
+    - 长台词只取 Top-2（信息密度高，但不许刷屏）；
+    - 单回合场景不算"收束回合"（没有起承转合可言）；
+    - 刻意**不用 LLM**：先要可复现、免费；LLM 提炼留作后续增强。
+    """
+    ordered = sorted(archives or [], key=lambda a: a.get("turn") or 0)
+    if not ordered:
+        return []
+    tensions = [float(a.get("tension") or 0) for a in ordered]
+    peak = max(tensions)
+    ranked = sorted(ordered, key=lambda a: -_longest_dialogue(a))
+    long_turns = {a.get("turn") for a in ranked[:2] if _longest_dialogue(a) >= min_dialogue_len}
+    closing_turn = ordered[-1].get("turn") if len(ordered) >= 2 else None
+
+    hits: dict = {}
+    for a in ordered:
+        turn = a.get("turn")
+        kinds: list[str] = []
+        if str(a.get("cls") or "") == "type-conflict":
+            kinds.append("conflict")
+        if peak > 0 and float(a.get("tension") or 0) >= peak * peak_ratio:
+            kinds.append("peak")
+        if turn in long_turns:
+            kinds.append("long_dialogue")
+        if closing_turn is not None and turn == closing_turn:
+            kinds.append("closing")
+        if not kinds:
+            continue
+        dialogues = [str(e.get("text") or "") for e in (a.get("events") or [])
+                     if e.get("kind") == "dialogue"]
+        hits[turn] = {
+            "scene_id": scene.get("id"), "turn": turn, "kinds": kinds,
+            "tension": a.get("tension"), "tension_trend": a.get("tension_trend"),
+            "summary": a.get("summary") or "",
+            "quote": max(dialogues, key=len) if dialogues else "",
+            "chars": sorted({str(e.get("actor") or "") for e in (a.get("events") or [])
+                             if e.get("actor")}),
+        }
+    return [hits[t] for t in sorted(hits)]
+
+
+def _longest_dialogue(archive: dict) -> int:
+    return max([len(str(e.get("text") or "")) for e in (archive.get("events") or [])
+                if e.get("kind") == "dialogue"] or [0])
+
+
 def render_script_json(scene: dict, archives: list[dict]) -> dict:
     """渲染单场景剧本（结构化形态，供桥接/二次加工）。"""
     return {

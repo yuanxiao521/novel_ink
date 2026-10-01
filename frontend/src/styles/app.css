@@ -2792,6 +2792,7 @@ body {
 .script-thought-char { font-size: 12px; font-weight: 700; color: var(--text-secondary); }
 .script-thought-row { font-size: 13px; margin-top: 3px; color: var(--text-primary); }
 .script-tag { display: inline-block; min-width: 62px; color: var(--text-muted); font-size: 12px; }
+.script-hit { font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--accent-gold-light); color: var(--accent-gold); }
 
 .studio-polish-preview {
   font-family: var(--font-reader, serif);

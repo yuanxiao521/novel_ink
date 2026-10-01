@@ -1564,7 +1564,9 @@ class SimulationService:
     async def scene_script(self, scene_id: str, with_thoughts: bool = True,
                            with_tension: bool = False) -> dict:
         """S4：单场景剧本产物（Markdown 剧本体 + JSON 结构化）。"""
-        from app.services.engine.emergence import render_script_json, render_script_md
+        from app.services.engine.emergence import (
+            extract_hits, render_script_json, render_script_md,
+        )
 
         scene, book_id = await self._scene_and_book(scene_id)
         archives = (await self._archives_by_scene(book_id)).get(scene_id, []) if book_id else []
@@ -1573,7 +1575,40 @@ class SimulationService:
             "markdown": render_script_md(scene, archives, with_thoughts=with_thoughts,
                                          with_tension=with_tension),
             "json": render_script_json(scene, archives),
+            "hits": extract_hits(scene, archives),   # S4 step2：确定性高光（供采纳为素材）
         }
+
+    async def adopt_emergence_hits(self, scene_id: str,
+                                   turns: list[int] | None = None) -> dict:
+        """把确定性高光**采纳为灵感卡**（复用灵感池：零新表 + 采纳流 + 前端面板现成）。"""
+        from app.services.engine.emergence import HIT_LABEL, extract_hits
+
+        scene, book_id = await self._scene_and_book(scene_id)
+        if not book_id:
+            raise InvalidActionError(f"场景未关联书籍: {scene_id}")
+        archives = (await self._archives_by_scene(book_id)).get(scene_id, [])
+        hits = extract_hits(scene, archives)
+        wanted = set(turns or [])
+        picked = [h for h in hits if not wanted or h["turn"] in wanted]
+        cards = await self.repo.list_inspirations(book_id)
+        order = max([c.get("sort_order") or 0 for c in cards], default=0)
+        created: list[dict] = []
+        for h in picked:
+            order += 1
+            label = "、".join(HIT_LABEL.get(k, k) for k in h["kinds"])
+            desc = "【涌现高光·%s】%s" % (label, h["summary"] or "")
+            if h.get("quote"):
+                desc += "｜台词：%s" % h["quote"]
+            card = {
+                "id": f"insp-{uuid.uuid4().hex[:10]}", "book_id": book_id,
+                "icon": "✨", "title": ("剧本高光 T-%02d" % h["turn"])[:12],
+                "desc": desc[:400], "type": "plot", "source": "emergence",
+                "adopted": False, "sort_order": order,
+            }
+            await self.repo.save_inspiration(card)
+            created.append(card)
+        return {"scene_id": scene_id, "hits": hits, "picked": len(picked),
+                "adopted": len(created), "cards": created}
 
     async def book_script(self, book_id: str, with_thoughts: bool = True,
                           with_tension: bool = False) -> dict:

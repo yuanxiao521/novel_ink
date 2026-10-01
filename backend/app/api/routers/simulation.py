@@ -452,6 +452,17 @@ async def scene_script(scene_id: str, thoughts: int = 1, tension: int = 0,
                                   with_tension=bool(tension))
 
 
+class EmergenceAdoptIn(models.BaseModel):
+    turns: list[int] = []      # 空 = 采纳全部高光回合
+
+
+@router.post("/scenes/{scene_id}/emergence-hits")
+async def adopt_emergence_hits(scene_id: str, body: EmergenceAdoptIn,
+                               svc: SimulationService = Depends(get_service)):
+    """S4 step2：把确定性高光采纳为灵感卡（source=emergence，零新表）。"""
+    return await svc.adopt_emergence_hits(scene_id, body.turns)
+
+
 @router.get("/books/{book_id}/script")
 async def book_script(book_id: str, thoughts: int = 1, tension: int = 0,
                       svc: SimulationService = Depends(get_service)):
