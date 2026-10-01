@@ -176,6 +176,8 @@ async def test_service_marks_barren_scene_when_no_archives(svc):
     """护栏：有正文但 sim 无归档 → 不编造张力，如实进 barren + R7。"""
     from app.schemas.models import SimulationState
 
+    # 语义更新（取"最新且有归档"的 sim）：先删掉有归档的 sim，只留空局 → 才是 barren
+    await svc.repo.delete("sim-1")
     await svc.repo.save("sim-2", SimulationState(scenario="t", book_id="book-g",
                                                  chapter_id="c1", scene_id="s1"))
     view = await svc.book_global_view("book-g")

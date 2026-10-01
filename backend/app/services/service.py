@@ -164,28 +164,14 @@ class SimulationService:
         for ch in chapters:
             scenes_all += await self.repo.list_scenes_by_chapter(ch["id"])
 
-        # 每场景取最新一个 sim（重跑场景时旧 sim 作废，避免重复计数）
-        latest_by_scene: dict[str, str] = {}
-        for s in await self.repo.list_sims_by_book(book_id):
-            sid = str(s.get("scene_id") or "")
-            if sid and sid not in latest_by_scene:
-                latest_by_scene[sid] = str(s.get("id"))
-
-        archives_by_scene: dict[str, list[dict]] = {}
-        for scene_id, sim_id in latest_by_scene.items():
-            sim = await self.repo.load(sim_id)
-            if sim is None:
-                continue
-            archives_by_scene[scene_id] = [
-                {"tension": t.tension, "tension_trend": t.tension_trend}
-                for t in (sim.turn_archives or [])
-            ]
+        # 归档取数与 S4 剧本共用一套：最新且**有归档**的 sim（避免被空 sim 盖掉）
+        archives_by_scene = await self._archives_by_scene(book_id)
 
         foreshadows = await self.repo.list_foreshadows(book_id)
         view = build_global_view(chapters, scenes_all, archives_by_scene, foreshadows)
         view["book_id"] = book_id
         view["title"] = book.get("title") or ""
-        view["sims"] = len(latest_by_scene)
+        view["sims"] = len(archives_by_scene)
         return view
 
     async def get_dashboard(self, book_id: str) -> dict:
@@ -1569,17 +1555,31 @@ class SimulationService:
 
     # ---------------------------------------------------------------- S4 涌现产物（剧本）
     async def _archives_by_scene(self, book_id: str) -> dict[str, list[dict]]:
-        """每场景最新 sim 的回合归档：{scene_id: [archive dict]}（S3/S4 共用）。"""
-        latest: dict[str, str] = {}
-        for s in await self.repo.list_sims_by_book(book_id):
+        """每场景的回合归档：{scene_id: [archive dict]}（S3/S4 共用）。
+
+        **取"最新且确实有归档"的那个 sim**，而不是盲目取最新一行：新建/废弃的 sim
+        （0 归档）会盖掉有真实推演数据的旧 sim → 剧本与张力曲线显示为空（真实数据实测踩过）。
+        """
+        by_scene: dict[str, list[str]] = {}
+        for s in await self.repo.list_sims_by_book(book_id):   # 已按 updated_at DESC
             sid = str(s.get("scene_id") or "")
-            if sid and sid not in latest:
-                latest[sid] = str(s.get("id"))
+            if sid:
+                by_scene.setdefault(sid, []).append(str(s.get("id")))
         out: dict[str, list[dict]] = {}
-        for scene_id, sim_id in latest.items():
-            sim = await self.repo.load(sim_id)
-            if sim is not None:
-                out[scene_id] = [a.model_dump() for a in (sim.turn_archives or [])]
+        for scene_id, sim_ids in by_scene.items():
+            newest: list[dict] = []
+            for sim_id in sim_ids:
+                sim = await self.repo.load(sim_id)
+                if sim is None:
+                    continue
+                arcs = [a.model_dump() for a in (sim.turn_archives or [])]
+                if arcs:
+                    out[scene_id] = arcs
+                    break
+                if not newest:
+                    newest = arcs
+            else:
+                out[scene_id] = newest
         return out
 
     async def scene_script(self, scene_id: str, with_thoughts: bool = True,

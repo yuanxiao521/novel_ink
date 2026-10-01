@@ -5,7 +5,7 @@
 [PASS] ⑤ 护栏：单章样本不足不报 R1-R4（评分 100）
 [PASS] ⑤ 护栏：无张力不按 0 计入（曲线 None + R7 如实提示）
 [PASS] ⑤ 护栏：张力 0 视为未评估（has=False）
-[PASS] ⑥ 回归：全量 pytest 全绿 — 109 passed in 3.19s
+[PASS] ⑥ 回归：全量 pytest 全绿 — 142 passed in 4.22s
 
 == --live 真实书接口核对 ==
    book-rain        章=1 评分= 95 规则=R7                 伏笔=0 逾期=0
@@ -22,5 +22,5 @@
   [OK] ⑤ 护栏：单章样本不足不报 R1-R4（评分 100）
   [OK] ⑤ 护栏：无张力不按 0 计入（曲线 None + R7 如实提示）
   [OK] ⑤ 护栏：张力 0 视为未评估（has=False）
-  [OK] ⑥ 回归：全量 pytest 全绿 — 109 passed in 3.19s
+  [OK] ⑥ 回归：全量 pytest 全绿 — 142 passed in 4.22s
   [OK] ⑦ --live：真实书接口结构完整（4 本）

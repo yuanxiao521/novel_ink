@@ -197,6 +197,24 @@ async def test_scene_script_includes_hits_and_adopt_creates_cards(svc):
     assert only_turn2["picked"] == 1
 
 @pytest.mark.asyncio
+async def test_archives_prefer_sim_with_archives(svc):
+    """回归：**新建的空 sim 不能盖掉有归档的旧 sim**（否则剧本/张力曲线显示为空）。
+
+    真实数据踩过：最新一行 sim 是空局（0 归档），旧的才有 3 回合 → 取数必须"取最新
+    且确实有归档的那个"。
+    """
+    from app.schemas.models import SimulationState
+
+    await svc.repo.save("sim-2", SimulationState(scenario="t", book_id="b1",
+                                                chapter_id="ch1", scene_id="sc-1"))
+    out = await svc.scene_script("sc-1")
+    assert out["turns"] == 2 and out["hits"]
+    gv = await svc.book_global_view("b1")
+    assert gv["summary"]["valid"] >= 1          # 张力曲线仍看得到真实回合
+    assert gv["sims"] >= 1
+
+
+@pytest.mark.asyncio
 async def test_draft_prompt_injects_emergence_and_motives(svc, monkeypatch):
     """S4 桥接：已采纳高光（adopted=True）+ 角色动机依据进写手 prompt；
     未采纳素材**不注入**（作者掌控）；动机只取 reasoning（不含内心独白）。
