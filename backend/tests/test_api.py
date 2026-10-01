@@ -587,3 +587,41 @@ def test_global_view_endpoint_smoke(client):
     rules = [d["rule"] for d in body2["diagnostics"]]
     assert "R7" in rules and body2["structure_score"] < 100
     assert not {"R1", "R2", "R3", "R4"} & set(rules)    # 无张力不误报
+
+
+# ---------------------------------------------------------------- A3 反 AI 味（step4）
+
+_CLICHE_TEXT = ("他深吸一口气，眼中闪过一丝犹豫，又深吸一口气，"
+                "眼中闪过一丝决然，再次深吸一口气，缓缓开口。")
+
+
+def test_ai_tone_scan_and_spot_fix_endpoints(client):
+    """A3 两个端点连通：扫描落 editor note（payload.ai_tone）；定点修复在无 LLM 下明确失败。"""
+    bid = client.post("/api/v1/books", json={"title": "AI味书", "genre": "玄幻"}).json()["id"]
+    ch = client.post(f"/api/v1/books/{bid}/chapters",
+                     json={"title": "第一章", "order_no": 1}).json()
+    sc = client.post(f"/api/v1/chapters/{ch['id']}/scenes",
+                     json={"title": "场景", "goal": "g", "content_desc": "d"}).json()
+
+    # ① 扫描：规则清单 + editor note
+    r = client.post(f"/api/v1/scenes/{sc['id']}/prose/ai-tone", json={"text": _CLICHE_TEXT})
+    assert r.status_code == 200, r.text
+    rep = r.json()["report"]
+    assert "R-A3-1" in [x["rule"] for x in rep["rules"]]
+    assert rep["counts"]["total"] >= 1 and rep["clean"] is False
+    notes = client.get(f"/api/v1/scenes/{sc['id']}/prose/notes").json()
+    scan = next(n for n in notes if n["created_by"] == "ai_tone" and n["kind"] == "editor")
+    payload = json.loads(scan["payload_json"])
+    assert payload["source"] == "ai_tone" and payload["ai_tone"]["rules"]
+
+    # ② 无命中 → 幂等空操作（不调 LLM）
+    r2 = client.post(f"/api/v1/scenes/{sc['id']}/prose/spot-fix",
+                     json={"text": "雨敲着窗格，烛火矮了一截。"})
+    assert r2.status_code == 200 and r2.json()["skipped"] == "no-fixable-hit"
+
+    # ③ 有命中但 LLM 未接入（测试环境）→ 明确失败且不改文
+    r3 = client.post(f"/api/v1/scenes/{sc['id']}/prose/spot-fix", json={"text": _CLICHE_TEXT})
+    body3 = r3.json()
+    assert r3.status_code == 200
+    assert body3["accepted"] is False and body3["after"] == _CLICHE_TEXT
+    assert "LLM" in (body3.get("error") or "")

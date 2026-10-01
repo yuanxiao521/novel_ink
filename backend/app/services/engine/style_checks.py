@@ -417,8 +417,28 @@ def sentences_with(text: str, exclude: set[str] | None = None) -> list[dict]:
         if hot and any(g and g in s for g in hot):
             rules.append("R-A3-6")
         if rules:
-            out.append({"index": i, "sentence": s, "rules": rules})
+            # 命中词证据（供 spot-fix 写进 prompt：告诉模型"具体哪个词要处理"，否则
+            # 模型常做表面改写、留着同类套话 → 复检不通过（真 LLM 实测踩过））
+            terms: list[str] = [t for t in CLICHES if t in s]
+            terms += [ch for ch in FILLERS if ch in s]
+            terms += [g for g in hot if g and g in s]
+            out.append({"index": i, "sentence": s, "rules": rules,
+                        "terms": sorted(set(terms))})
     return out
+
+
+def hit_score(text: str, exclude: set[str] | None = None) -> dict:
+    """AI 味命中"重量"：句数 / 命中词数 / 规则数。
+
+    spot-fix 的复检用它而不是"命中句数"：句数口径过严 —— 一句里 8 个套话降到 1 个
+    仍是明显改善，却会因"该句仍命中"被整段回退（真 LLM 实测踩过）。
+    """
+    hits = sentences_with(text, exclude)
+    return {
+        "sentences": len(hits),
+        "terms": sum(len(h.get("terms") or []) for h in hits),
+        "rules": sum(len(h.get("rules") or []) for h in hits),
+    }
 
 
 def ai_tone_report(text: str, exclude: set[str] | None = None) -> dict:

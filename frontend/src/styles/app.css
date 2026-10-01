@@ -2773,6 +2773,12 @@ body {
 
 .studio-issue-text { color: var(--text-primary); }
 .studio-issue-sug  { color: var(--text-secondary); }
+.studio-metric { margin-left: 8px; color: var(--text-muted); font-size: 12px; }
+.studio-diff-row { border-left: 3px solid var(--border); padding: 4px 8px; margin: 4px 0; font-size: 13px; }
+.studio-diff-before { color: var(--text-muted); text-decoration: line-through; }
+.studio-diff-after { color: var(--text-primary); }
+.studio-diff-reason { color: var(--text-muted); font-size: 12px; margin-top: 2px; }
+.studio-note-detail { color: var(--text-muted); font-size: 12px; margin-top: 2px; }
 
 .studio-polish-preview {
   font-family: var(--font-reader, serif);

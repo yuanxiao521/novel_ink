@@ -823,6 +823,70 @@ class SimulationService:
         })
         return {"opinion": opinion, "note_status": "pending"}
 
+    async def prose_ai_tone(self, scene_id: str, text: str) -> dict:
+        """A3 反 AI 味扫描（0-token）→ editor note（pending，明细存 payload_json.ai_tone）。
+
+        exclude 同时传角色名与世界状态术语：R-A3-6 不排除专名会把主角名判成"复读"。
+        """
+        from app.services.engine.style_checks import ai_tone_report
+
+        scene, book_id = await self._scene_and_book(scene_id)
+        characters = await self.repo.list_characters_for_scene(scene_id) if scene_id else []
+        names = {str(c.get("name") or "") for c in characters if c.get("name")}
+        states = (await self.repo.list_world_states(book_id)) if book_id else []
+        terms = {str(s.get("name") or "") for s in states
+                 if str(s.get("kind") or "") in {"term", "numeric"}}
+        report = ai_tone_report(text, exclude=names | terms)
+        rules = report.get("rules") or []
+        hit_rules = "、".join(sorted({str(r.get("rule")) for r in rules})) or "无"
+        sug = "AI 味扫描：命中 %d 条（%s）" % (len(rules), hit_rules)
+        if rules:
+            sug += "；" + "；".join(str(r.get("detail") or "")[:48] for r in rules[:2])
+        await self.repo.save_prose_note({
+            "id": f"note-{uuid.uuid4().hex[:10]}",
+            "scene_id": scene_id, "kind": "editor", "status": "pending",
+            "suggestion": sug[:400], "before": text, "after": "",
+            "created_by": "ai_tone",
+            "payload_json": json.dumps({"source": "ai_tone", "ai_tone": report},
+                                       ensure_ascii=False),
+            "ts": int(time.time() * 1000),
+        })
+        return {"report": report, "note_status": "pending"}
+
+    async def prose_spot_fix(self, scene_id: str, text: str) -> dict:
+        """A3 定点修复：只改白名单规则命中句；通过双闸才采纳。
+
+        采纳时落 **polisher note**（before/after）→ 前端复用现有"应用润色稿"按钮落地，
+        不新造 diff UI；未采纳/异常不落 note（避免噪音），原因在响应里返回。
+        """
+        from app.services.engine.ai_tone import spot_fix
+
+        scene, book_id = await self._scene_and_book(scene_id)
+        characters = await self.repo.list_characters_for_scene(scene_id) if scene_id else []
+        states = (await self.repo.list_world_states(book_id)) if book_id else []
+        out = await spot_fix(llm_client, text, characters=characters, world_states=states)
+        applied = [c for c in (out.get("changes") or []) if c.get("applied")]
+        if out.get("accepted") and applied:
+            sug = "定点修复：改 %d 句（命中 %s→%s）；%s" % (
+                len(applied), out.get("hits_before"), out.get("hits_after"),
+                "；".join(str(c.get("reason") or "")[:28] for c in applied[:2]))
+            await self.repo.save_prose_note({
+                "id": f"note-{uuid.uuid4().hex[:10]}",
+                "scene_id": scene_id, "kind": "polisher", "status": "pending",
+                "suggestion": sug[:300], "before": text,
+                "after": str(out.get("after") or text), "created_by": "ai_tone",
+                "payload_json": json.dumps({
+                    "source": "ai_tone_spotfix",
+                    "changes": out.get("changes") or [],
+                    "hits_before": out.get("hits_before"),
+                    "hits_after": out.get("hits_after"),
+                    "ai_tone_after": out.get("report_after"),
+                }, ensure_ascii=False),
+                "ts": int(time.time() * 1000),
+            })
+            out["note_status"] = "pending"
+        return out
+
     async def list_prose_notes(self, scene_id: str) -> list[dict]:
         await self._scene_and_book(scene_id)
         return await self.repo.list_prose_notes(scene_id)

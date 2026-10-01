@@ -641,6 +641,63 @@ export interface ProseNote {
   created_by: string;
   reviewed_at?: string | null;
   ts: number;
+  /** 明细 JSON（后端 `repo._prose_note_dict` 已返回）：voice_findings / voice_prior / ai_tone / changes… */
+  payload_json?: string | null;
+}
+
+/* ---------- A3 反 AI 味（step4/5） ---------- */
+
+export interface AiToneRule {
+  rule: string;
+  severity: 'warning' | 'violation' | string;
+  detail: string;
+  evidence: unknown;
+}
+
+export interface AiToneReport {
+  rules: AiToneRule[];
+  counts: { total: number; violation: number; by_rule: Record<string, number> };
+  cliches: Array<{ term: string; count: number; evidence: string }>;
+  metrics: { dash: number; ellipsis: number; filler_per_100: number; chars: number };
+  clean: boolean;
+}
+
+export interface AiToneScanResult {
+  report: AiToneReport;
+  note_status: string;
+}
+
+export interface SpotFixChange {
+  index?: number;
+  before: string;
+  after: string;
+  rule?: string;
+  reason?: string;
+  applied?: boolean;
+  blocked_reason?: string;
+}
+
+export interface SpotFixResult {
+  after: string;
+  changes: SpotFixChange[];
+  accepted: boolean;
+  skipped?: string;
+  error?: string;
+  reason?: string;
+  reverted?: boolean;
+  hits_before?: number;
+  hits_after?: number;
+  note_status?: string;
+}
+
+/** A3 反 AI 味扫描（0-token 规则）→ 落 editor note（明细在 payload_json.ai_tone）。 */
+export async function scanAiTone(sceneId: string, text: string): Promise<AiToneScanResult> {
+  return send('POST', `/api/v1/scenes/${sceneId}/prose/ai-tone`, { text });
+}
+
+/** A3 定点修复：只改白名单规则命中句；采纳时落 polisher note（after 供"应用"）。 */
+export async function spotFixProse(sceneId: string, text: string): Promise<SpotFixResult> {
+  return send('POST', `/api/v1/scenes/${sceneId}/prose/spot-fix`, { text });
 }
 
 export interface VerifyOpinion {

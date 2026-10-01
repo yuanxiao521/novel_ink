@@ -9,8 +9,16 @@ import {
   approveProseNote,
   rejectProseNote,
   saveSceneProse,
+  scanAiTone,
+  spotFixProse,
 } from '../../api/novel';
-import type { ProseNote, SceneDetail, VerifyOpinion } from '../../api/novel';
+import type {
+  AiToneReport,
+  ProseNote,
+  SceneDetail,
+  SpotFixResult,
+  VerifyOpinion,
+} from '../../api/novel';
 
 /* ---------- 常量 ---------- */
 
@@ -38,16 +46,56 @@ interface Props {
   onClose: () => void;
 }
 
+/** 审计记录明细（payload_json）：把 S2 口吻/先验与 A3 反 AI 味的落库明细显示出来。 */
+function NoteDetails({ note }: { note: ProseNote }) {
+  const raw = note.payload_json;
+  if (!raw) return null;
+  let p: Record<string, unknown>;
+  try {
+    p = JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  const asArr = (v: unknown): Array<Record<string, unknown>> =>
+    Array.isArray(v) ? (v as Array<Record<string, unknown>>) : [];
+  const parts: string[] = [];
+
+  const vf = asArr(p.voice_findings);
+  if (vf.length) {
+    parts.push(
+      `口吻检点 ${vf.length}：` +
+        vf.slice(0, 2).map((v) => `${String(v.char ?? '')}（${String(v.issue ?? '').slice(0, 16)}）`).join('；'),
+    );
+  }
+  const vr = asArr(p.voice_risks);
+  if (vr.length) parts.push(`质检口吻风险 ${vr.length}`);
+
+  const vp = (p.voice_prior ?? null) as { per_char?: unknown } | null;
+  const per = asArr(vp?.per_char).filter((m) => Number(m.dialogues ?? 0) > 0);
+  if (per.length) {
+    parts.push('台词分账 ' + per.map((m) => `${String(m.name ?? '')} ${String(m.avg_len ?? '')} 字/句`).join('，'));
+  }
+  const at = (p.ai_tone ?? null) as { counts?: { total?: number } } | null;
+  if (at?.counts) parts.push(`AI 味命中 ${at.counts.total ?? 0} 条`);
+  const ch = asArr(p.changes);
+  if (ch.length) parts.push(`改写 ${ch.filter((c) => c.applied).length}/${ch.length} 句`);
+
+  if (!parts.length) return null;
+  return <div className="studio-note-detail">{parts.join(' · ')}</div>;
+}
+
 /* ---------- 组件 ---------- */
 
 export function SceneStudioPanel({ sceneId, onClose }: Props) {
   const [scene, setScene] = useState<SceneDetail | null>(null);
   const [text, setText] = useState('');
   const [notes, setNotes] = useState<ProseNote[]>([]);
-  const [busy, setBusy] = useState<'' | 'draft' | 'review' | 'polish' | 'verify' | 'save' | 'note'>('');
+  const [busy, setBusy] = useState<'' | 'draft' | 'review' | 'polish' | 'verify' | 'save' | 'note' | 'aitone' | 'spotfix'>('');
   const [report, setReport] = useState<{ issues: Array<{ severity: string; text: string; suggestion: string }>; overall: string } | null>(null);
   const [polish, setPolish] = useState<{ after: string; summary: string } | null>(null);
   const [opinion, setOpinion] = useState<VerifyOpinion | null>(null);
+  const [aiTone, setAiTone] = useState<AiToneReport | null>(null);
+  const [spot, setSpot] = useState<SpotFixResult | null>(null);
   const [toast, setToast] = useState('');
 
   const flash = (t: string) => {
@@ -110,6 +158,24 @@ export function SceneStudioPanel({ sceneId, onClose }: Props) {
     const r = await verifySceneProse(sceneId, text);
     setOpinion(r.opinion);
     flash('质检完成（确认后才记账）');
+  });
+
+  const onAiTone = () => void run('aitone', async () => {
+    const r = await scanAiTone(sceneId, text);
+    setAiTone(r.report);
+    flash(r.report.clean ? 'AI 味扫描：未发现规则命中' : `AI 味扫描：命中 ${r.report.counts.total} 条`);
+  });
+
+  const onSpotFix = () => void run('spotfix', async () => {
+    const r = await spotFixProse(sceneId, text);
+    setSpot(r);
+    if (r.accepted) {
+      flash(`定点修复：改 ${r.changes.filter((c) => c.applied).length} 句（命中 ${r.hits_before}→${r.hits_after}）`);
+    } else if (r.skipped === 'no-fixable-hit') {
+      flash('没有可改写的命中句（标点类只提示不改）');
+    } else {
+      flash(`未采纳：${(r.reason || r.error || '见下方说明').slice(0, 40)}`);
+    }
   });
 
   const onSave = () => void run('save', async () => {
@@ -176,6 +242,10 @@ export function SceneStudioPanel({ sceneId, onClose }: Props) {
             onClick={onPolish}>{busy === 'polish' ? '润色中…' : '🎨 润色'}</button>
           <button className="studio-btn" disabled={busy !== '' || !text.trim()}
             onClick={onVerify}>{busy === 'verify' ? '质检中…' : '🔍 质检'}</button>
+          <button className="studio-btn" disabled={busy !== '' || !text.trim()}
+            onClick={onAiTone}>{busy === 'aitone' ? '扫描中…' : '🧹 AI 味扫描'}</button>
+          <button className="studio-btn" disabled={busy !== '' || !text.trim()}
+            onClick={onSpotFix}>{busy === 'spotfix' ? '修复中…' : '🪄 定点修复'}</button>
         </div>
 
         {/* 最近产出 */}
@@ -205,6 +275,75 @@ export function SceneStudioPanel({ sceneId, onClose }: Props) {
               </button>
               <button className="studio-btn" onClick={() => setPolish(null)}>忽略</button>
             </div>
+          </div>
+        )}
+
+        {aiTone && (
+          <div className="studio-role-out">
+            <div className="studio-role-title">🧹 AI 味扫描（0-token 确定性规则）</div>
+            <div className="studio-role-overall">
+              {aiTone.clean
+                ? '未发现规则命中'
+                : `命中 ${aiTone.counts.total} 条（严重 ${aiTone.counts.violation}）`}
+              <span className="studio-metric">
+                破折号 {aiTone.metrics.dash} · 省略号 {aiTone.metrics.ellipsis} · 填充词{' '}
+                {aiTone.metrics.filler_per_100}/百字
+              </span>
+            </div>
+            {aiTone.rules.map((r, i) => (
+              <div className="studio-issue" key={`${r.rule}-${i}`}>
+                <span className={`studio-sev studio-sev-${r.severity === 'violation' ? 'high' : 'mid'}`}>
+                  {r.rule}
+                </span>
+                <span className="studio-issue-text">{r.detail}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {spot && (
+          <div className="studio-role-out">
+            <div className="studio-role-title">🪄 定点修复{spot.accepted ? '' : '（未采纳）'}</div>
+            <div className="studio-role-overall">
+              {spot.accepted
+                ? `已改 ${spot.changes.filter((c) => c.applied).length} 句；句子级命中 ${spot.hits_before}→${spot.hits_after}`
+                : spot.skipped === 'no-fixable-hit'
+                  ? '没有"可改写"的命中句（破折号等标点类只提示不改）'
+                  : spot.reason || spot.error || '未采纳'}
+            </div>
+            {spot.changes
+              .filter((c) => c.applied)
+              .map((c, i) => (
+                <div className="studio-diff-row" key={i}>
+                  <div className="studio-diff-before">− {c.before}</div>
+                  <div className="studio-diff-after">＋ {c.after}</div>
+                  {c.reason && <div className="studio-diff-reason">{c.reason}</div>}
+                </div>
+              ))}
+            {spot.changes
+              .filter((c) => !c.applied && c.blocked_reason)
+              .slice(0, 3)
+              .map((c, i) => (
+                <div className="studio-issue" key={`b-${i}`}>
+                  <span className="studio-sev studio-sev-low">丢弃</span>
+                  <span className="studio-issue-text">{c.blocked_reason}</span>
+                </div>
+              ))}
+            {spot.accepted && (
+              <div className="studio-inline-actions">
+                <button
+                  className="studio-btn studio-btn-primary"
+                  onClick={() => {
+                    setText(spot.after);
+                    setSpot(null);
+                    flash('已应用定点修复');
+                  }}
+                >
+                  ✓ 应用定点修复
+                </button>
+                <button className="studio-btn" onClick={() => setSpot(null)}>忽略</button>
+              </div>
+            )}
           </div>
         )}
 
@@ -246,6 +385,7 @@ export function SceneStudioPanel({ sceneId, onClose }: Props) {
                 <span className="studio-note-time">{new Date(n.ts).toLocaleString()}</span>
               </div>
               <div className="studio-note-sug">{n.suggestion}</div>
+              <NoteDetails note={n} />
               {n.status === 'pending' && (
                 <div className="studio-inline-actions">
                   {n.kind === 'verifier' && (

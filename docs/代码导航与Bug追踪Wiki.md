@@ -291,7 +291,7 @@ _apply_verify_bookkeeping 第一/二段：伏笔推进 + 信念新增
 > 前端检查：`cd frontend && npx tsc --noEmit`（当前零错误）。
 >
 > **验收脚本**：`python backend/scripts/accept_s2.py [--live]`（S2 口吻一致性；退出码 0=全通过）。
-> **2026-09-13 基线（A3 进行中）**：**131 passed, 0 skipped**（含 S3 全量 + A3 step2/3；A3 验收脚本待 step6）。
+> **2026-09-13 基线（A3 进行中）**：**133 passed, 0 skipped**（含 S3 全量 + A3 step2/3/4/5；A3 验收脚本与 tag 待 step6）。
 > **2026-09-13 基线（v1.11）**：**96 passed, 0 skipped**（DB 已起，约 3s）；S2 验收 **11/11**。
 > **2026-09-13 基线（v1.10.3）**：**94 passed, 0 skipped**（DB 已起，3.0s）。演进：69/6（B17 静默降级）→ 80/0（B17 修复）→ 85（S2 step4 + 结构对齐守卫）→ **94**（S2 step5 先验 9 例）。DB 未起时 DB 用例优雅 skip、其余全绿。
 

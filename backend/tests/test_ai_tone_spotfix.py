@@ -134,6 +134,7 @@ async def test_spot_fix_applies_grounded_rewrite_and_accepts():
     assert out["after"] == "他把伞靠在门边。雨敲着窗格。"
     assert out["hits_before"] == 1 and out["hits_after"] == 0
     assert "他深吸一口气。" in llm.calls[0]        # 原句逐字进 prompt（便于模型对齐）
+    assert "需处理：深吸一口气" in llm.calls[0]     # 命中词写进 prompt（否则模型做表面改写）
     assert out["changes"][0]["applied"] is True
 
 
@@ -159,7 +160,23 @@ async def test_spot_fix_reverts_when_hits_not_reduced():
     out = await spot_fix(llm, CLICHE_TEXT)
     assert out["accepted"] is False and out["reverted"] is True
     assert out["after"] == CLICHE_TEXT
-    assert "命中数未下降" in out["reason"]
+    assert "未下降" in out["reason"]
+    assert out["score_after"]["terms"] > out["score_before"]["terms"]   # 改后更糟 → 回退
+
+
+@pytest.mark.asyncio
+async def test_spot_fix_accepts_partial_improvement():
+    """复检口径：允许"部分改善"—— 一句里多个套话降到更少即成（不必清零）。
+
+    真 LLM 实测教训：按"命中句数"判定会把"8 个套话→1 个"整段回退。
+    """
+    text = "他深吸一口气，眼中闪过一丝犹豫，缓缓开口。"
+    llm = _FakeLLM({"rewrites": [_rw(0, "他深吸一口气，眼中闪过一丝犹豫，缓缓开口。",
+                                     "他攥了攥拳，缓缓开口。")]})
+    out = await spot_fix(llm, text)
+    assert out["accepted"] is True
+    assert out["score_after"]["terms"] < out["score_before"]["terms"]
+    assert out["after"] == "他攥了攥拳，缓缓开口。"
 
 
 def test_spot_fix_validator_requires_before_and_after():

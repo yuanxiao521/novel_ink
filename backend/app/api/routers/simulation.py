@@ -327,6 +327,20 @@ async def prose_verify(scene_id: str, body: ProseTextIn,
     return await svc.prose_verify(scene_id, body.text)
 
 
+@router.post("/scenes/{scene_id}/prose/ai-tone")
+async def prose_ai_tone(scene_id: str, body: ProseTextIn,
+                        svc: SimulationService = Depends(get_service)):
+    """A3 反 AI 味扫描（0-token）：规则清单 → editor note（明细存 payload_json.ai_tone）。"""
+    return await svc.prose_ai_tone(scene_id, body.text)
+
+
+@router.post("/scenes/{scene_id}/prose/spot-fix")
+async def prose_spot_fix(scene_id: str, body: ProseTextIn,
+                         svc: SimulationService = Depends(get_service)):
+    """A3 定点修复：只改白名单规则命中句；过双闸才采纳并落 polisher note（after 供 [应用]）。"""
+    return await svc.prose_spot_fix(scene_id, body.text)
+
+
 @router.get("/scenes/{scene_id}/prose/notes")
 async def list_prose_notes(scene_id: str, svc: SimulationService = Depends(get_service)):
     """审计记录列表（可追溯）。"""

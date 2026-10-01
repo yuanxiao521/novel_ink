@@ -21,6 +21,7 @@ from app.services.engine.schema_retry import validate_and_retry
 from app.services.engine.style_checks import (
     CONSERVATIVE_MAX,
     ai_tone_report,
+    hit_score,
     rule_policy,
     sentences_with,
     voice_prior,
@@ -53,6 +54,8 @@ _SPOT_FIX_PROMPT = """你是小说文字编辑。下面列出的句子已由确�
 4. 保持角色腔调：不得把话少的人写成话多，不得改变各角色的句长习惯
 5. 只处理列出的句子，其余一字不动；每句给一条 rewrite，before 必须逐字复制原句
 改写方向：删套话与解释句、抽象情绪换具体物象或动作、拆掉工整同构、去掉冗余虚词。
+特别注意：标注「需处理」的词是**必须消除**的套话/冗余词（改写后**不得再出现同类词**，
+例如"缓缓/一丝/仿佛"这类）；只做表面调序不算改好。
 命中的句子：
 {targets}
 
@@ -160,7 +163,8 @@ def _pick_targets(text: str, cast_names: set[str], max_sentences: int) -> list[d
             if conservative_used >= CONSERVATIVE_MAX:
                 continue
             conservative_used += 1
-        targets.append({"index": hit["index"], "sentence": hit["sentence"], "rules": fixable})
+        targets.append({"index": hit["index"], "sentence": hit["sentence"],
+                        "rules": fixable, "terms": hit.get("terms") or []})
         if len(targets) >= max_sentences:
             break
     return targets
@@ -174,7 +178,7 @@ async def spot_fix(llm_client, text: str, characters=None, world_states=None,
     cast = [n for n in cast if n]
     names = set(cast)
     rep_before = report or ai_tone_report(text, exclude=names)
-    hits_before = len(sentences_with(text, names))
+    score_before = hit_score(text, names)
 
     if not text.strip():
         return {"after": text, "changes": [], "accepted": True,
@@ -183,23 +187,30 @@ async def spot_fix(llm_client, text: str, characters=None, world_states=None,
     targets = _pick_targets(text, names, max_sentences)
     if not targets:
         return {"after": text, "changes": [], "accepted": True, "skipped": "no-fixable-hit",
-                "hits_before": hits_before, "report": rep_before}
+                "hits_before": score_before["sentences"], "score_before": score_before,
+                "report": rep_before}
 
     if not getattr(llm_client, "available", False):
         return {"after": text, "changes": [], "accepted": False,
-                "error": "LLM 未接入，未做改写", "hits_before": hits_before, "report": rep_before}
+                "error": "LLM 未接入，未做改写",
+                "hits_before": score_before["sentences"], "score_before": score_before,
+                "report": rep_before}
 
     protected = protected_tokens(text, characters, world_states)
     prompt = _SPOT_FIX_PROMPT.format(
-        targets="\n".join("%d. [%s] %s" % (t["index"], "/".join(t["rules"]), t["sentence"])
-                          for t in targets),
+        targets="\n".join(
+            "%d. [%s] %s%s" % (t["index"], "/".join(t["rules"]), t["sentence"],
+                               ("（需处理：" + "、".join(t["terms"][:8]) + "）") if t.get("terms") else "")
+            for t in targets),
         characters="\n".join("- %s" % n for n in cast) or "（无角色卡）",
     )
     try:
         raw = await validate_and_retry(llm_client, prompt, SPOT_FIX_SCHEMA, _validate_spot_fix)
     except ValueError as e:  # 结构化输出熔断 → 不改文
         return {"after": text, "changes": [], "accepted": False,
-                "error": "结构化输出失败：%s" % e, "hits_before": hits_before, "report": rep_before}
+                "error": "结构化输出失败：%s" % e,
+                "hits_before": score_before["sentences"], "score_before": score_before,
+                "report": rep_before}
 
     new_text = text
     changes: list[dict] = []
@@ -226,20 +237,27 @@ async def spot_fix(llm_client, text: str, characters=None, world_states=None,
         changes.append(item)
 
     rep_after = ai_tone_report(new_text, exclude=names)
-    hits_after = len(sentences_with(new_text, names))
+    score_after = hit_score(new_text, names)
     voice_ok, voice_detail = _voice_not_worse(text, new_text, cast)
 
     reasons: list[str] = []
     if new_text == text:
         reasons.append("无有效改写")
-    if hits_after >= hits_before:
-        reasons.append("句子级命中数未下降（%d → %d）" % (hits_before, hits_after))
+    # 复检双闸：命中"词数"必须下降，命中"句数"不得增加（允许部分改善，不许变差）
+    if score_after["terms"] >= score_before["terms"]:
+        reasons.append("AI 味命中未下降（词 %d → %d）"
+                       % (score_before["terms"], score_after["terms"]))
+    if score_after["sentences"] > score_before["sentences"]:
+        reasons.append("命中句数反而增加（%d → %d）"
+                       % (score_before["sentences"], score_after["sentences"]))
     if not voice_ok:
         reasons.append(voice_detail)
+    payload = {"changes": changes, "score_before": score_before, "score_after": score_after,
+               "hits_before": score_before["sentences"], "hits_after": score_after["sentences"],
+               "report": rep_before, "report_after": rep_after}
     if reasons:
-        return {"after": text, "changes": changes, "accepted": False, "reverted": True,
-                "reason": "；".join(reasons), "hits_before": hits_before, "hits_after": hits_after,
-                "report": rep_before, "report_after": rep_after}
-    return {"after": new_text, "changes": changes, "accepted": True,
-            "hits_before": hits_before, "hits_after": hits_after,
-            "report": rep_before, "report_after": rep_after}
+        payload.update({"after": text, "accepted": False, "reverted": True,
+                        "reason": "；".join(reasons)})
+        return payload
+    payload.update({"after": new_text, "accepted": True})
+    return payload
