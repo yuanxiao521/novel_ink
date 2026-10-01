@@ -252,8 +252,12 @@ class Repo:
     # ------------------------------------------------------------------
     async def list_scenes_by_chapter(self, chapter_id: str) -> list[dict]:
         if not self.use_db:
+            # 内存态判据用 chapter_id（场景的必填外键），**不再要求 cursor_pos 存在**：
+            # 旧写法把 cursor_pos 当类型标记，导致未显式带该键的场景在内存态整体不可见
+            # （树的 scenes 空、概览/S3 全局视图丢场景），与 DB 分支语义不一致。
             rows = [v for v in self._mem.values()
-                    if isinstance(v, dict) and v.get("chapter_id") == chapter_id and "cursor_pos" in v]
+                    if isinstance(v, dict) and v.get("chapter_id") == chapter_id
+                    and "book_id" not in v]
             return sorted(rows, key=lambda s: s.get("cursor_pos") or 0)
 
         async def _q(session: AsyncSession):
@@ -693,6 +697,33 @@ class Repo:
             ]
         return await self._query_or_mem(_q, [])
 
+    async def list_sims_by_book(self, book_id: str) -> list[dict]:
+        """该书**全部** sim（含已完结 · 时间倒序）：[{id, scene_id, ended}]。
+
+        与 list_active_sims_by_book 的区别：不过滤 ended —— S3 全局张力要读
+        **已完成场景**的回合归档（张力藏在 state_json.turn_archives 里）。
+        """
+        async def _q(session: AsyncSession):
+            stmt = (
+                select(Simulation.id, Simulation.scene_id, Simulation.ended)
+                .where(Simulation.book_id == book_id)
+                .order_by(Simulation.updated_at.desc())
+            )
+            return [{"id": sid, "scene_id": scene_id, "ended": bool(ended)}
+                    for sid, scene_id, ended in (await session.execute(stmt)).all()]
+
+        if not self.use_db:
+            # 内存态用**插入顺序的逆序**模拟 DB 的 updated_at DESC（内存保存=时间序），
+            # 否则"每场景取最新 sim"会取到旧局（旧局张力作废语义失效）。
+            rows = [
+                {"id": sid, "scene_id": getattr(sim, "scene_id", None),
+                 "ended": bool(getattr(sim, "ended", True))}
+                for sid, sim in self._mem.items()
+                if getattr(sim, "book_id", None) == book_id
+            ]
+            return list(reversed(rows))
+        return await self._query_or_mem(_q, [])
+
     # ------------------------------------------------------------------
     # characters（角色卡 · 一等实体 · 书级 + 场景特设两层）
     # ------------------------------------------------------------------
@@ -775,8 +806,10 @@ class Repo:
                 if isinstance(v, dict) and v.get("book_id") == book_id and "order_no" in v
             ]
             chapters.sort(key=lambda c: c.get("order_no") or 0)
+            # 同 list_scenes_by_chapter：场景判据用 chapter_id，不用 cursor_pos（脆弱）
             scenes = [v for v in self._mem.values()
-                      if isinstance(v, dict) and "cursor_pos" in v and "title" in v]
+                      if isinstance(v, dict) and v.get("chapter_id") and "title" in v
+                      and "book_id" not in v]
             scenes.sort(key=lambda s: s.get("cursor_pos") or 0)
             scenes_by_ch: dict[str, list[dict]] = {}
             for s in scenes:

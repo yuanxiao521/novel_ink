@@ -148,6 +148,46 @@ class SimulationService:
             return 0.5
 
     # ---------------------------------------------------------------- Dashboard 聚合
+    async def book_global_view(self, book_id: str) -> dict:
+        """S3 全局结构与张力视图（0-token 派生，零新表）。
+
+        装配：章/场景 + 每场景**最新** sim 的回合归档（张力）+ 伏笔账本
+        → engine/global_view.build_global_view 派生曲线与诊断。
+        """
+        from app.services.engine.global_view import build_global_view
+
+        book = await self.repo.get_book(book_id) or {}
+        tree = await self.repo.get_book_tree(book_id)
+        chapters = sorted((tree or {}).get("chapters") or [],
+                          key=lambda c: c.get("order_no") or 0)
+        scenes_all: list[dict] = []
+        for ch in chapters:
+            scenes_all += await self.repo.list_scenes_by_chapter(ch["id"])
+
+        # 每场景取最新一个 sim（重跑场景时旧 sim 作废，避免重复计数）
+        latest_by_scene: dict[str, str] = {}
+        for s in await self.repo.list_sims_by_book(book_id):
+            sid = str(s.get("scene_id") or "")
+            if sid and sid not in latest_by_scene:
+                latest_by_scene[sid] = str(s.get("id"))
+
+        archives_by_scene: dict[str, list[dict]] = {}
+        for scene_id, sim_id in latest_by_scene.items():
+            sim = await self.repo.load(sim_id)
+            if sim is None:
+                continue
+            archives_by_scene[scene_id] = [
+                {"tension": t.tension, "tension_trend": t.tension_trend}
+                for t in (sim.turn_archives or [])
+            ]
+
+        foreshadows = await self.repo.list_foreshadows(book_id)
+        view = build_global_view(chapters, scenes_all, archives_by_scene, foreshadows)
+        view["book_id"] = book_id
+        view["title"] = book.get("title") or ""
+        view["sims"] = len(latest_by_scene)
+        return view
+
     async def get_dashboard(self, book_id: str) -> dict:
         from datetime import datetime
 

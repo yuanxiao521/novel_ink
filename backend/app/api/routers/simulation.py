@@ -427,6 +427,12 @@ async def get_dashboard(book_id: str, svc: SimulationService = Depends(get_servi
     return await svc.get_dashboard(book_id)
 
 
+@router.get("/books/{book_id}/global-view")
+async def book_global_view(book_id: str, svc: SimulationService = Depends(get_service)):
+    """S3 全局结构与张力视图（0-token 派生）：章级张力曲线 + 结构诊断 + 伏笔网络 + 评分。"""
+    return await svc.book_global_view(book_id)
+
+
 # ------------------------------------------------------------------ 主笔规划（S2）
 class PlanBody(models.BaseModel):
     direction: str = ""      # 一句话方向

@@ -549,3 +549,41 @@ def test_update_inspiration(client):
     assert upd["title"] == "新标题"
     assert upd["desc"] == "新描述"
     assert upd["adopted"] is False
+
+
+# ---------------------------------------------------------------- S3 全局张力视图（v1.12）
+
+def test_global_view_endpoint_smoke(client):
+    """S3 端点连通：GET /books/{id}/global-view 返回曲线/诊断/伏笔网络/评分四件套。
+
+    空书（无章无场景）也要稳定返回：curve 空、无诊断、评分 100（样本不足不下结论）。
+    """
+    r = client.post("/api/v1/books", json={"title": "全局视图书", "genre": "玄幻"})
+    assert r.status_code == 201, r.text
+    bid = r.json()["id"]
+    r = client.post(f"/api/v1/books/{bid}/chapters", json={"title": "第一章", "order_no": 1})
+    assert r.status_code == 201, r.text
+
+    r = client.get(f"/api/v1/books/{bid}/global-view")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["book_id"] == bid
+    assert [c["order_no"] for c in body["curve"]] == [1]
+    assert body["curve"][0]["tension_avg"] is None      # 无推演 → 不编造张力
+    assert body["diagnostics"] == []                    # 单章/无张力 → 不报 R1-R4
+    assert body["structure_score"] == 100
+    assert set(body["foreshadows"]) == {"nodes", "edges", "overdue"}
+
+    # 建 3 章的场景（有正文无张力）→ 如实报 R7，而不是假装有曲线
+    for i in (1, 2, 3):
+        ch = client.post(f"/api/v1/books/{bid}/chapters",
+                         json={"title": "第%d章" % i, "order_no": i}).json()
+        sc = client.post(f"/api/v1/chapters/{ch['id']}/scenes",
+                         json={"title": "场景", "goal": "g", "content_desc": "d"}).json()
+        # 定稿走专用端点（SceneBody 不含 final_prose；PUT /scenes/{id} 只管结构字段）
+        r = client.put(f"/api/v1/scenes/{sc['id']}/prose", json={"text": "正文内容" * 10})
+        assert r.status_code == 200, r.text
+    body2 = client.get(f"/api/v1/books/{bid}/global-view").json()
+    rules = [d["rule"] for d in body2["diagnostics"]]
+    assert "R7" in rules and body2["structure_score"] < 100
+    assert not {"R1", "R2", "R3", "R4"} & set(rules)    # 无张力不误报
