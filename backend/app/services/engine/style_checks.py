@@ -22,6 +22,21 @@ FILLER_PER_100 = 16.0      # 对话里"了/是/的/就/都"密度上限（每百
 DASH_PER_1000 = 6.0        # 破折号密度上限
 ELLIPSIS_PER_1000 = 6.0    # 省略号密度上限
 CLICHE_TOTAL = 6           # 套话命中总次数上限（A3 底座，阈值先宽松）
+# ---- A3 反 AI 味：新增规则阈值 ----
+ELEVATION_MAX_LEN = 26     # R-A3-4 段末"拔高句"长度上限（短句 + 抽象情绪词）
+HOMO_MIN = 3               # R-A3-5 连续同构句数下限
+HOMO_LEN_DIFF = 2          # R-A3-5 句长差上限（同构判据）
+CONTENT_TOP_RATIO = 0.08   # R-A3-6 高频实词占正文比下限
+CONTENT_TOP_MIN = 5        # R-A3-6 高频实词出现次数下限
+
+# R-A3-4：段末"升华/总结"词表（抽象情绪、顿悟、收束感）
+ELEVATION_WORDS = (
+    "明白了", "终于明白", "他知道", "她知道", "这一刻", "终究", "或许", "仿佛一切",
+    "原来", "释然", "平静下来", "安静下来", "五味杂陈", "一切都", "从此以后",
+)
+# R-A3-6：中文近似分词用停用字（含其的 2-gram 视为非实词）
+STOPWORDS = set("的了是在和与也就都这那他她它我你们个一不有上下中来往说道着过被把很又"
+                "要会能可还而但如若则因此所为以于之其没")
 
 # ---------------------------------------------------------------- 词表
 PARTICLES = "啊吧呢吗嘛呀哦嗯哈唉哎咦哼哟啦咯诶喔嗬啧哇咧"
@@ -246,6 +261,118 @@ def ai_tone_scan(text: str) -> dict:
                       "detail": f"省略号密度 {ellipsis * 1000 / n:.1f}/千字（阈值 {ELLIPSIS_PER_1000}）"})
     return {"cliches": cliches, "dash": dash, "ellipsis": ellipsis,
             "filler_per_100": round(fillers * 100 / n, 1), "flags": flags}
+
+
+# ---------------------------------------------------------------- A3 反 AI 味（R-A3-1~6）
+def paragraphs(text: str) -> list[str]:
+    """按空行/换行切段（段末句判定需要"段"的边界）。"""
+    return [p.strip() for p in re.split(r"\n\s*\n|\n", text or "") if p.strip()]
+
+
+def elevation_endings(text: str) -> list[dict]:
+    """R-A3-4：段末句命中"升华/总结"词表且是短句 → 疑似每段结尾拔高。"""
+    out: list[dict] = []
+    for p in paragraphs(text):
+        sents = split_sentences(p)
+        if not sents:
+            continue
+        last = sents[-1].strip("「」“”\"' \t")
+        hit = next((w for w in ELEVATION_WORDS if w in last), None)
+        if hit and len(last) <= ELEVATION_MAX_LEN:
+            idx = text.find(last)
+            idx = idx if idx >= 0 else 0
+            out.append({"rule": "R-A3-4", "severity": "warning",
+                        "detail": "段末疑似拔高：「%s」收尾且句长仅 %d 字（阈值 ≤%d）"
+                                  % (hit, len(last), ELEVATION_MAX_LEN),
+                        "evidence": _snippet(text, idx, idx + len(last), 6)})
+    return out
+
+
+def homogeneous_runs(text: str) -> list[dict]:
+    """R-A3-5：连续 ≥3 句"同构"（**首字相同** 且句长差 ≤2）→ 工整排比式假流畅。
+
+    要求首字相同是为了精度：AI 腔典型形态是"他…。他…。他…。"这种同主语排比，
+    单纯句长接近不算（否则会把正常叙述误伤）。
+    """
+    sents = [s.strip() for s in split_sentences(text or "") if len(s.strip()) >= 4]
+    out: list[dict] = []
+    i = 0
+    while i < len(sents):
+        j = i + 1
+        while (j < len(sents) and sents[j][0] == sents[j - 1][0]
+               and abs(len(sents[j]) - len(sents[j - 1])) <= HOMO_LEN_DIFF):
+            j += 1
+        if j - i >= HOMO_MIN:
+            run = sents[i:j]
+            out.append({"rule": "R-A3-5", "severity": "warning",
+                        "detail": "连续 %d 句同构（同首字「%s」+ 句长差 ≤%d）→ 排比式工整"
+                                  % (len(run), run[0][0], HOMO_LEN_DIFF),
+                        "evidence": "".join(run)[:80]})
+        i = j
+    return out
+
+
+def top_content_words(text: str) -> list[dict]:
+    """R-A3-6：高频实词集中（2-gram 近似分词）→ 词穷式复读。
+
+    判据：出现 ≥5 次 且占正文汉字数 ≥8%；命中即 violation（比"套话"更伤文本）。
+    """
+    chars = [c for c in (text or "") if "\u4e00" <= c <= "\u9fff"]
+    total = len(chars) or 1
+    grams: dict[str, int] = {}
+    for i in range(len(chars) - 1):
+        g = chars[i] + chars[i + 1]
+        if any(ch in STOPWORDS for ch in g):
+            continue
+        grams[g] = grams.get(g, 0) + 1
+    out: list[dict] = []
+    for g, n in sorted(grams.items(), key=lambda kv: -kv[1]):
+        if n >= CONTENT_TOP_MIN and n / total >= CONTENT_TOP_RATIO:
+            out.append({"rule": "R-A3-6", "severity": "violation",
+                        "detail": "实词「%s」出现 %d 次（占正文 %.0f%%，阈值 %d 次 / %.0f%%）→ 复读"
+                                  % (g, n, 100 * n / total, CONTENT_TOP_MIN, 100 * CONTENT_TOP_RATIO),
+                        "evidence": g})
+        if len(out) >= 3:
+            break
+    return out
+
+
+def ai_tone_report(text: str) -> dict:
+    """A3 反 AI 味报告：既有信号（R-A3-1 套话 / R-A3-2 标点 / R-A3-3 填充词）
+    + 新增 R-A3-4 段末拔高 / R-A3-5 同构排比 / R-A3-6 高频实词，统一带 rule/severity/evidence。
+
+    与 ai_tone_scan（S2 先验用）**并存不回改**：scan 给"信号"，report 给"可拦截的规则清单"。
+    """
+    tone = ai_tone_scan(text)
+    rules: list[dict] = []
+    for f in tone.get("flags") or []:
+        kind = f.get("kind")
+        rid = {"cliche": "R-A3-1", "dash": "R-A3-2", "ellipsis": "R-A3-2"}.get(kind)
+        if rid:
+            rules.append({"rule": rid, "severity": "warning",
+                          "detail": str(f.get("detail") or ""), "evidence": ""})
+    # R-A3-3 填充词密度：ai_tone_scan 只把它当"指标"返回（未进 flags），
+    # 这里按同一阈值升级成规则 —— 否则规则表里有一条永远不可能命中（实测踩过）。
+    filler = float(tone.get("filler_per_100") or 0)
+    if filler > FILLER_PER_100:
+        rules.append({"rule": "R-A3-3", "severity": "warning",
+                      "detail": "填充词（了/是/的/就/都…）密度 %.1f/百字（阈值 %.1f）→ 语感拖沓"
+                                % (filler, FILLER_PER_100),
+                      "evidence": ""})
+    rules += elevation_endings(text) + homogeneous_runs(text) + top_content_words(text)
+    by_rule: dict[str, int] = {}
+    for r in rules:
+        by_rule[r["rule"]] = by_rule.get(r["rule"], 0) + 1
+    return {
+        "rules": rules,
+        "counts": {"total": len(rules),
+                   "violation": len([r for r in rules if r["severity"] == "violation"]),
+                   "by_rule": by_rule},
+        "cliches": tone.get("cliches") or [],
+        "metrics": {"dash": tone.get("dash"), "ellipsis": tone.get("ellipsis"),
+                    "filler_per_100": tone.get("filler_per_100"), "chars": len(text or "")},
+        "clean": not rules,
+    }
 
 
 def voice_prior(text: str, characters: list[dict] | None = None) -> dict:
