@@ -32,7 +32,7 @@ class _FakeRepo:
 
     async def get_scene(self, scene_id: str) -> dict:
         return {
-            "id": scene_id, "title": "雨夜书房", "goal": "确认残页真伪",
+            "id": scene_id, "chapter_id": "chapter-1", "title": "雨夜书房", "goal": "确认残页真伪",
             "stage_desc": "书房·夜·雨", "content_desc": "陈默与李文对峙",
             "final_prose": "第一段文字。\n\n第二段文字，με 他低声道。",
         }
@@ -54,6 +54,34 @@ class _FakeRepo:
 
     async def list_annotations_all(self, scene_id: str) -> list[dict]:
         return []
+
+    async def get_book(self, book_id: str) -> dict:
+        return {
+            "id": book_id, "title": "雨夜书房",
+            "worldview_json": '{"premise": "民国末年，一座藏书楼里的秘密"}',
+            "world_rules_json": '[{"concept": "无超自然", "constraint": "禁止出现超自然力量", "keywords": ["法术"]}]',
+        }
+
+    async def list_memories(self, book_id: str) -> list[dict]:
+        return [
+            {"topic": "direction", "content": "陈默要查出残页真相"},
+            {"topic": "constraint", "content": "不用第一人称"},
+            {"topic": "preference", "content": "对话简短"},
+        ]
+
+    async def get_chapter(self, chapter_id: str) -> dict:
+        return {"id": chapter_id, "book_id": "book-1"}
+
+    async def get_book_tree(self, book_id: str) -> dict:
+        return {
+            "id": book_id, "title": "雨夜书房", "genre": "悬疑",
+            "chapters": [
+                {"title": "第 1 章", "tone": "action", "scenes": [
+                    {"id": "scene-1", "final_prose": "正文一"},
+                    {"id": "scene-2", "final_prose": ""},
+                ]},
+            ],
+        }
 
 
 class _FakeService:
@@ -96,7 +124,7 @@ async def test_perceive_scene_is_structured_and_traceable():
     repo = _FakeRepo()
     packet = await editor_mod.perceive_scene(repo, "scene-1")
     kinds = [b["kind"] for b in packet["blocks"]]
-    assert kinds == ["scene", "characters", "annotations", "draft", "recent_notes"]
+    assert kinds == ["scene", "constraints", "characters", "annotations", "draft", "recent_notes"]
     assert packet["scope"] == "scene" and packet["who"]["id"] == "editor"
     # 结构化：可直接断言"看到了什么"
     anns = next(b for b in packet["blocks"] if b["kind"] == "annotations")
@@ -259,6 +287,100 @@ async def test_annotation_crud_persists():
 
 
 pytestmark = pytest.mark.asyncio
+
+
+# ---------------------------------------------------------------- B 批：约束表 + 统一感知
+
+
+async def test_constraints_table_is_derived_and_shared():
+    """书级约束表：0-token 派生、主笔维护、**全员读**（同一份文本给所有 agent）。"""
+    from app.services.agents import constraints as C
+
+    repo = _FakeRepo()
+    table = await C.build_constraints(repo, "book-1")
+    assert table["source"] == "derived"            # 不新建表
+    assert table["direction"].startswith("陈默")
+    assert table["worldview"]["premise"].startswith("民国")
+    assert table["hard_rules"][0]["constraint"] == "禁止出现超自然力量"
+    assert table["constraints"] == ["不用第一人称"]
+    assert table["counts"]["constraints"] == 1 and table["dropped"] == []
+
+    # 缺失时留痕（不静默）
+    class _Empty(_FakeRepo):
+        async def get_book(self, book_id: str) -> dict:
+            return {"id": book_id}
+
+        async def list_memories(self, book_id: str) -> list[dict]:
+            return []
+
+    empty = await C.build_constraints(_Empty(), "book-1")
+    reasons = {d["src"] for d in empty["dropped"]}
+    assert {"direction", "worldview", "world_rules", "constraint"} <= reasons
+
+    blk = C.as_block(table)
+    assert blk["kind"] == "constraints" and blk["visibility"] == "book"
+    assert "禁止出现超自然力量" in C.render(table)
+
+
+async def test_unified_perceive_scopes_and_dropped_trace():
+    from app.services.agents.perceive import perceive
+
+    repo = _FakeRepo()
+    scene = await perceive(repo, "scene", scene_id="scene-1")
+    assert scene["scope"] == "scene" and scene["book_id"] == "book-1"
+    assert any(b["kind"] == "constraints" for b in scene["blocks"])
+    assert scene["dropped"] == [] or all("reason" in d for d in scene["dropped"])
+
+    book = await perceive(repo, "book", book_id="book-1")
+    assert book["scope"] == "book"
+    kinds = [b["kind"] for b in book["blocks"]]
+    assert "constraints" in kinds and "outline" in kinds and "writing_signals" in kinds
+    sig = next(b for b in book["blocks"] if b["kind"] == "writing_signals")["items"][0]
+    assert sig["scenes_total"] == 2 and sig["scenes_written"] == 1
+
+    # 未知 scope 必须报错，不静默返回空包
+    with pytest.raises(ValueError):
+        await perceive(repo, "nope")
+
+
+async def test_one_packet_two_personas_render():
+    """同一份 PerceptPacket → 两种 prompt（B 批的验收口径 ①）。"""
+    from app.services.agents.context import render
+    from app.services.agents.perceive import perceive
+
+    repo = _FakeRepo()
+    packet = await perceive(repo, "scene", scene_id="scene-1")
+    editor_prompt = render(packet, "editor")
+    chief_prompt = render(packet, "chief")
+
+    assert "责编" in editor_prompt and "主笔（总编）" in chief_prompt
+    assert editor_prompt != chief_prompt
+    # 两者都读到同一份书级约束（"主笔掌管一切"的落地形态）
+    for p in (editor_prompt, chief_prompt):
+        assert "书级约束" in p and "禁止出现超自然力量" in p
+    with pytest.raises(ValueError):
+        render(packet, "nobody")
+
+
+async def test_scene_packet_dropped_reasons_are_explicit():
+    """裁剪留痕：没有角色、没有方向时必须写明原因（对应"静默降级必须反馈"纪律）。"""
+    from app.services.agents.perceive import perceive
+
+    class _Bare(_FakeRepo):
+        async def list_characters_by_scene(self, scene_id: str) -> list[dict]:
+            return []
+
+        async def list_memories(self, book_id: str) -> list[dict]:
+            return []
+
+        async def get_book(self, book_id: str) -> dict:
+            return {"id": book_id}
+
+    packet = await perceive(_Bare(), "scene", scene_id="scene-1")
+    srcs = {d["src"] for d in packet["dropped"]}
+    assert "characters" in srcs
+    assert any(s.startswith("constraints:") for s in srcs)
+    assert all(d.get("reason") for d in packet["dropped"])
 
 # ---------------------------------------------------------------- 任务总线（A+）
 

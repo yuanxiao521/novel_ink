@@ -5,8 +5,8 @@ import { ContextBar } from '../components/common/ContextBar';
 import { EmptyState } from '../components/common/EmptyState';
 import { Tabs } from '../components/common/Tabs';
 import { useDialog } from '../components/common/Dialog';
-import { createMemory, deleteMemory, fetchHealth, listMemories, updateMemory } from '../api/novel';
-import type { BookMemoryMeta, MemoryTopic } from '../api/novel';
+import { createMemory, deleteMemory, fetchConstraints, fetchHealth, listMemories, updateMemory } from '../api/novel';
+import type { BookMemoryMeta, ConstraintTable, MemoryTopic } from '../api/novel';
 import { useWorkspace } from '../context/WorkspaceContext';
 
 /* ==========================================================================
@@ -58,6 +58,7 @@ export function SettingsPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [health, setHealth] = useState<{ status: string; degraded?: { active?: boolean; count?: number } } | null>(null);
+  const [table, setTable] = useState<ConstraintTable | null>(null);
 
   const load = useCallback(() => {
     if (!ws.bookId) {
@@ -71,6 +72,12 @@ export function SettingsPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // B 批：书级约束表（全员读的单一来源；0-token 派生）
+  useEffect(() => {
+    if (!ws.bookId) { setTable(null); return; }
+    fetchConstraints(ws.bookId).then(setTable).catch(() => setTable(null));
+  }, [ws.bookId, ws.tree]);
 
   useEffect(() => {
     fetchHealth()
@@ -244,6 +251,36 @@ export function SettingsPage() {
 
             {tab === 'worldview' && (
               <>
+                <div className="settings-card" style={{ borderLeftColor: 'var(--accent-cyan)' }}>
+                  <div className="settings-card-title">书级约束表 · 全员读（0-token 派生，不新建表）</div>
+                  {table ? (
+                    <>
+                      <div className="settings-row">
+                        <span className="settings-row-main">
+                          方向 {table.counts.direction ?? 0} · 硬规则 {table.counts.hard_rules ?? 0} · 约束 {table.counts.constraints ?? 0} · 偏好 {table.counts.preferences ?? 0} · 设定 {table.counts.settings ?? 0}
+                        </span>
+                        <span className="settings-row-tag">主笔维护</span>
+                        <span className="settings-row-tag">全员读</span>
+                      </div>
+                      <div className="settings-mono">
+                        {(table.hard_rules ?? []).map((r) => `硬规则：${r.constraint}`).join('\n') || '硬规则：（无）'}
+                        {'\n'}
+                        {(table.constraints ?? []).map((c) => `约束：${c}`).join('\n') || '约束：（无）'}
+                      </div>
+                      {table.dropped.length > 0 && (
+                        <div className="settings-note" style={{ color: 'var(--accent-gold)' }}>
+                          <b>裁剪留痕（{table.dropped.length}）</b>：
+                          {table.dropped.map((d) => `${d.src} → ${d.reason}`).join('；')}
+                        </div>
+                      )}
+                      <div className="settings-note">
+                        这份表由「方向 / 世界观 / 硬规则 / 约束 / 偏好 / 记忆」派生而来 —— 主笔与作者维护，**写手、责编、场记、角色都读同一份**（这就是"主笔掌管一切"的落地形态）。
+                      </div>
+                    </>
+                  ) : (
+                    <div className="settings-note">还没有约束（先把「方向」和世界观补上）。</div>
+                  )}
+                </div>
                 <div className="settings-card">
                   <div className="settings-card-title">世界观前提</div>
                   {ws.tree?.worldview_json ? (

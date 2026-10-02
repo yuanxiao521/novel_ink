@@ -10,7 +10,10 @@ from __future__ import annotations
 import json
 import re
 
+from app.services.agents.context import render
 from app.services.agents.executor import ToolDenied, call_tool
+from app.services.agents.perceive import draft_text, perceive
+from app.services.agents.perceive import packet_summary as perceive_summary
 from app.services.agents.registry import TOOLS
 from app.services.agents.spec import EDITOR
 from app.services.engine.schema_retry import validate_and_retry
@@ -85,118 +88,37 @@ def para_index_of(text: str, quote: str) -> int:
 
 
 async def perceive_scene(repo, scene_id: str) -> dict:
-    """PerceptPacket（scope=scene）——结构化感知包，**裁剪留痕**（dropped 带原因）。
-
-    与角色视角隔离同理：这块是"责编到底看到了什么"的唯一出口，可断言、可存档、可复现。
-    """
-    scene = await repo.get_scene(scene_id) or {}
-    annotations = await repo.list_annotations(scene_id, status="open")
-    notes = await repo.list_prose_notes(scene_id, limit=30)
-    characters = await repo.list_characters_by_scene(scene_id)
-    prose = scene.get("final_prose") or ""
-
-    dropped: list[dict] = []
-    if not scene:
-        dropped.append({"src": "scene", "reason": "场景不存在或读取失败"})
-
-    char_items = []
-    for c in characters[:8]:
-        spec = c.get("spec") or {}
-        char_items.append({
-            "name": c.get("name", ""),
-            "summary": spec.get("summary", ""),
-            "voice": spec.get("voice", ""),
-        })
-
-    return {
-        "who": {"id": EDITOR.id, "name": EDITOR.name},
-        "scope": "scene",
-        "scene_id": scene_id,
-        "sources": ["scene", "characters", "annotations", "prose_notes"],
-        "budget": {"max_tokens": 1200, "used": None},
-        "blocks": [
-            {
-                "kind": "scene", "visibility": "own",
-                "items": [{
-                    "title": scene.get("title", ""),
-                    "goal": scene.get("goal", ""),
-                    "stage_desc": scene.get("stage_desc", ""),
-                    "content_desc": scene.get("content_desc", ""),
-                    "prose_chars": len(prose),
-                }],
-            },
-            {"kind": "characters", "visibility": "book", "items": char_items},
-            {
-                "kind": "annotations", "visibility": "own",
-                "items": [
-                    {"id": a["id"], "para_index": a.get("para_index"), "quote": a.get("quote", ""), "note": a.get("note", "")}
-                    for a in annotations[:12]
-                ],
-            },
-            {
-                "kind": "draft", "visibility": "own",
-                "items": [{"chars": len(prose), "text": prose[:4000]}],
-            },
-            {
-                "kind": "recent_notes", "window": "last12",
-                "items": [
-                    {"kind": n.get("kind"), "status": n.get("status"), "suggestion": (n.get("suggestion") or "")[:120]}
-                    for n in notes[:12]
-                ],
-            },
-        ],
-        "dropped": dropped,
-    }
+    """责编的感知包（B 批）：统一走 perceive(scope="scene")；行为等价，多带**书级约束块**。"""
+    return await perceive(repo, "scene", scene_id=scene_id)
 
 
 def packet_draft(packet: dict) -> str:
-    """从感知包里取"当前正文"（供工具参数回填，避免模型重复传长文本）。"""
-    for b in packet.get("blocks", []):
-        if b.get("kind") == "draft":
-            items = b.get("items") or [{}]
-            return str(items[0].get("text") or "")
-    return ""
+    """当前正文（供工具参数回填，避免模型重复传长文本）。"""
+    return draft_text(packet)
 
 
 def packet_summary(packet: dict) -> dict:
-    counts = {b["kind"]: len(b.get("items") or []) for b in packet.get("blocks", [])}
-    return {
-        "who": packet["who"], "scope": packet["scope"], "scene_id": packet.get("scene_id", ""),
-        "sources": packet["sources"], "counts": counts, "dropped": packet.get("dropped", []),
-    }
+    return perceive_summary(packet)
 
 
 def render_editor_prompt(packet: dict, message: str, text: str) -> str:
-    """感知包 → prompt（保留现有四层顺序：作者要求 → 设定 → 感知现场 → 任务）。"""
+    """感知包 → prompt（B 批：统一上下文装配器 persona=editor；工具清单与输出契约仍归责编）。"""
     tool_lines = [
         f"- {t.name}（{t.side_effect}{'·需确认' if t.needs_confirm else ''}）：{t.desc}"
         for t in TOOLS.values()
     ]
-    blocks = {b["kind"]: b for b in packet.get("blocks", [])}
-    scene = (blocks.get("scene", {}).get("items") or [{}])[0]
-    chars = blocks.get("characters", {}).get("items") or []
-    anns = blocks.get("annotations", {}).get("items") or []
-    notes = blocks.get("recent_notes", {}).get("items") or []
-
-    parts = [
-        "你是这本书的**责编**，只负责**这一场的文字**：正文、口吻、事实一致、伏笔落地。"
-        "你不改章节骨架与世界观约束（那是主笔的活）。",
-        "【本场】" + json.dumps(scene, ensure_ascii=False),
-        "【上场角色】" + ("；".join(f"{c['name']}（{c['voice'] or c['summary']}）" for c in chars) or "未配置"),
-        "【待处理批注】" + (json.dumps(anns, ensure_ascii=False) if anns else "无"),
-        "【最近审计】" + ("；".join(f"{n['kind']}/{n['status']}: {n['suggestion']}" for n in notes) or "无"),
+    body = render(packet, "editor")
+    tail = [
         "【当前正文】" + (text if text.strip() else "（空）"),
         "【作者要求】" + (message.strip() or "（无，按你的判断）"),
-        "【可用工具】\n" + "\n".join(tool_lines),
-        "【输出】只输出 JSON：{\"reply\": \"给作者的中文说明\", \"actions\": [{\"tool\": \"工具名\", \"args\": {...}, \"why\": \"为什么\"}]}。"
-        "规则：① 不擅长/无必要时 actions 留空，只解释；② 破坏性工具（保存/改批注状态）**不要**直接调，"
-        "④ **不要预述工具的执行结果**（结果由界面另行展示，你只说打算做什么）；"
-        "③ 一次最多 4 个动作；④ 不要编造工具名。"
-        "在 reply 里请作者在界面确认；③ 一次最多 4 个动作；④ 不要编造工具名。",
+        "【可用工具】" + chr(10) + chr(10).join(tool_lines),
+        "【输出】只输出 JSON：{\"reply\": \"给作者的中文说明\", \"actions\": [{\"tool\": \"工具名\", \"args\": {}, \"why\": \"为什么\"}]}。"
+        "规则：① 不擅长/无必要时 actions 留空，只解释；② 破坏性工具（保存/改批注状态）不要直接调，"
+        "在 reply 里请作者在界面确认；③ 一次最多 4 个动作；④ 不要编造工具名；"
+        "⑤ 不要预述工具的执行结果（结果由界面另行展示，你只说明打算做什么）。",
     ]
-    return "\n\n".join(parts)
-
-
+    sep = chr(10) + chr(10)
+    return body + sep + sep.join(tail)
 async def editor_chat(service, scene_id: str, message: str, text: str = "", who: str = "author") -> dict:
     """责编对话：感知 → 计划 → 执行（同一工具链）→ 汇报。"""
     packet = await perceive_scene(service.repo, scene_id)

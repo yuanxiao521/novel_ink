@@ -67,6 +67,14 @@ async def agent_chat(scene_id: str, body: EditorChatIn, svc: SimulationService =
     return await editor_chat(svc, scene_id, body.message, body.text, body.who or "author")
 
 
+@router.get("/books/{book_id}/constraints")
+async def book_constraints(book_id: str, svc: SimulationService = Depends(get_service)):
+    """书级约束表（B 批）：主笔维护、**全员读**。0-token 派生（不新建表），缺失项走 dropped 留痕。"""
+    from app.services.agents.constraints import build_constraints
+
+    return await build_constraints(svc.repo, book_id)
+
+
 @router.get("/agent/specs")
 async def agent_specs():
     """能力声明 + 写权限矩阵（**草案**，尚未强制）：让"谁能读/写什么"从口头约定变成可见数据。"""

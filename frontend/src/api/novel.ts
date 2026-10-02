@@ -1079,6 +1079,24 @@ export async function taskMessages(taskId: string): Promise<Array<{ id: string; 
   return getJson(`${API_BASE}/api/v1/agent/tasks/${taskId}/messages`);
 }
 
+export interface ConstraintTable {
+  book_id: string;
+  source: string;
+  direction: string;
+  worldview: { premise?: string; rules_text?: string; background?: string };
+  hard_rules: Array<{ concept: string; constraint: string; keywords: string[] }>;
+  constraints: string[];
+  preferences: string[];
+  settings: string[];
+  counts: Record<string, number>;
+  dropped: Array<{ src: string; reason: string }>;
+}
+
+/** 书级约束表（B 批）：全员读单一来源，0-token 派生。 */
+export async function fetchConstraints(bookId: string): Promise<ConstraintTable> {
+  return getJson<ConstraintTable>(`${API_BASE}/api/v1/books/${bookId}/constraints`);
+}
+
 export async function listAgentSpecs(): Promise<{ specs: AgentSpecInfo[]; write_matrix: Array<{ target: string; owner: string; note: string; enforced: boolean }> }> {
   return getJson(`${API_BASE}/api/v1/agent/specs`);
 }
