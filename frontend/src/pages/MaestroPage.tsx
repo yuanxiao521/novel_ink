@@ -1,12 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Sidebar } from '../components/backoffice/Sidebar';
 import { ContextBar } from '../components/common/ContextBar';
+import { EmptyState } from '../components/common/EmptyState';
+import { Tabs } from '../components/common/Tabs';
+import { TensionPanel } from '../components/dashboard/TensionPanel';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { useDialog } from '../components/common/Dialog';
 import { API_BASE } from '../types/types';
 import {
   fetchBookTree,
+  fetchSceneDetail,
   listInspirations,
   createBook,
   createInspiration,
@@ -27,7 +31,7 @@ import {
   updateMemory,
   deleteMemory,
 } from '../api/novel';
-import type { BookTree, BookMemoryMeta, InspirationCard, MemoryTopic, SceneMeta, ScenePatchItem } from '../api/novel';
+import type { BookTree, BookMemoryMeta, InspirationCard, MemoryTopic, SceneDetail, ScenePatchItem } from '../api/novel';
 
 /* ---------- 类型 ---------- */
 
@@ -76,8 +80,6 @@ const MEMORY_TOPIC_OPTIONS: Array<[string, string]> = [
 
 /* ---------- 常量 ---------- */
 
-const TENSION = { chapters: ['开篇', '上升', '转折', '高潮', '回落', '结局'], tension: [12, 28, 55, 92, 48, 20] };
-
 const zoneCls = (badge?: string) => {
   if (!badge) return 'action';
   const b = badge.toLowerCase();
@@ -91,7 +93,7 @@ const zoneCls = (badge?: string) => {
 export function MaestroPage() {
   const { showPrompt, showConfirm } = useDialog();
   const nav = useNavigate();
-  const { bookId, book: ctxBook, setBook, refreshBooks } = useWorkspace();
+  const { bookId, book: ctxBook, setBook, refreshBooks, globalView } = useWorkspace();
   const [tree, setTree] = useState<BookTree | null>(null);
 
   // —— 结构编辑（原规划页功能并入：选节点 → 编辑/增删）——
@@ -101,12 +103,9 @@ export function MaestroPage() {
   const [draft, setDraft] = useState<Record<string, string | number> | null>(null);
   const [flash, setFlash] = useState('');
 
-  const [direction, setDirection] = useState('废材少年因血脉被夺，发誓重返宗门讨回公道');
-  const [directionOpen, setDirectionOpen] = useState(false);
   const [inspirations, setInspirations] = useState<InspirationCard[]>([]);
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [chatInput, setChatInput] = useState('');
-  const [showSkeleton, setShowSkeleton] = useState(true);
   const [agentState, setAgentState] = useState<'idle' | 'thinking' | 'tool'>('idle');
   const [ideating, setIdeating] = useState(false);
 
@@ -118,7 +117,6 @@ export function MaestroPage() {
   const [committing, setCommitting] = useState(false);
 
   const [drawerOpen, setDrawerOpen] = useState(true);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
 
   // 灵感卡编辑（内联表单）
   const [cardEditing, setCardEditing] = useState<string | null>(null);
@@ -126,11 +124,81 @@ export function MaestroPage() {
 
   // 书级记忆（主笔 · 记忆域）：列表 + 添加/编辑表单
   const [memories, setMemories] = useState<BookMemoryMeta[]>([]);
-  const [memoryOpen, setMemoryOpen] = useState(false);
   const [memoryFormOpen, setMemoryFormOpen] = useState(false);
   const [memoryEditingId, setMemoryEditingId] = useState<string | null>(null);
   const [memoryDraftTopic, setMemoryDraftTopic] = useState<MemoryTopic>('constraint');
   const [memoryDraftContent, setMemoryDraftContent] = useState('');
+
+  /* ---------- P1：方向 / 面板折叠 / 节点详情抽屉 ---------- */
+  // 方向 = 书级资产（建书时填 / 设定页「方向」tab 改），不再是页内输入框
+  const direction = useMemo(() => memories.find((m) => m.topic === 'direction')?.content ?? '', [memories]);
+
+  // 三块面板都可折叠、**默认全展开**，折叠状态记忆
+  const [collapsed, setCollapsed] = useState<{ left: boolean; outline: boolean; chat: boolean }>(() => {
+    try {
+      const raw = localStorage.getItem('mk.maestro.collapsed');
+      return { left: false, outline: false, chat: false, ...(raw ? JSON.parse(raw) : {}) };
+    } catch {
+      return { left: false, outline: false, chat: false };
+    }
+  });
+  const toggleCollapse = (k: 'left' | 'outline' | 'chat') =>
+    setCollapsed((prev) => {
+      const next = { ...prev, [k]: !prev[k] };
+      try { localStorage.setItem('mk.maestro.collapsed', JSON.stringify(next)); } catch { /* 忽略 */ }
+      return next;
+    });
+
+  const [panelTab, setPanelTab] = useState<'chat' | 'memory'>('chat');
+  const [sceneDetail, setSceneDetail] = useState<SceneDetail | null>(null);
+  useEffect(() => {
+    if (selKind !== 'scene' || !selId) {
+      setSceneDetail(null);
+      return;
+    }
+    let cancel = false;
+    fetchSceneDetail(selId)
+      .then((d) => { if (!cancel) setSceneDetail(d); })
+      .catch(() => { if (!cancel) setSceneDetail(null); });
+    return () => { cancel = true; };
+  }, [selKind, selId]);
+
+  // 章级进度（真实 global-view）：几场 / 已推演几回合
+  const chapterStat = (chapterId: string) => {
+    const c = globalView?.curve.find((x) => x.chapter_id === chapterId);
+    return { turns: c?.turns ?? 0, tension: c?.tension_avg ?? null };
+  };
+
+  // 骨架生成前确保有方向（没有则现场补一条书级记忆）
+  const ensureDirection = async (): Promise<string> => {
+    if (direction) return direction;
+    const text = await showPrompt('这本书的一句话方向（骨架生成要用）', '');
+    if (!text || !text.trim()) {
+      briefFlash('没有方向也能手动加章；或去「设定 → 方向」补一句');
+      return '';
+    }
+    try {
+      if (bookId) await createMemory(bookId, { topic: 'direction' as MemoryTopic, content: text.trim() });
+      await loadMemories();
+      return text.trim();
+    } catch (e) {
+      briefFlash(`方向保存失败：${String(e)}`);
+      return text.trim();
+    }
+  };
+
+  // 指定章内新增场景（骨架树行内「＋ 添加场景」用，避免依赖选中态）
+  const onAddSceneTo = async (chapterId: string) => {
+    const title = await showPrompt('场景名', '新场景');
+    if (!title) return;
+    try {
+      await createScene(chapterId, { title, scenario_def: 'betrayal_night', cursor_pos: 0, stage_desc: '' });
+      await reload();
+      briefFlash('已建场景');
+    } catch (e) {
+      briefFlash(`建场景失败：${String(e)}`);
+    }
+  };
 
   // 章节场景编辑器（主笔升级 · 场景级部分修改）：整章场景列表内联编辑 → 批量保存
   const [sceneEditorOpen, setSceneEditorOpen] = useState(false);
@@ -182,97 +250,6 @@ export function MaestroPage() {
     })();
   }, [bookId]);
 
-  /* ---------- 张力曲线 ---------- */
-  // 从 CSS 变量读主题色，保证纸/墨模式下曲线都协调
-  const cssVar = useCallback((name: string, fallback: string) => {
-    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-    return v || fallback;
-  }, []);
-
-  const drawTension = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    if (rect.width === 0 || rect.height === 0) return;
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = rect.width * dpr;
-    canvas.height = rect.height * dpr;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    ctx.scale(dpr, dpr);
-
-    const w = rect.width;
-    const h = rect.height;
-    const pad = { top: 18, bottom: 28, left: 24, right: 24 };
-    const { chapters, tension } = TENSION;
-
-    const cGrid = cssVar('--maestro-canvas-grid', 'rgba(212, 168, 83, 0.08)');
-    const cRed = cssVar('--maestro-red', '#c96b6b');
-    const cGold = cssVar('--maestro-gold', '#d4a853');
-    const cText2 = cssVar('--maestro-text-2', '#b8b2a6');
-    const cDotStroke = cssVar('--maestro-canvas-dot-stroke', 'rgba(13, 17, 23, 0.9)');
-
-    ctx.clearRect(0, 0, w, h);
-
-    // 网格
-    ctx.strokeStyle = cGrid;
-    ctx.lineWidth = 1;
-    for (let i = 0; i <= 4; i++) {
-      const y = pad.top + ((h - pad.top - pad.bottom) * i) / 4;
-      ctx.beginPath();
-      ctx.moveTo(pad.left, y);
-      ctx.lineTo(w - pad.right, y);
-      ctx.stroke();
-    }
-
-    const points = chapters.map((_, i) => ({
-      x: pad.left + ((w - pad.left - pad.right) * i) / (chapters.length - 1),
-      y: pad.top + (h - pad.top - pad.bottom) * (1 - tension[i] / 100),
-    }));
-
-    // 曲线
-    ctx.beginPath();
-    ctx.moveTo(points[0].x, points[0].y);
-    for (let i = 0; i < points.length - 1; i++) {
-      const cp1 = { x: (points[i].x + points[i + 1].x) / 2, y: points[i].y };
-      const cp2 = { x: (points[i].x + points[i + 1].x) / 2, y: points[i + 1].y };
-      ctx.bezierCurveTo(cp1.x, cp1.y, cp2.x, cp2.y, points[i + 1].x, points[i + 1].y);
-    }
-    ctx.strokeStyle = cRed;
-    ctx.lineWidth = 2.5;
-    ctx.stroke();
-
-    points.forEach((p, i) => {
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
-      ctx.fillStyle = i === 3 ? cGold : cRed;
-      ctx.fill();
-      ctx.strokeStyle = cDotStroke;
-      ctx.lineWidth = 2;
-      ctx.stroke();
-
-      ctx.fillStyle = cText2;
-      ctx.font = '11px "Noto Sans SC", sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText(chapters[i], p.x, h - 10);
-    });
-  }, [cssVar]);
-
-  useEffect(() => {
-    drawTension();
-  }, [drawTension, drawerOpen]);
-
-  // 主题切换（data-theme 变化）时重绘张力曲线
-  useEffect(() => {
-    const observer = new MutationObserver(() => drawTension());
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
-    return () => observer.disconnect();
-  }, [drawTension]);
-
-  useEffect(() => {
-    window.addEventListener('resize', drawTension);
-    return () => window.removeEventListener('resize', drawTension);
-  }, [drawTension]);
 
   /* ---------- 交互 ---------- */
   const toggleAdopt = async (card: InspirationCard) => {
@@ -361,6 +338,9 @@ export function MaestroPage() {
   // 让主笔构思：生成灵感卡 + 骨架预览（真实 API，失败降级）
   const runIdeation = async () => {
     if (ideating) return;
+    // 方向是骨架生成的输入（POST /plan 的 direction），没有就现场补
+    const dir = await ensureDirection();
+    if (!dir) return;
     setIdeating(true);
     setAgentState('thinking');
     setPlanPreview(null);
@@ -368,7 +348,7 @@ export function MaestroPage() {
     // 1) 生成灵感卡（后端 generate 接口，LLM/模板均可）
     if (bookId) {
       try {
-        const { cards } = await generateInspirations(bookId, direction);
+        const { cards } = await generateInspirations(bookId, dir);
         if (cards.length > 0) setInspirations((prev) => [...cards, ...prev]);
       } catch {
         /* 忽略：继续骨架 */
@@ -383,7 +363,7 @@ export function MaestroPage() {
         const res = await fetch(`${API_BASE}/api/v1/books/${bookId}/plan`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ direction, inspiration_ids: adoptedIds }),
+          body: JSON.stringify({ direction: dir, inspiration_ids: adoptedIds }),
         });
         if (res.ok) {
           const data = (await res.json()) as { plan: PlanPreview };
@@ -619,9 +599,6 @@ export function MaestroPage() {
       await reload(); briefFlash('已删除');
     } catch (e) { briefFlash(`删除失败：${String(e)}`); }
   };
-  const enterDirector = (s: SceneMeta) => {
-    nav(`/director/${s.id}`, { state: { book_id: tree?.id, chapter_id: s.chapter_id } });
-  };
 
   const adoptable = inspirations.filter((c) => !c.adopted);
   const adopted = inspirations.filter((c) => c.adopted);
@@ -633,65 +610,31 @@ export function MaestroPage() {
         <ContextBar step="maestro" />
         <div className="maestro-workbench">
           {flash && <div className="maestro-feedback">{flash}</div>}
-          {/* 顶栏 */}
-          <header className="maestro-topbar">
+          {/* 页头：书名 + 方向 + 主笔状态（书 / 章 / 场景已由 ContextBar 统一管理） */}
+          <header className="maestro-topbar slim">
             <div className="topbar-left">
               <span className="brand-seal">墨</span>
               <div className="book-meta">
                 <div className="book-title">{tree ? tree.title : ctxBook?.title ?? '本书骨架'}</div>
+                <div className="book-sub">{direction ? direction : '还没定方向 · 去「设定 → 方向」写一句'}</div>
               </div>
               <button className="btn-icon" title="新建书" onClick={() => void onAddBook()}>＋</button>
             </div>
-
-            <div className="topbar-center">
-              <div className="direction-input-group">
-                <input
-                  type="text"
-                  className="direction-input"
-                  value={direction}
-                  placeholder="一句话方向：废材少年因血脉被夺，发誓重返宗门讨回公道……"
-                  onChange={(e) => setDirection(e.target.value)}
-                />
-                <button className="direction-expand" title="展开完整方向" onClick={() => setDirectionOpen(!directionOpen)}>
-                  {directionOpen ? '▴' : '▾'}
-                </button>
-              </div>
-              <button className="btn-ideate" onClick={() => void runIdeation()} disabled={ideating}>
-                <span className="btn-ico">✦</span>
-                <span>{ideating ? '主笔构思中…' : '让主笔构思'}</span>
-              </button>
-            </div>
-
             <div className="topbar-right">
-              <div className="agent-status" data-state={agentState}>
+              <button className="btn-text" onClick={() => nav('/settings')} title="方向 / 世界观 / 约束 / 记忆">
+                设定
+              </button>
+              <span className="agent-status" data-state={agentState}>
                 <span className="status-dot"></span>
                 <span className="status-text">{statusText}</span>
-              </div>
+              </span>
             </div>
           </header>
-
-          {/* 方向展开面板 */}
-          <div className={`direction-panel ${directionOpen ? 'open' : ''}`}>
-            <div className="direction-fields">
-              <label className="field-row">
-                <span className="field-label">世界观基调</span>
-                <input type="text" value="东方玄幻，强者为尊，血脉决定修行上限" readOnly />
-              </label>
-              <label className="field-row">
-                <span className="field-label">核心冲突</span>
-                <input type="text" value="主角被至亲背叛夺走血脉，必须在三年内夺回复仇" readOnly />
-              </label>
-              <label className="field-row">
-                <span className="field-label">主角目标</span>
-                <input type="text" value="重回宗门，击败圣子，找回失踪的妹妹" readOnly />
-              </label>
-            </div>
-          </div>
 
           {/* 三栏主体 */}
           <main className="maestro-body">
             {/* 左栏：灵感池 */}
-            <aside className="panel inspiration-panel">
+            <aside className={`panel inspiration-panel ${collapsed.left ? 'collapsed' : ''}`}>
               <div className="panel-header">
                 <h2 className="panel-title">
                   <span className="title-ico">◈</span>
@@ -699,11 +642,14 @@ export function MaestroPage() {
                   <span className="panel-count">{adoptable.length}</span>
                 </h2>
                 <button className="btn-icon" title="自建灵感卡" onClick={addCard}>+</button>
+                <button className="btn-icon-sm" title={collapsed.left ? '展开灵感池' : '折叠灵感池'} onClick={() => toggleCollapse('left')}>
+                  {collapsed.left ? '»' : '«'}
+                </button>
               </div>
               <div className="inspiration-list">
                 {adoptable.length === 0 && (
                   <div style={{ color: 'var(--maestro-text-3)', fontSize: 12, padding: '8px 0' }}>
-                    暂无灵感卡。点「+」自建，或在上方输入方向后点「让主笔构思」。
+                    暂无灵感卡。点「+」自建，或在「主笔共创」里让主笔补设定 —— 方向在「设定 → 方向」里维护。
                   </div>
                 )}
                 {adoptable.map((card) => (
@@ -780,410 +726,442 @@ export function MaestroPage() {
             </aside>
 
             {/* 中栏：书籍骨架树 */}
-            <section className="panel outline-panel">
+            <section className={`panel outline-panel ${collapsed.outline ? 'collapsed' : ''}`}>
               <div className="panel-header">
                 <h2 className="panel-title">
                   <span className="title-ico">▣</span>
                   书籍骨架
+                  {(tree?.chapters ?? []).length > 0 && <span className="panel-count">{(tree?.chapters ?? []).length}</span>}
                 </h2>
                 <div className="outline-actions">
+                  <button className="btn-text" onClick={() => void runIdeation()} disabled={ideating}>
+                    {ideating ? '主笔构思中…' : '✦ 让主笔排骨架'}
+                  </button>
                   <button
                     className="btn-text"
-                    onClick={() =>
-                      setOutlineExpanded(Object.fromEntries((tree?.chapters ?? []).map((c) => [c.id, true])))
-                    }
+                    onClick={() => setOutlineExpanded(Object.fromEntries((tree?.chapters ?? []).map((c) => [c.id, true])))}
                   >
                     全部展开
                   </button>
                   <button className="btn-text" onClick={() => setOutlineExpanded({})}>全部折叠</button>
-                  <button className="btn-text" onClick={() => void onAddChapter()} disabled={!tree} title={tree ? '新增章节' : '先选一本书'}>＋ 加章</button>
+                  <button className="btn-text" onClick={() => void onAddChapter()} disabled={!tree} title={tree ? '新增章节' : '先选一本书'}>
+                    ＋ 加章
+                  </button>
+                  <button className="btn-icon-sm" title={collapsed.outline ? '展开骨架' : '折叠骨架'} onClick={() => toggleCollapse('outline')}>
+                    {collapsed.outline ? '»' : '«'}
+                  </button>
                 </div>
               </div>
 
-              {/* 主笔骨架预览（plan API 结果） */}
-              {planPreview && (
-                <div className="inspiration-card" style={{ margin: '12px 16px 0' }}>
-                  <div className="card-header">
-                    <div className="card-icon world">📋</div>
-                    <div className="card-title-wrap">
-                      <h4 className="card-title">主笔骨架预览</h4>
-                      <p className="card-desc">
-                        {planPreview.worldview?.premise || '世界观待确认'} · {planPreview.chapters?.length ?? 0} 章 · {planPreview.foreshadow_plan?.length ?? 0} 伏笔
-                      </p>
-                    </div>
-                  </div>
-                  <div className="card-footer">
-                    <span className="type-tag">待落库</span>
-                    <div style={{ display: 'flex', gap: 8 }}>
-                      <button className="btn-adopt" onClick={() => setPlanPreview(null)}>✗ 重排</button>
-                      <button className="btn-adopt" onClick={() => void commitPlan()} disabled={committing}>
-                        {committing ? '落库中…' : '✓ 确认落库'}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* 结构编辑：选中章/场景的上下文操作条 + 内联编辑器 */}
-              {selKind && !draft && (
-                <div className="inspiration-card" style={{ margin: '12px 16px 0' }}>
-                  <div className="card-header">
-                    <div className="card-title-wrap">
-                      <h4 className="card-title">
-                        {selKind === 'chapter' || selKind === 'scene'
-                          ? (selKind === 'chapter'
-                              ? tree?.chapters.find((c) => c.id === selId)?.title
-                              : tree?.chapters.flatMap((c) => c.scenes).find((s) => s.id === selId)?.title)
-                          : tree?.title}
-                      </h4>
-                    </div>
-                  </div>
-                  <div className="card-footer">
-                    <span className="type-tag">{selKind === 'chapter' ? '章节' : selKind === 'scene' ? '场景' : '书'}</span>
-                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                      {selKind === 'chapter' && (
-                        <>
-                          <button className="btn-adopt" onClick={() => void onAddScene()}>＋ 加场景</button>
-                          <button className="btn-adopt" onClick={openSceneEditor}>✎ 编辑场景列表</button>
-                        </>
-                      )}
-                      {selKind !== 'book' && (
-                        <>
-                          <button className="btn-adopt" onClick={() => letDraft(selKind as 'chapter' | 'scene', selId)}>✎ 编辑</button>
-                          <button className="btn-adopt" onClick={() => void onDeleteSel()}>删除</button>
-                        </>
-                      )}
-                      {selKind === 'scene' && (
-                        <>
-                          <button
-                            className="btn-adopt"
-                            onClick={() => {
-                              const s = tree?.chapters.flatMap((c) => c.scenes).find((x) => x.id === selId);
-                              if (s) enterDirector(s);
-                            }}
-                          >
-                            ▶ 进入导演台
+              {!collapsed.outline && (
+                <>
+                  {/* 主笔骨架预览（plan API 结果）：确认后落库 */}
+                  {planPreview && (
+                    <div className="inspiration-card" style={{ margin: '12px 16px 0' }}>
+                      <div className="card-header">
+                        <div className="card-icon world">📋</div>
+                        <div className="card-title-wrap">
+                          <h4 className="card-title">主笔骨架预览</h4>
+                          <p className="card-desc">
+                            {planPreview.worldview?.premise || '世界观待确认'} · {planPreview.chapters?.length ?? 0} 章 · {planPreview.foreshadow_plan?.length ?? 0} 伏笔
+                          </p>
+                        </div>
+                      </div>
+                      <div className="card-footer">
+                        <span className="type-tag">待落库</span>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <button className="btn-adopt" onClick={() => setPlanPreview(null)}>✗ 重排</button>
+                          <button className="btn-adopt" onClick={() => void commitPlan()} disabled={committing}>
+                            {committing ? '落库中…' : '✓ 确认落库'}
                           </button>
-                          <button className="btn-adopt" onClick={() => nav(`/studio/${selId}`)}>✎ 正文协作</button>
-                        </>
-                      )}
-                      <button className="btn-adopt" onClick={() => { setSelKind(null); setSelId(''); }}>取消</button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* 章节场景编辑器（场景级部分修改 · 整体保存） */}
-              {sceneEditorOpen && (
-                <div className="card-edit-form scene-editor" style={{ margin: '12px 16px 0', padding: 12 }}>
-                  <div className="scene-editor-title">
-                    章节场景列表 —— 编辑后整体保存（缺省的列表项将被删除）
-                  </div>
-                  {sceneEdits.map((s, i) => (
-                    <div className="scene-edit-row" key={i}>
-                      <div className="scene-edit-fields">
-                        <input
-                          className="char-edit-input"
-                          placeholder="场景标题"
-                          value={s.title}
-                          onChange={(e) => setSceneEditField(i, 'title', e.target.value)}
-                        />
-                        <input
-                          className="char-edit-input"
-                          placeholder="舞台布置 stage_desc"
-                          value={s.stage_desc ?? ''}
-                          onChange={(e) => setSceneEditField(i, 'stage_desc', e.target.value)}
-                        />
-                        <input
-                          className="char-edit-input"
-                          placeholder="本场目标 goal"
-                          value={s.goal ?? ''}
-                          onChange={(e) => setSceneEditField(i, 'goal', e.target.value)}
-                        />
-                        <textarea
-                          className="char-edit-input"
-                          rows={2}
-                          placeholder="场景内容描述（事件梗概/冲突点/环境细节）"
-                          value={s.content_desc ?? ''}
-                          onChange={(e) => setSceneEditField(i, 'content_desc', e.target.value)}
-                        />
+                        </div>
                       </div>
-                      <button className="btn-adopt" title="删除该场景" onClick={() => removeSceneRow(i)}>✕</button>
                     </div>
-                  ))}
-                  <div className="card-footer">
-                    <button className="btn-adopt" onClick={addSceneRow}>＋ 添加场景</button>
-                    <div style={{ display: 'flex', gap: 8 }}>
-                      <button className="btn-adopt" onClick={() => setSceneEditorOpen(false)}>取消</button>
-                      <button className="btn-adopt" onClick={() => void saveSceneEdits()} disabled={sceneSaving}>
-                        {sceneSaving ? '保存中…' : '✓ 保存全部场景'}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* 章/场景编辑草稿表单 */}
-              {draft && (
-                <div className="card-edit-form" style={{ margin: '12px 16px 0', padding: 12 }}>
-                  <input
-                    className="char-edit-input"
-                    placeholder="标题"
-                    value={String(draft.title ?? '')}
-                    onChange={(e) => setDraftField('title', e.target.value)}
-                  />
-                  {selKind === 'chapter' ? (
-                    <>
-                      <select
-                        className="char-scope-select"
-                        value={String(draft.tone ?? 'action')}
-                        onChange={(e) => setDraftField('tone', e.target.value)}
-                      >
-                        <option value="action">动作</option>
-                        <option value="tension">张力</option>
-                        <option value="reveal">揭秘</option>
-                        <option value="setup">铺垫</option>
-                      </select>
-                      <input
-                        className="char-edit-input"
-                        type="number"
-                        placeholder="目标字数"
-                        value={String(draft.word_target ?? 0)}
-                        onChange={(e) => setDraftField('word_target', e.target.value)}
-                      />
-                      <textarea
-                        className="char-edit-input"
-                        rows={2}
-                        placeholder="章末小结"
-                        value={String(draft.summary ?? '')}
-                        onChange={(e) => setDraftField('summary', e.target.value)}
-                      />
-                    </>
-                  ) : (
-                    <>
-                      <input
-                        className="char-edit-input"
-                        placeholder="场景方案（betrayal_night 等）"
-                        value={String(draft.scenario_def ?? '')}
-                        onChange={(e) => setDraftField('scenario_def', e.target.value)}
-                      />
-                      <textarea
-                        className="char-edit-input"
-                        rows={2}
-                        placeholder="舞台布置"
-                        value={String(draft.stage_desc ?? '')}
-                        onChange={(e) => setDraftField('stage_desc', e.target.value)}
-                      />
-                      <input
-                        className="char-edit-input"
-                        placeholder="本场目标 goal"
-                        value={String(draft.goal ?? '')}
-                        onChange={(e) => setDraftField('goal', e.target.value)}
-                      />
-                      <textarea
-                        className="char-edit-input"
-                        rows={2}
-                        placeholder="场景内容描述（事件梗概/冲突点/环境细节）"
-                        value={String(draft.content_desc ?? '')}
-                        onChange={(e) => setDraftField('content_desc', e.target.value)}
-                      />
-                    </>
                   )}
-                  <div className="card-footer">
-                    <button className="btn-adopt" onClick={() => void saveDraft()}>保存</button>
-                    <button className="btn-adopt" onClick={() => setDraft(null)}>取消</button>
-                  </div>
-                </div>
-              )}
 
-              <div className="outline-tree">
-                {!tree && (
-                  <div style={{ color: 'var(--maestro-text-3)', fontSize: 13, padding: '16px 4px' }}>
-                    暂无书籍骨架。先选一本书，或在上方输入方向后点「让主笔构思」。
-                  </div>
-                )}
-                {(tree?.chapters ?? []).map((ch) => {
-                  const expanded = outlineExpanded[ch.id] ?? true;
-                  return (
-                    <div className="outline-chapter" key={ch.id}>
-                      <div
-                        className={`outline-row chapter ${activeChapter === ch.id ? 'active' : ''} ${selKind === 'chapter' && selId === ch.id ? 'selected' : ''}`}
-                        onClick={() => { setActiveChapter(ch.id); setSelKind('chapter'); setSelId(ch.id); setDraft(null); }}
-                      >
-                        <span className="row-toggle" onClick={(e) => { e.stopPropagation(); toggleChapter(ch.id); }}>
-                          {expanded ? '▾' : '▸'}
-                        </span>
-                        <span className="row-number">{ch.order_no}</span>
-                        <span className="row-title">{ch.title}</span>
-                        <span className={`row-badge ${zoneCls(ch.tone)}`}>{ch.tone || '动作'}</span>
-                        <span className="row-wordcount">{ch.word_target || 0}字</span>
-                      </div>
-                      <div className={`outline-children ${expanded ? '' : 'collapsed'}`}>
-                        {(ch.scenes ?? []).map((s) => (
-                          <div
-                            className={`outline-row scene ${selKind === 'scene' && selId === s.id ? 'selected' : ''}`}
-                            key={s.id}
-                            onClick={() => { setSelKind('scene'); setSelId(s.id); setDraft(null); }}
-                          >
-                            <span className="row-title">{s.title}</span>
-                            <div className="scene-meta">
-                              <span className="scene-stage">舞台 {s.stage_desc || '未布置'}</span>
-                              <div className="scene-avatars">
-                                {(s.characters ?? []).slice(0, 3).map((c, i) => (
-                                  <span className="avatar-dot" key={i}>{c.name?.[0] ?? '?'}</span>
-                                ))}
-                              </div>
-                              <span className="scene-goal">{s.scene_summary || s.title}</span>
+                  {!tree || (tree.chapters ?? []).length === 0 ? (
+                    <div style={{ padding: 16 }}>
+                      <EmptyState
+                        icon="▣"
+                        title="还没有书籍骨架"
+                        desc="让主笔按方向排一版章节与场景；也可以先手动加章。方向在「设定 → 方向」里改。"
+                        primary={{ label: '✦ 让主笔排骨架', onClick: () => void runIdeation() }}
+                        secondary={{ label: '＋ 加章', onClick: () => void onAddChapter() }}
+                      />
+                    </div>
+                  ) : (
+                    <div className="outline-tree">
+                      {(tree?.chapters ?? []).map((ch, idx) => {
+                        const expanded = outlineExpanded[ch.id] ?? true;
+                        const stat = chapterStat(ch.id);
+                        return (
+                          <div className="outline-chapter" key={ch.id}>
+                            <div
+                              className={`outline-row chapter ${activeChapter === ch.id ? 'active' : ''} ${selKind === 'chapter' && selId === ch.id ? 'selected' : ''}`}
+                              onClick={() => { setActiveChapter(ch.id); setSelKind('chapter'); setSelId(ch.id); setDraft(null); }}
+                            >
+                              <span className="row-toggle" onClick={(e) => { e.stopPropagation(); toggleChapter(ch.id); }}>
+                                {expanded ? '▾' : '▸'}
+                              </span>
+                              <span className="row-number">{idx + 1}</span>
+                              <span className="row-title">{ch.title}</span>
+                              <span className={`row-badge ${zoneCls(ch.tone)}`}>{ch.tone || '动作'}</span>
+                              <span className="row-stat">
+                                {(ch.scenes ?? []).length} 场{stat.turns > 0 ? ` · 已推演 ${stat.turns} 回合` : ' · 未推演'}
+                              </span>
+                              <span className="row-wordcount">{ch.word_target || 0} 字</span>
+                            </div>
+                            <div className={`outline-children ${expanded ? '' : 'collapsed'}`}>
+                              {(ch.scenes ?? []).map((s) => (
+                                <div
+                                  className={`outline-row scene ${selKind === 'scene' && selId === s.id ? 'selected' : ''}`}
+                                  key={s.id}
+                                  onClick={() => { setSelKind('scene'); setSelId(s.id); setDraft(null); }}
+                                >
+                                  <span className="row-title">{s.title}</span>
+                                  <span className="scene-stage">{s.stage_desc ? `舞台 · ${s.stage_desc}` : '舞台 · 未布置'}</span>
+                                  <span className="scene-goal">{s.goal || s.scene_summary || '未定目标'}</span>
+                                  <span className="row-act">
+                                    <button title="进入导演台" onClick={(e) => { e.stopPropagation(); nav(`/director/${s.id}`); }}>▶</button>
+                                    <button title="正文协作" onClick={(e) => { e.stopPropagation(); nav(`/studio/${s.id}`); }}>✎</button>
+                                  </span>
+                                </div>
+                              ))}
+                              {(ch.scenes ?? []).length === 0 && (
+                                <div className="scene-empty">
+                                  <span>本章还没有场景</span>
+                                  <button className="btn-adopt" onClick={() => void onAddSceneTo(ch.id)}>＋ 添加场景</button>
+                                </div>
+                              )}
                             </div>
                           </div>
-                        ))}
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* 选中节点：详情 + 操作（取代原来的浮动卡片） */}
+                  {(selKind === 'chapter' || selKind === 'scene') && (() => {
+                    const selChapter = selKind === 'chapter' ? tree?.chapters.find((c) => c.id === selId) : undefined;
+                    const selScene = selKind === 'scene' ? tree?.chapters.flatMap((c) => c.scenes).find((s) => s.id === selId) : undefined;
+                    const stat = chapterStat(selChapter?.id ?? selScene?.chapter_id ?? '');
+                    return (
+                      <div className="node-drawer">
+                        <div className="node-drawer-head">
+                          <span className="node-kind">{selKind === 'chapter' ? '章节' : '场景'}</span>
+                          <span className="node-title">{selChapter?.title ?? selScene?.title ?? ''}</span>
+                          <button className="btn-icon-sm" title="关闭" onClick={() => { setSelKind(null); setSelId(''); }}>✕</button>
+                        </div>
+                        <div className="node-drawer-body">
+                          {selKind === 'chapter' ? (
+                            <>
+                              <div className="node-kv"><span>场次</span><b>{(selChapter?.scenes ?? []).length} 场 · 已推演 {stat.turns} 回合</b></div>
+                              <div className="node-kv"><span>目标字数</span><b>{selChapter?.word_target || 0} 字</b></div>
+                              {selChapter?.summary ? <div className="node-kv"><span>章末小结</span><b>{selChapter.summary}</b></div> : null}
+                            </>
+                          ) : (
+                            <>
+                              <div className="node-kv"><span>舞台</span><b>{selScene?.stage_desc || '未布置'}</b></div>
+                              <div className="node-kv"><span>本场目标</span><b>{selScene?.goal || '未定'}</b></div>
+                              {selScene?.content_desc ? <div className="node-kv"><span>内容描述</span><b>{selScene.content_desc}</b></div> : null}
+                              <div className="node-kv">
+                                <span>上场角色</span>
+                                <b>{sceneDetail ? ((sceneDetail.characters ?? []).map((c) => c.name).join('、') || '未配置') : '读取中…'}</b>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                        <div className="node-drawer-actions">
+                          {selKind === 'chapter' ? (
+                            <>
+                              <button className="btn-adopt" onClick={() => void onAddScene()}>＋ 加场景</button>
+                              <button className="btn-adopt" onClick={openSceneEditor}>✎ 编辑场景列表</button>
+                              <button className="btn-adopt" onClick={() => letDraft('chapter', selId)}>✎ 编辑章节</button>
+                            </>
+                          ) : (
+                            <>
+                              <button className="btn-adopt primary" onClick={() => selScene && nav(`/director/${selScene.id}`)}>▶ 进入导演台</button>
+                              <button className="btn-adopt primary" onClick={() => selScene && nav(`/studio/${selScene.id}`)}>✎ 正文协作</button>
+                              <button className="btn-adopt" onClick={() => letDraft('scene', selId)}>✎ 编辑</button>
+                              <button className="btn-adopt" onClick={() => nav(bookId ? `/characters?book=${bookId}` : '/characters')}>配角色</button>
+                            </>
+                          )}
+                          <button className="btn-adopt danger" onClick={() => void onDeleteSel()}>删除</button>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* 章节场景编辑器（场景级部分修改 · 整体保存） */}
+                  {sceneEditorOpen && (
+                    <div className="card-edit-form scene-editor" style={{ margin: 16, padding: 12 }}>
+                      <div className="scene-editor-title">章节场景列表 —— 编辑后整体保存（缺省的列表项将被删除）</div>
+                      {sceneEdits.map((s, i) => (
+                        <div className="scene-edit-row" key={i}>
+                          <div className="scene-edit-fields">
+                            <input
+                              className="char-edit-input"
+                              placeholder="场景标题"
+                              value={s.title}
+                              onChange={(e) => setSceneEditField(i, 'title', e.target.value)}
+                            />
+                            <input
+                              className="char-edit-input"
+                              placeholder="舞台布置 stage_desc"
+                              value={s.stage_desc ?? ''}
+                              onChange={(e) => setSceneEditField(i, 'stage_desc', e.target.value)}
+                            />
+                            <input
+                              className="char-edit-input"
+                              placeholder="本场目标 goal"
+                              value={s.goal ?? ''}
+                              onChange={(e) => setSceneEditField(i, 'goal', e.target.value)}
+                            />
+                            <textarea
+                              className="char-edit-input"
+                              rows={2}
+                              placeholder="场景内容描述（事件梗概 / 冲突点 / 环境细节）"
+                              value={s.content_desc ?? ''}
+                              onChange={(e) => setSceneEditField(i, 'content_desc', e.target.value)}
+                            />
+                          </div>
+                          <button className="btn-adopt" title="删除该场景" onClick={() => removeSceneRow(i)}>✕</button>
+                        </div>
+                      ))}
+                      <div className="card-footer">
+                        <button className="btn-adopt" onClick={addSceneRow}>＋ 添加场景</button>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <button className="btn-adopt" onClick={() => setSceneEditorOpen(false)}>取消</button>
+                          <button className="btn-adopt" onClick={() => void saveSceneEdits()} disabled={sceneSaving}>
+                            {sceneSaving ? '保存中…' : '✓ 保存全部场景'}
+                          </button>
+                        </div>
                       </div>
                     </div>
-                  );
-                })}
-              </div>
+                  )}
+
+                  {/* 章 / 场景编辑草稿表单 */}
+                  {draft && (
+                    <div className="card-edit-form" style={{ margin: 16, padding: 12 }}>
+                      <input
+                        className="char-edit-input"
+                        placeholder="标题"
+                        value={String(draft.title ?? '')}
+                        onChange={(e) => setDraftField('title', e.target.value)}
+                      />
+                      {selKind === 'chapter' ? (
+                        <>
+                          <select className="char-scope-select" value={String(draft.tone ?? 'action')} onChange={(e) => setDraftField('tone', e.target.value)}>
+                            <option value="action">动作</option>
+                            <option value="tension">张力</option>
+                            <option value="reveal">揭秘</option>
+                            <option value="setup">铺垫</option>
+                          </select>
+                          <input
+                            className="char-edit-input"
+                            type="number"
+                            placeholder="目标字数"
+                            value={String(draft.word_target ?? 0)}
+                            onChange={(e) => setDraftField('word_target', e.target.value)}
+                          />
+                          <textarea
+                            className="char-edit-input"
+                            rows={2}
+                            placeholder="章末小结"
+                            value={String(draft.summary ?? '')}
+                            onChange={(e) => setDraftField('summary', e.target.value)}
+                          />
+                        </>
+                      ) : (
+                        <>
+                          <input
+                            className="char-edit-input"
+                            placeholder="场景方案（betrayal_night 等）"
+                            value={String(draft.scenario_def ?? '')}
+                            onChange={(e) => setDraftField('scenario_def', e.target.value)}
+                          />
+                          <textarea
+                            className="char-edit-input"
+                            rows={2}
+                            placeholder="舞台布置"
+                            value={String(draft.stage_desc ?? '')}
+                            onChange={(e) => setDraftField('stage_desc', e.target.value)}
+                          />
+                          <input
+                            className="char-edit-input"
+                            placeholder="本场目标 goal"
+                            value={String(draft.goal ?? '')}
+                            onChange={(e) => setDraftField('goal', e.target.value)}
+                          />
+                          <textarea
+                            className="char-edit-input"
+                            rows={2}
+                            placeholder="场景内容描述"
+                            value={String(draft.content_desc ?? '')}
+                            onChange={(e) => setDraftField('content_desc', e.target.value)}
+                          />
+                        </>
+                      )}
+                      <div className="card-footer">
+                        <button className="btn-adopt" onClick={() => void saveDraft()}>保存</button>
+                        <button className="btn-adopt" onClick={() => setDraft(null)}>取消</button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
             </section>
 
             {/* 右栏：主笔共创对话 */}
-            <aside className="panel chat-panel">
+            <aside className={`panel chat-panel ${collapsed.chat ? 'collapsed' : ''}`}>
               <div className="panel-header">
                 <h2 className="panel-title">
                   <span className="title-ico">✦</span>
                   主笔共创
                 </h2>
-                <label className="toggle-skeleton">
-                  <input type="checkbox" checked={showSkeleton} onChange={(e) => setShowSkeleton(e.target.checked)} />
-                  <span>查看骨架预览</span>
-                </label>
-              </div>
-              <div className="chat-messages">
-                {messages.map((msg, i) => {
-                  const isLast = i === messages.length - 1;
-                  return (
-                    <div className={`chat-bubble ${msg.sender}`} key={i}>
-                      <div className="bubble-sender">{msg.sender === 'user' ? '你' : '主笔 Agent'}</div>
-                      <p className="bubble-text">
-                        {msg.text}
-                        {isLast && msg.sender === 'agent' && <span className="cursor"></span>}
-                      </p>
-                      {msg.toolCall && <div className="tool-call">{msg.toolCall}</div>}
-                      {showSkeleton && msg.miniOutline && (
-                        <div className="mini-outline">
-                          <div className="mini-outline-title">骨架预览</div>
-                          {msg.miniOutline.map((c, j) => (
-                            <div className="mini-chapter" key={j}>
-                              <span className="num">{c.num}</span>
-                              <span>{c.title}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-              <div className="chat-input-area">
-                <div className="chat-input-wrap">
-                  <input
-                    type="text"
-                    className="chat-input"
-                    placeholder="补充方向或让主笔调整……"
-                    value={chatInput}
-                    onChange={(e) => setChatInput(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') sendMessage(); }}
+                <div className="chat-tabs">
+                  <Tabs
+                    items={[
+                      { key: 'chat', label: '对话' },
+                      { key: 'memory', label: '记忆', badge: memories.length },
+                    ]}
+                    value={panelTab}
+                    onChange={setPanelTab}
                   />
-                  <button className="btn-send" onClick={sendMessage}>发送</button>
                 </div>
+                <button className="btn-icon-sm" title={collapsed.chat ? '展开共创' : '折叠共创'} onClick={() => toggleCollapse('chat')}>
+                  {collapsed.chat ? '»' : '«'}
+                </button>
               </div>
 
-              {/* 书级记忆（主笔 · 记忆域） */}
-              <div className="memory-section">
-                <div className="memory-header" onClick={() => setMemoryOpen(!memoryOpen)}>
-                  <span className="title-ico">◈</span>
-                  <span>书级记忆</span>
-                  <span className="panel-count">{memories.length}</span>
-                  <span className="memory-toggle">{memoryOpen ? '▾' : '▴'}</span>
-                </div>
-                {memoryOpen && (
-                  <div className="memory-body">
-                    {memories.length === 0 && (
-                      <div className="memory-empty">
-                        暂无记忆。写下方向/设定/约束，主笔每次对话与规划都会感知到。
-                      </div>
-                    )}
-                    <div className="memory-list">
-                      {memories.map((m) => (
-                        <div className="inspiration-card memory-card" key={m.id}>
-                          <div className="card-header">
-                            <div className="card-title-wrap">
-                              <p className="memory-content">{m.content}</p>
+              {!collapsed.chat && panelTab === 'chat' && (
+                <>
+                  <div className="chat-messages">
+                    {messages.map((msg, i) => {
+                      const isLast = i === messages.length - 1;
+                      return (
+                        <div className={`chat-bubble ${msg.sender}`} key={i}>
+                          <div className="bubble-sender">{msg.sender === 'user' ? '你' : '主笔 Agent'}</div>
+                          <p className="bubble-text">
+                            {msg.text}
+                            {isLast && msg.sender === 'agent' && <span className="cursor"></span>}
+                          </p>
+                          {msg.toolCall && <div className="tool-call">{msg.toolCall}</div>}
+                          {msg.miniOutline && (
+                            <div className="mini-outline">
+                              <div className="mini-outline-title">骨架预览</div>
+                              {msg.miniOutline.map((c, j) => (
+                                <div className="mini-chapter" key={j}>
+                                  <span className="num">{c.num}</span>
+                                  <span>{c.title}</span>
+                                </div>
+                              ))}
                             </div>
-                          </div>
-                          <div className="card-footer">
-                            <span className="type-tag">{MEMORY_TOPIC_LABEL[m.topic] ?? m.topic}</span>
-                            <span className="memory-source">
-                              {m.source === 'author' ? '作者' : m.source === 'chief' ? '主笔' : '记账'}
-                            </span>
-                            <button className="btn-adopt" onClick={() => startEditMemory(m)}>编辑</button>
-                            <button className="btn-adopt" onClick={() => void removeMemory(m.id)}>删除</button>
-                          </div>
+                          )}
                         </div>
-                      ))}
-                    </div>
-                    {memoryFormOpen ? (
-                      <div className="card-edit-form memory-form">
-                        <select
-                          className="char-scope-select"
-                          value={memoryDraftTopic}
-                          onChange={(e) => setMemoryDraftTopic(e.target.value as MemoryTopic)}
-                        >
-                          {MEMORY_TOPIC_OPTIONS.map(([v, l]) => (
-                            <option key={v} value={v}>{l}</option>
-                          ))}
-                        </select>
-                        <textarea
-                          className="char-edit-input"
-                          rows={2}
-                          placeholder="写一条记忆：方向 / 设定 / 写作约束……"
-                          value={memoryDraftContent}
-                          onChange={(e) => setMemoryDraftContent(e.target.value)}
-                        />
-                        <div className="card-footer">
-                          <button className="btn-adopt" onClick={() => void saveMemory()}>
-                            {memoryEditingId ? '保存修改' : '添加记忆'}
-                          </button>
-                          <button className="btn-adopt" onClick={() => setMemoryFormOpen(false)}>取消</button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="memory-add">
-                        <button className="btn-adopt" onClick={startAddMemory}>＋ 写一条记忆</button>
-                      </div>
-                    )}
+                      );
+                    })}
                   </div>
-                )}
-              </div>
+                  <div className="chat-input-area">
+                    <div className="chat-input-wrap">
+                      <input
+                        type="text"
+                        className="chat-input"
+                        placeholder="让主笔调整方向、补设定、排骨架……"
+                        value={chatInput}
+                        onChange={(e) => setChatInput(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') sendMessage(); }}
+                      />
+                      <button className="btn-send" onClick={sendMessage}>发送</button>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {!collapsed.chat && panelTab === 'memory' && (
+                <div className="memory-body chat-memory">
+                  {memories.length === 0 && (
+                    <div className="memory-empty">暂无记忆。写下方向 / 设定 / 约束，主笔每次对话与规划都会感知到。</div>
+                  )}
+                  <div className="memory-list">
+                    {memories.map((m) => (
+                      <div className="inspiration-card memory-card" key={m.id}>
+                        <div className="card-header">
+                          <div className="card-title-wrap">
+                            <p className="memory-content">{m.content}</p>
+                          </div>
+                        </div>
+                        <div className="card-footer">
+                          <span className="type-tag">{MEMORY_TOPIC_LABEL[m.topic] ?? m.topic}</span>
+                          <span className="memory-source">
+                            {m.source === 'author' ? '作者' : m.source === 'chief' ? '主笔' : '记账'}
+                          </span>
+                          <button className="btn-adopt" onClick={() => startEditMemory(m)}>编辑</button>
+                          <button className="btn-adopt" onClick={() => void removeMemory(m.id)}>删除</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  {memoryFormOpen ? (
+                    <div className="card-edit-form memory-form">
+                      <select
+                        className="char-scope-select"
+                        value={memoryDraftTopic}
+                        onChange={(e) => setMemoryDraftTopic(e.target.value as MemoryTopic)}
+                      >
+                        {MEMORY_TOPIC_OPTIONS.map(([v, l]) => (
+                          <option key={v} value={v}>{l}</option>
+                        ))}
+                      </select>
+                      <textarea
+                        className="char-edit-input"
+                        rows={2}
+                        placeholder="写一条记忆：方向 / 设定 / 写作约束……"
+                        value={memoryDraftContent}
+                        onChange={(e) => setMemoryDraftContent(e.target.value)}
+                      />
+                      <div className="card-footer">
+                        <button className="btn-adopt" onClick={() => void saveMemory()}>
+                          {memoryEditingId ? '保存修改' : '添加记忆'}
+                        </button>
+                        <button className="btn-adopt" onClick={() => setMemoryFormOpen(false)}>取消</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="memory-add">
+                      <button className="btn-adopt" onClick={startAddMemory}>＋ 写一条记忆</button>
+                    </div>
+                  )}
+                </div>
+              )}
             </aside>
           </main>
 
-          {/* 底部张力曲线 */}
+          {/* 底部：结构曲线（真实 global-view；无数据走空态，不再用假曲线） */}
           <div className={`tension-drawer ${drawerOpen ? '' : 'collapsed'}`}>
             <div className="drawer-handle" onClick={() => setDrawerOpen(!drawerOpen)}>
               <span className="handle-title">
                 <span className="title-ico">〰</span>
-                全书张力曲线
+                结构曲线 · 全书张力
               </span>
+              <span className="drawer-src">GET /books/&#123;id&#125;/global-view</span>
               <button className="btn-icon-sm" title="折叠/展开">{drawerOpen ? '▾' : '▴'}</button>
             </div>
             <div className="drawer-body">
-              <div className="tension-canvas-wrap">
-                <canvas ref={canvasRef} width="1200" height="90"></canvas>
-              </div>
-              <div className="tension-legend">
-                <span className="legend-item"><i className="dot planted"></i> 伏笔埋设</span>
-                <span className="legend-item"><i className="dot resolved"></i> 伏笔回收</span>
-                <span className="legend-item"><i className="line"></i> 情绪张力</span>
-              </div>
+              {(globalView?.curve ?? []).some((c) => c.tension_avg != null) ? (
+                <TensionPanel view={globalView} />
+              ) : (
+                <EmptyState
+                  compact
+                  icon="〰"
+                  title="尚无推演数据"
+                  desc="去导演台推演 3 回合后，这里会显示真实的章节张力曲线与结构诊断（S3）。"
+                  primary={{
+                    label: '去导演台推演',
+                    onClick: () => nav('/director'),
+                  }}
+                />
+              )}
             </div>
           </div>
         </div>

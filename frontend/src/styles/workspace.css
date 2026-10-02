@@ -146,6 +146,128 @@
   background: var(--bg-surface); color: var(--text-secondary);
 }
 
+
+/* ==========================================================================
+   P1 · 主笔创作页（页头瘦身 / 骨架行 / 详情抽屉 / 面板折叠 / 真实结构曲线）
+   ========================================================================== */
+
+/* 页头：书名 + 方向 + 主笔状态（书/章/场景交给 ContextBar） */
+.maestro-workbench .maestro-topbar.slim {
+  align-items: center;
+  gap: 12px;
+}
+.maestro-workbench .maestro-topbar.slim .book-sub {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  max-width: 620px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 2px;
+}
+.maestro-workbench .maestro-topbar.slim .topbar-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* 骨架行：章级进度 + 场景行 hover 操作 */
+.outline-row .row-stat {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.outline-row.scene .row-act {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity .16s;
+}
+.outline-row.scene:hover .row-act,
+.outline-row.scene.selected .row-act { opacity: 1; }
+.outline-row.scene .row-act button {
+  font-family: inherit;
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-light);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.outline-row.scene .row-act button:hover { color: var(--accent-primary); border-color: var(--accent-primary); }
+.scene-empty {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px 6px 26px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* 节点详情抽屉（取代原来的浮动卡片） */
+.node-drawer {
+  margin: 12px 16px 0;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent-primary);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-sm);
+  padding: 10px 12px;
+}
+.node-drawer-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.node-kind {
+  font-size: 11px;
+  color: var(--accent-primary);
+  border: 1px solid var(--border-light);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.node-title { flex: 1; font-size: 13px; font-weight: 600; color: var(--text-highlight); }
+.node-kv { display: flex; gap: 10px; font-size: 12px; padding: 3px 0; }
+.node-kv span { flex: 0 0 62px; color: var(--text-muted); }
+.node-kv b { color: var(--text-primary); font-weight: 500; }
+.node-drawer-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+.btn-adopt.primary { background: var(--accent-primary); border-color: var(--accent-primary); color: var(--on-accent); }
+.btn-adopt.danger { color: var(--accent-red); border-color: var(--accent-red); }
+
+/* 面板折叠：默认全展开，折叠后仅留 44px 竖条 */
+.maestro-workbench .panel.collapsed { flex: 0 0 44px; min-width: 44px; overflow: hidden; }
+.maestro-workbench .panel.collapsed .panel-title { display: none; }
+.maestro-workbench .panel.collapsed .chat-tabs { display: none; }
+.maestro-workbench .panel.collapsed .outline-actions > .btn-text { display: none; }
+.maestro-workbench .panel.collapsed .outline-actions { margin-left: 0; }
+.maestro-workbench .inspiration-panel.collapsed .inspiration-list,
+.maestro-workbench .inspiration-panel.collapsed .adopted-header,
+.maestro-workbench .inspiration-panel.collapsed .adopted-list { display: none; }
+
+/* 共创面板：对话 / 记忆 tab */
+.chat-tabs { margin-left: auto; }
+.chat-memory { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 16px; }
+
+/* 结构曲线：来源标注 + 空态 */
+.tension-drawer .drawer-src {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+.tension-drawer .drawer-body { display: flex; flex-direction: column; }
+/* 曲线抽屉：放真实结构曲线（TensionPanel 紧凑版）。
+   诊断清单与伏笔网络留在「概览复盘」，这里只做一屏速览。 */
+.maestro-workbench .drawer-body {
+  height: 212px;
+  padding: 10px 20px 0;
+  align-items: stretch;
+  flex-direction: column;
+}
+.maestro-workbench .tension-drawer .tension-svg { height: 128px; }
+.maestro-workbench .tension-drawer .diag-list,
+.maestro-workbench .tension-drawer .fs-net { display: none; }
+.maestro-workbench .tension-drawer .drawer-src { margin-left: auto; }
+
 /* ---------- 侧栏徽标 / 兜底入口 ---------- */
 .sidebar .book-item, .sidebar .nav-item { text-decoration: none; }
 .nav-badge {
