@@ -1,0 +1,158 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+:root{--bg:#0D0F14;--panel:#151922;--elev:#1C2130;--line:#232836;--line2:#2D3446;
+--t1:#C9CDD6;--t2:#7A8194;--t3:#4A5166;--hi:#EDEFF2;--gold:#E8B860;--red:#D96A6A;--cyan:#6AB5C9;--green:#7CB87C;--blue:#7C9CD4;
+--ui:"Noto Sans SC","Microsoft YaHei",system-ui,sans-serif;--rd:"Noto Serif SC",Georgia,serif;--mono:"JetBrains Mono",Consolas,monospace}
+*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(ellipse at 50% -10%, rgba(74,91,138,.35) 0%, rgba(13,15,20,0) 55%),var(--bg);color:var(--t1);font-family:var(--ui);font-size:13px;line-height:1.55;padding:22px 26px}
+h1{font-size:17px;color:var(--hi);margin:0 0 4px}
+.sub{color:var(--t2);font-size:12px;margin-bottom:16px}
+.cols{display:flex;gap:20px;align-items:flex-start}
+.main{flex:1;min-width:0}
+.side{flex:0 0 430px;display:flex;flex-direction:column;gap:12px}
+.card{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--blue);border-radius:8px;padding:11px 14px;box-shadow:0 2px 8px rgba(0,0,0,.3)}
+.card.entry{border-left-color:var(--t3);opacity:.92}
+.card.s1{border-left-color:var(--gold)}
+.card.s2{border-left-color:var(--cyan);border-style:dashed}
+.card.s3{border-left-color:var(--red)}
+.card.s4{border-left-color:var(--green)}
+.card.out{border-left-color:var(--hi)}
+.chead{display:flex;align-items:center;gap:9px;margin-bottom:6px}
+.no{width:20px;height:20px;flex:0 0 20px;border-radius:5px;background:var(--elev);border:1px solid var(--line2);display:grid;place-items:center;font-size:11px;color:var(--t2)}
+.card.s1 .no{background:rgba(232,184,96,.14);color:var(--gold);border-color:var(--gold)}
+.card.s2 .no{background:rgba(106,181,201,.14);color:var(--cyan);border-color:var(--cyan)}
+.card.s3 .no{background:rgba(217,106,106,.14);color:var(--red);border-color:var(--red)}
+.card.s4 .no{background:rgba(124,184,124,.14);color:var(--green);border-color:var(--green)}
+.name{font-size:14px;font-weight:600;color:var(--hi)}
+.route{font-family:var(--mono);font-size:11px;color:var(--t2)}
+.badge{margin-left:auto;font-size:10.5px;border-radius:999px;padding:2px 9px;border:1px solid var(--line2);color:var(--t2);white-space:nowrap}
+.badge.done{color:var(--green);border-color:var(--green);background:rgba(124,184,124,.1)}
+.badge.opt{color:var(--cyan);border-color:var(--cyan);background:rgba(106,181,201,.1)}
+.badge.todo{color:var(--gold);border-color:var(--gold);background:rgba(232,184,96,.1)}
+.kv{display:flex;gap:8px;font-size:12px;padding:2px 0}
+.kv span{flex:0 0 62px;color:var(--t3)}
+.kv b{font-weight:500;color:var(--t1)}
+.kv em{font-style:normal;color:var(--gold)}
+.arrow{display:flex;align-items:center;justify-content:center;gap:10px;height:26px;color:var(--t3);font-size:12px}
+.arrow b{color:var(--cyan);font-weight:500}
+.arrow i{font-style:normal;color:var(--t2)}
+.arrow.dash{color:var(--cyan)}
+.sidecard{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:11px 14px}
+.sidecard h3{font-size:12.5px;color:var(--hi);margin:0 0 7px;font-weight:600}
+.sidecard .item{font-size:11.5px;color:var(--t2);padding:3px 0;border-bottom:1px dashed var(--line)}
+.sidecard .item:last-child{border:none}
+.sidecard .item b{color:var(--t1);font-weight:500}
+.loop{font-size:11.5px;color:var(--t2);background:rgba(232,184,96,.06);border:1px dashed var(--gold);border-radius:6px;padding:8px 10px;line-height:1.7}
+.loop b{color:var(--gold)}
+
+.lane{display:flex;gap:14px;align-items:stretch}
+.boxin{flex:1;background:var(--elev);border:1px solid var(--line2);border-radius:8px;padding:10px 12px}
+.boxin h4{margin:0 0 6px;font-size:12.5px;color:var(--hi)}
+.boxin p{margin:0;font-size:11.5px;color:var(--t2);line-height:1.7}
+.agent{background:linear-gradient(180deg,rgba(232,184,96,.10),rgba(232,184,96,.02));border:1px solid var(--gold);border-radius:8px;padding:12px 14px}
+.agent .t{font-size:14px;font-weight:600;color:var(--gold);margin-bottom:4px}
+.layer{margin-top:12px;background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--cyan);border-radius:8px;padding:11px 14px}
+.layer .lt{font-size:13px;font-weight:600;color:var(--hi);margin-bottom:6px}
+.tools{display:flex;flex-wrap:wrap;gap:6px}
+.tool{font-family:var(--mono);font-size:11px;background:var(--elev);border:1px solid var(--line2);border-radius:5px;padding:2px 8px;color:var(--t1)}
+.tool.destructive{border-color:var(--red);color:var(--red)}
+.tool.read{border-color:var(--green);color:var(--green)}
+.arrow2{display:flex;justify-content:center;color:var(--t3);font-size:13px;height:22px;align-items:center}
+.note{font-size:11.5px;color:var(--t2);background:rgba(106,181,201,.06);border:1px dashed var(--cyan);border-radius:6px;padding:8px 10px;line-height:1.75;margin-top:10px}
+.note b{color:var(--cyan)}
+</style></head><body>
+<h1>正文协作 · 副驾 Agent 架构（Supervisor + ToolExecutor）</h1>
+<div class="sub">要点：<b>按钮和对话走同一条工具链</b> —— 一份实现、一份审计、一套闸门</div>
+<div class="cols">
+  <div class="main">
+    <div class="lane">
+      <div class="boxin">
+        <h4>① 作者 · 点按钮</h4>
+        <p>写手·初稿 / 体检 / 润色 / 质检 /<br>AI 味扫描 / 定点修复 / 质量回环</p>
+      </div>
+      <div class="boxin">
+        <h4>② 作者 · 说话</h4>
+        <p>"这段太AI了，改得像陈默"<br>"把第二段并进第一段"</p>
+      </div>
+      <div class="boxin">
+        <h4>③ 作者 · 选中批注</h4>
+        <p>选中句子 → 批注卡片（原文引用 + 意图 + 段落号 ¶3）</p>
+      </div>
+    </div>
+    <div class="arrow2">▼　▼　▼</div>
+
+    <div class="agent">
+      <div class="t">SupervisorAgent（副驾）</div>
+      <p style="margin:0;font-size:12px;color:var(--t2);line-height:1.8">
+        理解意图 → 决定要不要动手 → 选工具与顺序 → 汇报结果（可解释）<br>
+        <b style="color:var(--hi)">输出结构：</b><span style="font-family:var(--mono)">{ reply, actions: [{ tool, args, why }] }</span>
+      </p>
+    </div>
+    <div class="note">
+      <b>落地方式（关键取舍）：</b>现有 LLM 客户端只有 <span style="font-family:var(--mono)">call_strong(prompt, json_schema)</span> + <span style="font-family:var(--mono)">response_format=json_object</span>，<b>没有 function calling</b>。
+      所以第一版走 <b>「计划式工具调用」</b>：模型只出 <span style="font-family:var(--mono)">actions[]</span> JSON（用现有 schema_retry 校验纠错），<b>由本地 ToolExecutor 执行</b> —— 可测、可审计、FakeLLM 就能跑；真 function calling 等需要多轮探索时再上。
+    </div>
+    <div class="arrow2">▼</div>
+
+    <div class="layer">
+      <div class="lt">ToolRegistry · 工具声明（单一事实来源）</div>
+      <div class="tools">
+        <span class="tool read">prose.scan_tone</span><span class="tool read">prose.quality_score</span><span class="tool read">scene.get</span>
+        <span class="tool read">global_view.get</span><span class="tool read">foreshadow.list</span><span class="tool read">world_state.list</span>
+        <span class="tool">prose.draft</span><span class="tool">prose.review</span><span class="tool">prose.polish</span>
+        <span class="tool">prose.spot_fix</span><span class="tool">prose.quality_loop</span><span class="tool">prose.verify</span>
+        <span class="tool">scene.patch</span><span class="tool">memory.write</span><span class="tool">director.step</span>
+        <span class="tool destructive">prose.save</span><span class="tool destructive">verify.approve（落账）</span><span class="tool destructive">scene.delete</span>
+      </div>
+      <p style="margin:8px 0 0;font-size:11.5px;color:var(--t2)">
+        每个声明含：<span style="font-family:var(--mono)">name / 说明 / 参数 schema / 副作用等级（read·write·destructive）/ 是否需作者确认 / 幂等键</span>
+      </p>
+    </div>
+    <div class="arrow2">▼</div>
+
+    <div class="layer">
+      <div class="lt">ToolExecutor · 执行层（唯一的落地点）</div>
+      <p style="margin:0;font-size:11.5px;color:var(--t2);line-height:1.8">
+        参数校验（0-token）→ <b style="color:var(--gold)">确认闸门</b>（destructive 必须作者点头）→ 执行 → <b style="color:var(--hi)">审计</b>（prose_notes：谁发起 = 作者点击 / 副驾）→ SSE 事件流 → 失败不静默（T9 降级横幅）
+      </p>
+    </div>
+    <div class="arrow2">▼</div>
+
+    <div class="layer" style="border-left-color:var(--green)">
+      <div class="lt">现有引擎（本次不动）</div>
+      <p style="margin:0;font-size:11.5px;color:var(--t2);line-height:1.8">
+        <span style="font-family:var(--mono)">prose.py</span>（写手/体检/润色/质检）· <span style="font-family:var(--mono)">quality.py</span>（A2 回环）· <span style="font-family:var(--mono)">ai_tone.py</span>（A3 定点修复）· <span style="font-family:var(--mono)">style_checks.py</span>（S2/A3 0-token 底座）· <span style="font-family:var(--mono)">global_view.py</span>（S3）· <span style="font-family:var(--mono)">emergence.py</span>（S4）
+      </p>
+    </div>
+  </div>
+
+  <div class="side">
+    <div class="sidecard">
+      <h3>为什么"按钮 = 工具"必须统一</h3>
+      <div class="item">同一份实现 → agent 不会发明按钮没有的能力</div>
+      <div class="item">同一套审计 → 事后能查"这改动是谁让做的"</div>
+      <div class="item">同一道闸门 → 落库/落账/删除，点按钮和让 agent 做一样安全</div>
+      <div class="item">测试只需测一层：ToolExecutor + Registry（FakeLLM 可全绿）</div>
+    </div>
+    <div class="sidecard">
+      <h3>段落序号 + 批注（要新增的数据）</h3>
+      <div class="item"><b>段落序号</b> ¶1 ¶2 ¶3 —— 前端按空行切段即可，0 新增字段；作为 agent 的定位锚</div>
+      <div class="item"><b>批注</b> 建议落库（否则刷新丢）：新表 <span style="font-family:var(--mono)">prose_annotations</span>（scene_id / 段落号 / 引用原文 / 作者意见 / 状态 / 时间）</div>
+      <div class="item"><b>选中工具条</b>：批注 · 问副驾 · 让写手重写这段 · 标记保留</div>
+      <div class="item"><b>闭环</b>：批注 → 副驾读 → 调 <span style="font-family:var(--mono)">prose.draft/polish</span> → 出 diff → 作者采纳</div>
+    </div>
+    <div class="sidecard">
+      <h3>副驾的边界（避免"AI 乱改"）</h3>
+      <div class="item">read 类工具：<b>随便调</b>，不落库</div>
+      <div class="item">write 类（初稿/润色/定点修复）：<b>只出候选 + diff</b>，采纳才写</div>
+      <div class="item">destructive（保存/落账/删除）：<b>必须显式确认</b></div>
+      <div class="item">事实不可变：沿用现有 <span style="font-family:var(--mono)">fact_gate</span>（专名/数字/术语/台词逐字）</div>
+    </div>
+    <div class="loop">
+      <b>这一层现在缺什么</b><br>
+      · 没有工具注册表：7 个按钮各自直连 service，行为散落<br>
+      · 没有对话入口：正文页只能点按钮，作者"说不清但看得出不对"时无处表达<br>
+      · 没有批注：选中一句话只能自己改，agent 不知道作者在意什么
+    </div>
+  </div>
+</div>
+</body></html>

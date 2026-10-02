@@ -1,0 +1,96 @@
+<!doctype html><html><head><meta charset="utf-8"><style><!doctype html><html><head><meta charset="utf-8"><style>
+:root{--bg:#0D0F14;--panel:#151922;--elev:#1C2130;--line:#232836;--line2:#2D3446;
+--t1:#C9CDD6;--t2:#7A8194;--t3:#4A5166;--hi:#EDEFF2;--gold:#E8B860;--red:#D96A6A;--cyan:#6AB5C9;--green:#7CB87C;--blue:#7C9CD4;--purple:#8B7CC9;
+--ui:"Noto Sans SC","Microsoft YaHei",system-ui,sans-serif;--mono:"JetBrains Mono",Consolas,monospace}
+*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(ellipse at 50% -10%, rgba(74,91,138,.32) 0%, rgba(13,15,20,0) 55%),var(--bg);color:var(--t1);font-family:var(--ui);font-size:12.5px;line-height:1.6;padding:20px 24px}
+h1{font-size:17px;color:var(--hi);margin:0 0 3px}
+.sub{color:var(--t2);font-size:12px;margin-bottom:14px}
+.cols{display:flex;gap:16px;align-items:flex-start}
+.main{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px}
+.layer{background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--line2);border-radius:8px;padding:9px 13px}
+.layer .lh{display:flex;align-items:center;gap:9px;margin-bottom:7px}
+.layer .ln{font-size:13px;font-weight:600;color:var(--hi)}
+.layer .ld{font-size:11px;color:var(--t3);font-family:var(--mono)}
+.layer .tag{margin-left:auto;font-size:10.5px;border:1px solid var(--line2);border-radius:999px;padding:1px 8px;color:var(--t2)}
+.l0{border-left-color:var(--t3)}.l1{border-left-color:var(--gold)}.l2{border-left-color:var(--cyan)}
+.l3{border-left-color:var(--blue)}.l4{border-left-color:var(--green)}.l5{border-left-color:var(--purple)}
+.new{border-style:dashed}
+.grid{display:flex;gap:7px;flex-wrap:wrap}
+.cell{flex:1 1 180px;background:var(--elev);border:1px solid var(--line2);border-radius:6px;padding:7px 10px;min-width:170px}
+.cell .cn{font-size:12.5px;font-weight:600;color:var(--hi);display:flex;align-items:center;gap:6px}
+.cell .cn em{font-style:normal;font-size:10px;font-family:var(--mono);color:var(--t3);margin-left:auto}
+.cell .cd{font-size:11px;color:var(--t2);margin-top:3px;line-height:1.65}
+.cell .cd b{color:var(--t1);font-weight:500}
+.cell.star{border-color:var(--gold);background:rgba(232,184,96,.07)}
+.cell.inherit{border-style:dashed;opacity:.92}
+.mods{display:flex;gap:3px;margin-top:5px;flex-wrap:wrap}
+.mp{font-size:9.5px;border-radius:3px;padding:0 4px;border:1px solid var(--line2);color:var(--t3)}
+.mp.y{color:var(--green);border-color:var(--green)}
+.mp.p{color:var(--gold);border-color:var(--gold)}
+.mp.n{color:var(--red);border-color:var(--red)}
+.down{display:flex;justify-content:center;color:var(--t3);font-size:12px;height:16px;align-items:center}
+.right{flex:0 0 430px;display:flex;flex-direction:column;gap:9px}
+.box{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 13px}
+.box h3{margin:0 0 7px;font-size:12.5px;color:var(--hi);display:flex;align-items:center;gap:8px}
+.box h3 .tag{margin-left:auto;font-size:10.5px;border:1px solid var(--line2);border-radius:999px;padding:1px 8px;color:var(--t2);font-weight:400}
+.box .r{font-size:11.5px;color:var(--t2);padding:3px 0;border-bottom:1px dashed var(--line);line-height:1.7}
+.box .r:last-child{border:none}
+.box .r b{color:var(--t1);font-weight:500}
+.box.ok{border-left:3px solid var(--green)}
+.box.newb{border-left:3px solid var(--gold)}
+.box.redis{border-left:3px solid var(--purple)}
+code,.code{font-family:var(--mono);font-size:11px;color:var(--cyan)}
+
+.two{display:flex;gap:14px;align-items:flex-start}
+.half{flex:1;min-width:0;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:11px 13px}
+.half.bad{border-left:3px solid var(--red)}
+.half.good{border-left:3px solid var(--green)}
+.half h3{margin:0 0 8px;font-size:12.5px;color:var(--hi)}
+pre{margin:0;font-family:var(--mono);font-size:11px;line-height:1.65;color:var(--t1);background:#0B0E13;border:1px solid var(--line);border-radius:6px;padding:9px 11px;white-space:pre-wrap}
+pre .k{color:var(--cyan)}pre .s{color:var(--gold)}pre .c{color:var(--t3)}
+.why{font-size:11.5px;color:var(--t2);margin-top:8px;line-height:1.7}
+.why b{color:var(--t1);font-weight:500}
+.why.red b{color:var(--red)}.why.green b{color:var(--green)}
+</style></head><body>
+<h1>「感知包」是什么：从"拼好的字符串"变成"可检查的中间产物"</h1>
+<div class="sub">行为等价，只是中间多一层结构；先只落 <b>主笔</b> 与 <b>责编</b> 两个样板</div>
+<div class="two">
+  <div class="half bad">
+    <h3>现状 · 字符串（角色 agent 的 perceive_context 输出）</h3>
+    <pre>你（陈默）：书房主人，敏锐冷静的收藏家
+<span class="k">【性格】</span>敏锐、克制、重证据
+<span class="k">【底线】</span>不施暴；不承认不实指控
+<span class="k">【目标】</span>查明真相(权重0.70)；守住对李文的承诺(权重0.40)
+<span class="k">【你已知】</span>「保险柜被动过」(亲见)；「李文深夜出门」(推测)
+<span class="k">【眼前】</span>窗外下着雨；书房保险柜门半开
+<span class="k">【近况】</span>李文：这文件……你什么时候放的？</pre>
+    <div class="why red">
+      <b>四个问题</b>：① 不可断言——"它到底看到了什么"写不出测试；② 裁剪不留痕——哪条事实被可见度裁掉了、为什么，看不到；③ 加来源只能往里塞，顺序即隐式优先级；④ 没有 token 预算，塞多了只能靠人肉调。
+    </div>
+  </div>
+  <div class="half good">
+    <h3>目标 · 结构化感知包 <span class="code">PerceptPacket</span></h3>
+    <pre>{
+  <span class="k">"who"</span>: { <span class="k">"id"</span>: <span class="s">"chenmo"</span>, <span class="k">"name"</span>: <span class="s">"陈默"</span> },
+  <span class="k">"scope"</span>: <span class="s">"character_view"</span>,          <span class="c">// 角色视角 / 场景 / 书级 / 任务</span>
+  <span class="k">"sources"</span>: [<span class="s">"card"</span>,<span class="s">"beliefs"</span>,<span class="s">"facts"</span>,<span class="s">"events"</span>],
+  <span class="k">"budget"</span>: { <span class="k">"max_tokens"</span>: 900, <span class="k">"used"</span>: 412 },
+  <span class="k">"blocks"</span>: [
+    { <span class="k">"kind"</span>: <span class="s">"self"</span>,    <span class="k">"text"</span>: <span class="s">"书房主人…"</span> },
+    { <span class="k">"kind"</span>: <span class="s">"goals"</span>,   <span class="k">"items"</span>: [{<span class="k">"text"</span>:<span class="s">"查明真相"</span>,<span class="k">"weight"</span>:0.7,<span class="k">"reason"</span>:<span class="s">""</span>}] },
+    { <span class="k">"kind"</span>: <span class="s">"beliefs"</span>, <span class="k">"visibility"</span>: <span class="s">"own"</span>,
+      <span class="k">"items"</span>: [{<span class="k">"text"</span>:<span class="s">"保险柜被动过"</span>,<span class="k">"channel"</span>:<span class="s">"亲见"</span>,<span class="k">"src_event"</span>:<span class="s">"E-003"</span>}] },
+    { <span class="k">"kind"</span>: <span class="s">"facts"</span>,   <span class="k">"visibility"</span>: <span class="s">"filtered"</span>,
+      <span class="k">"items"</span>:   [{<span class="k">"id"</span>:<span class="s">"F-1"</span>,<span class="k">"text"</span>:<span class="s">"保险柜门半开"</span>}],
+      <span class="k">"dropped"</span>: [{<span class="k">"id"</span>:<span class="s">"F-2"</span>,<span class="k">"reason"</span>:<span class="s">"visible_to 不含本角色"</span>}] },
+    { <span class="k">"kind"</span>: <span class="s">"events"</span>,  <span class="k">"window"</span>: <span class="s">"last6"</span>, <span class="k">"items"</span>: [ … ] }
+  ]
+}</pre>
+    <div class="why green">
+      <b>换回四件事</b>：① <b>可断言</b>——能写测试"写手的感知包里不含 F-2"；② <b>裁剪留痕</b>（<span class="code">dropped</span> 带原因）→ 直接落实"静默降级必须反馈"的项目纪律；③ <b>一处产出、多处渲染</b>——同一包喂不同 agent，只换模板；④ <b>可存档可复现</b>——事后能回答"当时它到底看到了什么"。<br>
+      <b>做法</b>：<span class="code">perceive(scope, ctx) → PerceptPacket</span>，再由各 agent 的模板渲染成 prompt（现有四层顺序不变）→ <b>行为等价</b>。
+    </div>
+  </div>
+</div>
+</body></html>

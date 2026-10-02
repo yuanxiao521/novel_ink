@@ -1,0 +1,158 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+:root{--bg:#0D0F14;--panel:#151922;--elev:#1C2130;--line:#232836;--line2:#2D3446;
+--t1:#C9CDD6;--t2:#7A8194;--t3:#4A5166;--hi:#EDEFF2;--gold:#E8B860;--red:#D96A6A;--cyan:#6AB5C9;--green:#7CB87C;--blue:#7C9CD4;--purple:#8B7CC9;
+--ui:"Noto Sans SC","Microsoft YaHei",system-ui,sans-serif;--mono:"JetBrains Mono",Consolas,monospace}
+*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(ellipse at 50% -10%, rgba(74,91,138,.32) 0%, rgba(13,15,20,0) 55%),var(--bg);color:var(--t1);font-family:var(--ui);font-size:12.5px;line-height:1.6;padding:20px 24px}
+h1{font-size:17px;color:var(--hi);margin:0 0 3px}
+.sub{color:var(--t2);font-size:12px;margin-bottom:14px}
+.cols{display:flex;gap:16px;align-items:flex-start}
+.main{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px}
+.layer{background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--line2);border-radius:8px;padding:9px 13px}
+.layer .lh{display:flex;align-items:center;gap:9px;margin-bottom:7px}
+.layer .ln{font-size:13px;font-weight:600;color:var(--hi)}
+.layer .ld{font-size:11px;color:var(--t3);font-family:var(--mono)}
+.layer .tag{margin-left:auto;font-size:10.5px;border:1px solid var(--line2);border-radius:999px;padding:1px 8px;color:var(--t2)}
+.l0{border-left-color:var(--t3)}.l1{border-left-color:var(--gold)}.l2{border-left-color:var(--cyan)}
+.l3{border-left-color:var(--blue)}.l4{border-left-color:var(--green)}.l5{border-left-color:var(--purple)}
+.new{border-style:dashed}
+.grid{display:flex;gap:7px;flex-wrap:wrap}
+.cell{flex:1 1 180px;background:var(--elev);border:1px solid var(--line2);border-radius:6px;padding:7px 10px;min-width:170px}
+.cell .cn{font-size:12.5px;font-weight:600;color:var(--hi);display:flex;align-items:center;gap:6px}
+.cell .cn em{font-style:normal;font-size:10px;font-family:var(--mono);color:var(--t3);margin-left:auto}
+.cell .cd{font-size:11px;color:var(--t2);margin-top:3px;line-height:1.65}
+.cell .cd b{color:var(--t1);font-weight:500}
+.cell.star{border-color:var(--gold);background:rgba(232,184,96,.07)}
+.cell.inherit{border-style:dashed;opacity:.92}
+.mods{display:flex;gap:3px;margin-top:5px;flex-wrap:wrap}
+.mp{font-size:9.5px;border-radius:3px;padding:0 4px;border:1px solid var(--line2);color:var(--t3)}
+.mp.y{color:var(--green);border-color:var(--green)}
+.mp.p{color:var(--gold);border-color:var(--gold)}
+.mp.n{color:var(--red);border-color:var(--red)}
+.down{display:flex;justify-content:center;color:var(--t3);font-size:12px;height:16px;align-items:center}
+.right{flex:0 0 430px;display:flex;flex-direction:column;gap:9px}
+.box{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 13px}
+.box h3{margin:0 0 7px;font-size:12.5px;color:var(--hi);display:flex;align-items:center;gap:8px}
+.box h3 .tag{margin-left:auto;font-size:10.5px;border:1px solid var(--line2);border-radius:999px;padding:1px 8px;color:var(--t2);font-weight:400}
+.box .r{font-size:11.5px;color:var(--t2);padding:3px 0;border-bottom:1px dashed var(--line);line-height:1.7}
+.box .r:last-child{border:none}
+.box .r b{color:var(--t1);font-weight:500}
+.box.ok{border-left:3px solid var(--green)}
+.box.newb{border-left:3px solid var(--gold)}
+.box.redis{border-left:3px solid var(--purple)}
+code,.code{font-family:var(--mono);font-size:11px;color:var(--cyan)}
+</style></head><body>
+<h1>墨卷 · 拍板后的最终架构（分层总图）</h1>
+<div class="sub">金色虚线框 = 本次要新增/改造；绿色虚线 = 复用不动；<b>Redis 当前不引入</b>（触发条件见右下）</div>
+<div class="cols">
+  <div class="main">
+
+    <div class="layer l0">
+      <div class="lh"><span class="ln">L0 · 作者（唯一人类 · 总导演）</span><span class="ld">human</span><span class="tag">4 个入口</span></div>
+      <div class="grid">
+        <div class="cell"><div class="cn">对话</div><div class="cd">"这段太 AI 了，改得像陈默"</div></div>
+        <div class="cell"><div class="cn">按钮</div><div class="cd">写手 / 体检 / 润色 / 质检 / AI 味 / 定点修复 / 回环</div></div>
+        <div class="cell"><div class="cn">选中批注</div><div class="cd">段落序号 ¶3 + 引用原文 + 意见 → 落库成改稿任务</div></div>
+        <div class="cell"><div class="cn">确认闸门</div><div class="cd">落库 / 落账 / 删除 / 采纳 必须点头</div></div>
+      </div>
+    </div>
+    <div class="down">▼ ▼ ▼ ▼</div>
+
+    <div class="layer l1 new">
+      <div class="lh"><span class="ln">L1 · 编排与执行层（全新）</span><span class="ld">supervisor · registry · executor · taskbus</span><span class="tag">A / A+ 批</span></div>
+      <div class="grid">
+        <div class="cell star"><div class="cn">SupervisorAgent<em>编排者·无身份</em></div><div class="cd">理解意图 → 计划 → 选工具 → 汇报；输出 <span class="code">{reply, actions[]}</span>；<b>不创作、不判断好坏</b></div></div>
+        <div class="cell"><div class="cn">ToolRegistry</div><div class="cd">工具声明：名称 / 参数 schema / 副作用等级 / 是否需确认 / 幂等键</div></div>
+        <div class="cell"><div class="cn">ToolExecutor</div><div class="cd">0-token 校验 → 闸门 → 执行 → <b>审计(谁发起)</b> → SSE → 失败不静默</div></div>
+        <div class="cell"><div class="cn">TaskBus<em>L3 消息层</em></div><div class="cd"><span class="code">agent_tasks</span> + <span class="code">agent_messages</span>：请求彩排 / 请求曝光 / 请求裁决</div></div>
+      </div>
+    </div>
+    <div class="down">▼</div>
+
+    <div class="layer l2">
+      <div class="lh"><span class="ln">L2 · Agent 层（每个 agent 都有五模块）</span><span class="ld">AgentSpec 能力声明</span><span class="tag">样板先行</span></div>
+      <div class="grid">
+        <div class="cell star"><div class="cn">主笔<em>结构层★样板</em></div><div class="cd">书级：结构 / 节奏 / 伏笔 / 角色弧；<b>维护约束表</b>（全员读）</div>
+          <div class="mods"><span class="mp p">感知</span><span class="mp p">记忆</span><span class="mp p">上下文</span><span class="mp y">执行</span><span class="mp p">边界</span></div></div>
+        <div class="cell star"><div class="cn">责编<em>场景层★样板·新增</em></div><div class="cd">本场：文字 / 口吻 / 事实一致 / 伏笔落地 / <b>读批注</b>；可请求彩排</div>
+          <div class="mods"><span class="mp p">感知</span><span class="mp p">记忆</span><span class="mp p">上下文</span><span class="mp y">执行</span><span class="mp p">边界</span></div></div>
+        <div class="cell inherit"><div class="cn">场记<em>原"导演 Agent"</em></div><div class="cd">回合软引导（提示 / 曝光 / 权重）；<b>只给方向不给台词</b>。角色 agent 已合规，基本不动</div>
+          <div class="mods"><span class="mp p">感知</span><span class="mp p">记忆</span><span class="mp y">上下文</span><span class="mp y">执行</span><span class="mp p">边界</span></div></div>
+        <div class="cell inherit"><div class="cn">角色 Agent ×N</div><div class="cd"><b>已是最规范的样板</b>：<span class="code">perceive_context</span> 视角隔离；<b>不允许发起任务</b>（只经黑板表达）</div>
+          <div class="mods"><span class="mp y">感知</span><span class="mp p">记忆</span><span class="mp y">上下文</span><span class="mp y">执行</span><span class="mp p">边界</span></div></div>
+        <div class="cell inherit"><div class="cn">写手 · 体检 · 润色 · 质检</div><div class="cd">文字层四角色；<b>由 ToolExecutor 编排成链</b>（D 批合并为一次审稿会），不再各自被按钮硬调</div>
+          <div class="mods"><span class="mp p">感知</span><span class="mp p">记忆</span><span class="mp y">上下文</span><span class="mp y">执行</span><span class="mp p">边界</span></div></div>
+        <div class="cell"><div class="cn">评审<em>A2 给身份</em></div><div class="cd">现在藏在 <span class="code">quality.py</span> 里：LLM 自评 + 硬信号 → 给名字、给入口、给审计</div>
+          <div class="mods"><span class="mp p">感知</span><span class="mp n">记忆</span><span class="mp y">上下文</span><span class="mp y">执行</span><span class="mp p">边界</span></div></div>
+        <div class="cell inherit"><div class="cn">记账<em>0-token</em></div><div class="cd">质检 deltas → 三本账幂等 upsert；只在"批准"后触发</div>
+          <div class="mods"><span class="mp n">感知</span><span class="mp y">记忆</span><span class="mp n">上下文</span><span class="mp y">执行</span><span class="mp p">边界</span></div></div>
+      </div>
+      <div style="font-size:11.5px;color:var(--t2);margin-top:8px;line-height:1.7">
+        <b style="color:var(--gold)">横切三件（所有 agent 共用）：</b>
+        <span class="code">perceive(scope) → 结构化感知包</span> ·
+        <span class="code">记忆四层（短期 / 工作记忆 / 长期事实 / 约束与偏好）</span> ·
+        <span class="code">上下文装配器（感知包 → 各自模板 → prompt）</span>
+      </div>
+    </div>
+    <div class="down">▼</div>
+
+    <div class="layer l3">
+      <div class="lh"><span class="ln">L3 · 通信三层</span><span class="ld">blackboard · ledger · taskbus</span><span class="tag">L1/L2 已有 · L3 新增</span></div>
+      <div class="grid">
+        <div class="cell inherit"><div class="cn">L1 黑板<em>回合内·内存</em></div><div class="cd"><span class="code">SimulationState</span>：节点顺序执行 = 隐式同步；<b>补字段级写权限</b></div></div>
+        <div class="cell inherit"><div class="cn">L2 账本<em>跨场景·PG</em></div><div class="cd">三本账 + 世界状态 + 记忆 + 回合归档；"落库 → 再装配"的间接通信</div></div>
+        <div class="cell star"><div class="cn">L3 任务总线<em>显式请求-应答·PG</em></div><div class="cd"><b>只传请求/裁决/通知，不传状态</b>；状态机 <span class="code">submitted→working→input-required→completed/failed</span></div></div>
+      </div>
+    </div>
+    <div class="down">▼</div>
+
+    <div class="layer l4">
+      <div class="lh"><span class="ln">L4 · 校验层（0-token 横切，不重写）</span><span class="ld">style_checks · world_rules · guard · fact_gate · schema_retry · global_view · emergence · degradation</span><span class="tag">★ 最可靠的一层</span></div>
+      <div class="grid">
+        <div class="cell inherit"><div class="cn">确定性规则器组<em>0-token</em></div><div class="cd">AI 味扫描（S2/A3）· 世界规则/护栏拦截 · 事实闸门（专名/数字/术语/台词逐字）· 结构诊断 R1–R7（S3）· 剧本派生（S4）· 降级可观测（T9）<b>—— 只该被工具化，不该被重写</b></div></div>
+      </div>
+    </div>
+    <div class="down">▼</div>
+
+    <div class="layer l5">
+      <div class="lh"><span class="ln">L5 · 存储</span><span class="ld">PostgreSQL（唯一事实来源）</span><span class="tag">Redis 暂不引入</span></div>
+      <div class="grid">
+        <div class="cell inherit"><div class="cn">PostgreSQL<em>真值</em></div><div class="cd">书树 / 三本账 / 世界状态 / 正文 / 审计 <span class="code">prose_notes</span> / 批注 / <b>任务单与消息</b></div></div>
+        <div class="cell" style="border-color:var(--purple)"><div class="cn">Redis<em>按需</em></div><div class="cd">现在<b>不需要</b>：单进程 + 状态在黑板与 PG。引入条件见右下</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="right">
+    <div class="box newb">
+      <h3>本次新增 / 改造清单</h3>
+      <div class="r"><b>AgentSpec</b> 能力声明（能读 / 能写 / 有哪些工具 / 模型档位 / 产出事件）</div>
+      <div class="r"><b>perceive(scope)</b> → 结构化感知包（先落主笔 + 责编两个样板）</div>
+      <div class="r"><b>ToolRegistry + ToolExecutor</b>，7 个按钮全部工具化</div>
+      <div class="r"><b>责编</b>（场景层副驾）：对话 + 批注 + 文字类工具</div>
+      <div class="r"><b>prose_annotations</b>（段落号 / 引用原文 / 意见 / 状态机）</div>
+      <div class="r"><b>agent_tasks + agent_messages</b>（L3 消息层）</div>
+      <div class="r"><b>写权限矩阵</b>（草案，A+ 启用）</div>
+      <div class="r"><b>约束表全局化</b>（B 批：主笔维护，全员读）</div>
+      <div class="r"><b>评审</b>给身份；文字层 D 批合并为审稿会</div>
+    </div>
+    <div class="box ok">
+      <h3>复用不动（别碰）</h3>
+      <div class="r"><b>校验层 0-token</b>：S2/A3 规则、护栏、R1–R7、事实闸门</div>
+      <div class="r"><b>角色 agent</b>：<span class="code">perceive_context</span> 视角隔离已是最佳实践，只补 AgentSpec 声明</div>
+      <div class="r"><b>账簿层</b>：三本账 + 幂等 upsert 已闭环</div>
+      <div class="r"><b>黑板</b>：LangGraph 单 <span class="code">sim</span> 字段原地改，保持</div>
+      <div class="r"><b>LLM 客户端</b>：无 function calling → 编排走"计划式工具调用"</div>
+    </div>
+    <div class="box redis">
+      <h3>Redis：现在不引，条件成立才引</h3>
+      <div class="r"><b>纪律</b>：Redis 只做 <b>传输 / 缓存 / 锁</b>，<b>绝不放业务事实</b>（三本账、正文、任务单真值永远在 PG）</div>
+      <div class="r"><b>条件①多进程</b>：uvicorn <span class="code">--workers&gt;1</span> 或独立 worker → 黑板与 SSE 需跨进程广播</div>
+      <div class="r"><b>条件②后台长任务</b>：批量写手 / 批量彩排 → 需要队列与断点续跑</div>
+      <div class="r"><b>条件③多人实时</b>：多人同看一台戏 → pub/sub 广播</div>
+      <div class="r"><b>条件④高频进度</b>：进度/心跳写 PG 太重 → 缓存</div>
+      <div class="r" style="color:var(--gold)"><b>当前判定</b>：A/A+ 批任务单量小、要审计、要跨会话 → <b>直接落 PG，不引 Redis</b></div>
+    </div>
+  </div>
+</div>
+</body></html>

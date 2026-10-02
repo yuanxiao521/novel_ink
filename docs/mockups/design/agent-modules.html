@@ -1,0 +1,158 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+:root{--bg:#0D0F14;--panel:#151922;--elev:#1C2130;--line:#232836;--line2:#2D3446;
+--t1:#C9CDD6;--t2:#7A8194;--t3:#4A5166;--hi:#EDEFF2;--gold:#E8B860;--red:#D96A6A;--cyan:#6AB5C9;--green:#7CB87C;--blue:#7C9CD4;--purple:#8B7CC9;
+--ui:"Noto Sans SC","Microsoft YaHei",system-ui,sans-serif;--mono:"JetBrains Mono",Consolas,monospace}
+*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(ellipse at 50% -10%, rgba(74,91,138,.35) 0%, rgba(13,15,20,0) 55%),var(--bg);color:var(--t1);font-family:var(--ui);font-size:12.5px;line-height:1.6;padding:20px 24px}
+h1{font-size:17px;color:var(--hi);margin:0 0 3px}
+.sub{color:var(--t2);font-size:12px;margin-bottom:14px}
+.cols{display:flex;gap:16px;align-items:flex-start}
+.col{flex:1;min-width:0;display:flex;flex-direction:column;gap:10px}
+.box{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:11px 13px}
+.box h3{margin:0 0 8px;font-size:13px;color:var(--hi);display:flex;align-items:center;gap:8px}
+.box h3 .tag{margin-left:auto;font-size:10.5px;border:1px solid var(--line2);border-radius:999px;padding:1px 8px;color:var(--t2);font-weight:400}
+.mod{border-left:3px solid var(--line2);padding:8px 11px;margin-bottom:7px;background:var(--elev);border-radius:6px}
+.mod:last-child{margin-bottom:0}
+.mod .mt{display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;color:var(--hi)}
+.mod .mt em{font-style:normal;font-size:10.5px;font-family:var(--mono);color:var(--t3);margin-left:auto}
+.mod .md{font-size:11.5px;color:var(--t2);margin-top:4px;line-height:1.7}
+.mod .md b{color:var(--t1);font-weight:500}
+.mod .md code{font-family:var(--mono);font-size:11px;color:var(--cyan)}
+.mod.have{border-left-color:var(--green)}
+.mod.part{border-left-color:var(--gold)}
+.mod.miss{border-left-color:var(--red)}
+.pill{font-size:10px;border-radius:999px;padding:1px 7px;border:1px solid var(--line2);color:var(--t2)}
+.pill.y{color:var(--green);border-color:var(--green);background:rgba(124,184,124,.1)}
+.pill.p{color:var(--gold);border-color:var(--gold);background:rgba(232,184,96,.1)}
+.pill.n{color:var(--red);border-color:var(--red);background:rgba(217,106,106,.1)}
+.lay{border-left:3px solid var(--cyan);background:var(--elev);border-radius:6px;padding:8px 11px;margin-bottom:7px}
+.lay:last-child{margin-bottom:0}
+.lay .lt{font-size:12.5px;font-weight:600;color:var(--hi);display:flex;align-items:center;gap:8px}
+.lay .lt em{font-style:normal;font-size:10.5px;font-family:var(--mono);color:var(--t3);margin-left:auto}
+.lay .ld{font-size:11.5px;color:var(--t2);margin-top:4px;line-height:1.7}
+.lay .ld b{color:var(--t1);font-weight:500}
+.lay.new{border-left-color:var(--gold);border-style:dashed}
+table{width:100%;border-collapse:collapse;font-size:11.5px}
+th,td{text-align:left;padding:4px 6px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--t3);font-weight:500}
+td b{color:var(--hi);font-weight:600}
+.a2a{font-size:11.5px;color:var(--t2);background:rgba(139,124,201,.07);border:1px dashed var(--purple);border-radius:6px;padding:8px 10px;line-height:1.75}
+.a2a b{color:var(--purple)}
+.code{font-family:var(--mono);font-size:11px;color:var(--cyan)}
+</style></head><body>
+<h1>墨卷 · Agent 五模块 × 通信三层（现状 vs 目标）</h1>
+<div class="sub">照代码核对：<b>感知只有角色 agent 做对了</b>（视角隔离）；通信是"靠环境痕迹协作"，缺显式消息层</div>
+<div class="cols">
+
+  <div class="col">
+    <div class="box">
+      <h3>一、每个 Agent 应有的五模块<span class="tag">现状打标</span></h3>
+
+      <div class="mod have">
+        <div class="mt">① 感知（Perception）<em>perceive</em><span class="pill y">角色：有</span></div>
+        <div class="md">
+          <b>唯一做对的样板</b>：<code>character.perceive_context(char_id)</code> —— 只给该角色子集（自我认知 / 已知信念近 5 条 / <b>可见度裁剪</b>的事实 <code>perceivable_facts</code> / 近况 6 条事件），<b>视角隔离</b>是铁律。<br>
+          其余 agent 全是<b>全量注入</b>：主笔（书树+记忆全量）、写手（场景+角色卡全量）、体检/润色/质检（正文全量）。<span class="pill p">其余：无独立感知模块</span>
+        </div>
+      </div>
+
+      <div class="mod part">
+        <div class="mt">② 记忆（Memory）<em>memory</em><span class="pill p">有账本 · 无分层</span></div>
+        <div class="md">
+          现有四堆东西混用：<br>
+          · <b>书级记忆</b> <code>book_memories</code>（主笔独享）<br>
+          · <b>三本账</b> <code>beliefs</code>/<code>world_states</code>/<code>foreshadows</code>（角色读裁剪视图，写手全量注入）<br>
+          · <b>回合史</b> <code>TurnArchive</code>（含思考档）——只在导演台/剧本台读，<b>正文协作完全不读</b><br>
+          · <b>审计</b> <code>prose_notes</code>——只给人看，<b>agent 不读</b><br>
+          缺：短期记忆（对话史只有主笔有 <code>chat_histories</code>）、工作记忆（本场正文+批注+本轮工具结果）
+        </div>
+      </div>
+
+      <div class="mod miss">
+        <div class="mt">③ 上下文装配（Context）<em>compose</em><span class="pill n">无统一装配器</span></div>
+        <div class="md">
+          四层 Prompt 模板（<b>作者要求 → 世界观 → 感知现场 → 任务</b>）只在角色 agent 落地（<code>_compose_prompt</code>）；其余 agent 各自硬编码拼字符串：<code>_DRAFT_PROMPT</code>/<code>_REVIEW_PROMPT</code>/<code>_VERIFY_PROMPT</code>/<code>chief_perceive</code>。<br>
+          <b>后果</b>：每加一个 agent 就复制一遍拼装逻辑，"它到底看到了什么"无法断言
+        </div>
+      </div>
+
+      <div class="mod part">
+        <div class="mt">④ 执行（Action）<em>execute</em><span class="pill p">有校验 · 无工具层</span></div>
+        <div class="md">
+          现在 = <b>返回结构化 JSON + <code>schema_retry</code> 纠错 + service 落库</b>（算是执行层的雏形）。<br>
+          缺：<b>ToolRegistry / ToolExecutor</b>（上一轮已定）—— 工具声明、副作用等级、确认闸门、审计归因
+        </div>
+      </div>
+
+      <div class="mod miss">
+        <div class="mt">⑤ 功能边界（Boundary）<em>spec</em><span class="pill n">隐性约定</span></div>
+        <div class="md">
+          靠"谁能读什么"的口头约定 + 0-token 护栏（<code>world_rules</code>/<code>guard</code>）+ 事实闸门兜底。<br>
+          缺：<b>显式能力声明</b>（能读什么 / 能写什么 / 能用哪些工具 / 模型档位 / 产出哪些事件）
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="box">
+      <h3>二、Agent 间怎么通信：三层<span class="tag">现在是 2 层</span></h3>
+
+      <div class="lay">
+        <div class="lt">L1 黑板层 · 回合内<em>turn-local · 内存</em><span class="pill y">已有</span></div>
+        <div class="ld"><code>SimulationState</code> 就是黑板对象（LangGraph State 持 <code>sim</code>，节点内原地改）：导演写引导 → 角色读 → 角色 act 写事实 → 刷新世界 → 成文。节点顺序执行 = 隐式同步。<br><b>要补</b>：字段级写权限（谁能写哪个字段）</div>
+      </div>
+
+      <div class="lay">
+        <div class="lt">L2 账本层 · 跨场景 / 跨会话<em>durable · DB</em><span class="pill y">已有</span></div>
+        <div class="ld">事实与状态：三本账 + 世界状态 + 书级记忆 + 回合归档 + 审计。传递方式是 <b>"落库 → 再装配 prompt"</b>——即 <b>通过数据库中介的间接通信</b>（stigmergy，蚂蚁靠信息素）。<br><b>优点</b>：可审计、可回放、崩溃可恢复。<b>缺点</b>：延迟高、不能"问一句"、不能协商、能力无法被发现</div>
+      </div>
+
+      <div class="lay new">
+        <div class="lt">L3 消息层 · 显式请求-应答<em>★ 缺</em><span class="pill n">没有</span></div>
+        <div class="ld">
+          现在<b>没有任何 agent 直接问另一个 agent</b>。但要落地这些诉求就必须有：<br>
+          · 责编："这场我没把握，<b>请求彩排</b>" → 派给导演<br>
+          · 写手："信息曝光不足" → 请求补事实<br>
+          · 质检："这条风险我判不了" → 请求作者裁决<br>
+          建议落两张表：<code>agent_tasks</code>（谁发起/给谁/目标/输入引用/状态/产物引用）+ <code>agent_messages</code>（request/response/notify）
+        </div>
+      </div>
+
+      <div class="a2a">
+        <b>A2A 要分清两件事</b>：<br>
+        <b>协议</b>（Google 提 / 现归 Linux Foundation）解决的是<b>跨进程、跨厂商</b>互操作 —— Agent Card（能力发现）、Task（带状态机的长任务）、Message/Part、Artifact、SSE 流式事件。<b>我们单进程、同库，不需要上 HTTP/JSON-RPC 那套重传输。</b><br>
+        但它的<b>数据模型值得抄</b>：AgentCard→<span class="code">AgentSpec</span>、Task→<span class="code">agent_tasks</span>、Message→<span class="code">agent_messages</span>、Artifact→现有产物（骨架/TurnArchive/final_prose/prose_notes 已经是 artifact，只差登记到任务单）<br>
+        <b>结论：借模型，不借传输。</b>
+      </div>
+    </div>
+
+    <div class="box">
+      <h3>三、目标记忆分层（建议）</h3>
+      <table>
+        <tr><th>层</th><th>生命周期</th><th>谁写</th><th>谁读</th></tr>
+        <tr><td><b>短期</b></td><td>回合 / 本轮对话</td><td>各 agent 自己</td><td>仅自己</td></tr>
+        <tr><td><b>工作记忆</b></td><td>场景</td><td>ToolExecutor / 作者批注</td><td>责编 · 写手</td></tr>
+        <tr><td><b>长期事实</b></td><td>书（跨场景）</td><td>记账 agent</td><td>全员读<b>裁剪视图</b></td></tr>
+        <tr><td><b>约束与偏好</b></td><td>书</td><td>主笔 / 作者</td><td><b>全员读</b>（B 批：约束表全局化）</td></tr>
+      </table>
+    </div>
+
+    <div class="box">
+      <h3>四、差距与落地顺序</h3>
+      <table>
+        <tr><th>模块</th><th>现状</th><th>归属批次</th></tr>
+        <tr><td>感知</td><td>仅角色有</td><td><b>B</b>：统一 <span class="code">perceive(scope)</span> → 结构化感知包</td></tr>
+        <tr><td>记忆</td><td>有账本无分层</td><td><b>A</b> 工作记忆（批注落库）+ <b>B</b> 四层</td></tr>
+        <tr><td>上下文</td><td>无统一装配器</td><td><b>B</b>：感知包 → 各自模板渲染</td></tr>
+        <tr><td>执行</td><td>schema 校验，无工具层</td><td><b>A</b>：ToolRegistry + ToolExecutor</td></tr>
+        <tr><td>边界</td><td>隐性约定</td><td><b>A+</b>：AgentSpec 能力声明</td></tr>
+        <tr><td>通信</td><td>黑板 + DB 间接（2 层）</td><td><b>A+</b>：消息层 + 任务单；<b>C</b> 首次实战（请求彩排）</td></tr>
+      </table>
+      <div style="font-size:11.5px;color:var(--t2);margin-top:8px;line-height:1.75">
+        <b style="color:var(--gold)">不要一次改 7 个 agent</b>：先给两个样板落地五模块 —— <b>主笔（结构层样板）</b> + <b>责编（场景层样板）</b>，跑通再推广，否则 7 处同时改无法归因。
+      </div>
+    </div>
+  </div>
+</div>
+</body></html>

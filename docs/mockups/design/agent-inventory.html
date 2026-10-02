@@ -1,0 +1,131 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+:root{--bg:#0D0F14;--panel:#151922;--elev:#1C2130;--line:#232836;--line2:#2D3446;
+--t1:#C9CDD6;--t2:#7A8194;--t3:#4A5166;--hi:#EDEFF2;--gold:#E8B860;--red:#D96A6A;--cyan:#6AB5C9;--green:#7CB87C;--blue:#7C9CD4;
+--ui:"Noto Sans SC","Microsoft YaHei",system-ui,sans-serif;--mono:"JetBrains Mono",Consolas,monospace}
+*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(ellipse at 50% -10%, rgba(74,91,138,.35) 0%, rgba(13,15,20,0) 55%),var(--bg);color:var(--t1);font-family:var(--ui);font-size:12.5px;line-height:1.6;padding:20px 24px}
+h1{font-size:17px;color:var(--hi);margin:0 0 3px}
+.sub{color:var(--t2);font-size:12px;margin-bottom:14px}
+.cols{display:flex;gap:18px;align-items:flex-start}
+.main{flex:1;min-width:0;display:flex;flex-direction:column;gap:10px}
+.lane{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--line2);border-radius:8px;padding:10px 13px}
+.lane.l0{border-left-color:var(--t3)}
+.lane.l1{border-left-color:var(--gold)}
+.lane.l2{border-left-color:var(--cyan)}
+.lane.l3{border-left-color:var(--red)}
+.lane.l4{border-left-color:var(--green)}
+.lane.l5{border-left-color:var(--blue)}
+.lane.l6{border-left-color:#8B7CC9}
+.lt{display:flex;align-items:center;gap:8px;margin-bottom:7px}
+.lt .ln{font-size:13px;font-weight:600;color:var(--hi)}
+.lt .ld{font-size:11px;color:var(--t3);font-family:var(--mono)}
+.lt .tag{margin-left:auto;font-size:10.5px;border:1px solid var(--line2);border-radius:999px;padding:1px 8px;color:var(--t2)}
+.agents{display:flex;gap:8px;flex-wrap:wrap}
+.ag{flex:1 1 200px;background:var(--elev);border:1px solid var(--line2);border-radius:6px;padding:7px 10px;min-width:190px}
+.ag .n{font-size:12.5px;font-weight:600;color:var(--hi);display:flex;align-items:center;gap:6px}
+.ag .n em{font-style:normal;font-size:10px;color:var(--t3);font-family:var(--mono);margin-left:auto}
+.ag .r{font-size:11px;color:var(--t2);margin-top:3px}
+.ag .r b{color:var(--t1);font-weight:500}
+.ag.nollm{border-style:dashed;opacity:.9}
+.ag.hole{border:1px dashed var(--red);background:rgba(217,106,106,.06)}
+.right{flex:0 0 420px;display:flex;flex-direction:column;gap:10px}
+.pcard{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--red);border-radius:8px;padding:10px 13px}
+.pcard h3{margin:0 0 6px;font-size:12.5px;color:var(--hi)}
+.pcard .p{font-size:11.5px;color:var(--t2);padding:4px 0;border-bottom:1px dashed var(--line);line-height:1.7}
+.pcard .p:last-child{border:none}
+.pcard .p b{color:var(--red)}
+.pcard.ok{border-left-color:var(--green)}
+.pcard.ok .p b{color:var(--green)}
+.flow{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--t3);font-family:var(--mono);padding-left:2px;flex-wrap:wrap}
+.flow i{font-style:normal;color:var(--t2)}
+</style></head><body>
+<h1>墨卷 · 现状多 Agent 拓扑与职责边界（照代码核对）</h1>
+<div class="sub">7 类角色化 agent + 1 层 0-token 规则器 + 1 处"空着的编排位"；右栏是这次讨论要解决的 6 个边界问题</div>
+<div class="cols">
+  <div class="main">
+
+    <div class="lane l0">
+      <div class="lt"><span class="ln">输入侧</span><span class="ld">author</span><span class="tag">唯一的人类</span></div>
+      <div class="agents">
+        <div class="ag"><div class="n">作者（总导演）<em>human</em></div><div class="r">对话 / 点按钮 / 选角 / 举手介入 / 确认落库；<b>现在正文页只能点按钮</b></div></div>
+      </div>
+    </div>
+
+    <div class="lane l1">
+      <div class="lt"><span class="ln">① 结构层</span><span class="ld">chief_planner.py</span><span class="tag">书级 · 仅规划</span></div>
+      <div class="agents">
+        <div class="ag"><div class="n">主笔 Agent<em>strong</em></div><div class="r"><b>读</b> 书树 + 书级记忆 + 灵感 + 伏笔 + 世界状态<br><b>写</b> 灵感卡 / 章节场景骨架 / 角色卡 / 世界观 · 对话回复<br><b>不管</b> 单回合、不管句子</div></div>
+      </div>
+      <div class="flow"><i>触发</i> 作者对话 · 「✦ 让主笔排骨架」 · 生成角色卡</div>
+    </div>
+
+    <div class="lane l2">
+      <div class="lt"><span class="ln">② 演绎层</span><span class="ld">director.py · character.py</span><span class="tag">单回合 · 仅导演台</span></div>
+      <div class="agents">
+        <div class="ag"><div class="n">导演 Agent<em>strong</em></div><div class="r"><b>读</b> 世界黑板 + 角色状态 + 回合史 + 张力<br><b>写</b> 每回合软引导（舞台提示 / 感知曝光 / 目标权重）<br><b>只给方向不给台词</b></div></div>
+        <div class="ag"><div class="n">角色 Agent ×N<em>strong</em></div><div class="r"><b>读</b> 自身角色卡 + 感知事实 + 信念账本<br><b>写</b> thought / action / emotion<br>think-act 分离，<b>只在导演台跑</b></div></div>
+      </div>
+      <div class="flow"><i>循环</i> 作者点播放 → 每回合：导演提示 → 角色 think/act → 黑板刷新 → 成文渲染</div>
+    </div>
+
+    <div class="lane l3">
+      <div class="lt"><span class="ln">③ 文字层</span><span class="ld">prose.py · quality.py</span><span class="tag">场景级 · 正文协作</span></div>
+      <div class="agents">
+        <div class="ag"><div class="n">写手<em>strong</em></div><div class="r"><b>读</b> 场景 4 字段 + 角色卡 + 世界状态 + 涌现素材（勾选才给）<br><b>写</b> 正文初稿</div></div>
+        <div class="ag"><div class="n">体检员<em>strong</em></div><div class="r"><b>读</b> 正文 + 角色卡 + 0-token 口吻先验<br><b>写</b> issues + voice_findings</div></div>
+        <div class="ag"><div class="n">润色师<em>strong</em></div><div class="r"><b>读</b> 正文 + 问题清单<br><b>写</b> 改写稿（只改写法，不改事实）</div></div>
+        <div class="ag"><div class="n">质检员<em>strong</em></div><div class="r"><b>读</b> 正文 + 伏笔 + 账本<br><b>写</b> 伏笔推进 / 信念变化 / 因果 / 风险 / state_deltas</div></div>
+        <div class="ag hole"><div class="n">「评审」<em>无身份</em></div><div class="r">A2 质量回环里的 LLM 自评（score_text）——<b>有职责、没名字、没入口</b></div></div>
+      </div>
+      <div class="flow"><i>现状</i> 四个 agent 各自被按钮单独调用 · <b>互不通信</b> · 没有人对"最终质量"负责</div>
+    </div>
+
+    <div class="lane l4">
+      <div class="lt"><span class="ln">④ 账簿层</span><span class="ld">service._apply_verify_bookkeeping</span><span class="tag">书级 · 规则为主</span></div>
+      <div class="agents">
+        <div class="ag nollm"><div class="n">记账 Agent<em>no-LLM</em></div><div class="r"><b>读</b> 质检员的 deltas/risks<br><b>写</b> foreshadows 三态 / beliefs / world_states（幂等 upsert）<br>只在"批准·记账"后触发</div></div>
+      </div>
+    </div>
+
+    <div class="lane l5">
+      <div class="lt"><span class="ln">⑤ 校验层（不是 agent）</span><span class="ld">style_checks · world_rules · schema_retry · global_view · emergence</span><span class="tag">0-token 确定性</span></div>
+      <div class="agents">
+        <div class="ag nollm"><div class="n">规则器组<em>0-token</em></div><div class="r">AI 味扫描（S2/A3 底座）· 世界规则/护栏拦截 · 结构诊断 R1–R7（S3）· 剧本产物派生（S4）· schema 纠错重试 · 降级可观测（T9）<br><b>它们才是现在最可靠的部分</b>——不猜、可复现</div></div>
+      </div>
+    </div>
+
+    <div class="lane l6">
+      <div class="lt"><span class="ln">⑥ 编排位</span><span class="ld">service.py（硬编码）</span><span class="tag">★ 空的</span></div>
+      <div class="agents">
+        <div class="ag hole"><div class="n">Supervisor / 编排者<em>missing</em></div><div class="r">现在"谁在什么时候调谁"写死在 <span style="font-family:var(--mono)">service.py</span> 的函数里；页面按钮 = 硬编码的一次调用。<br><b>没有工具注册表、没有计划、没有汇报</b> —— 这是"按钮 vs 副驾"的根因</div></div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="right">
+    <div class="pcard">
+      <h3>6 个边界问题（本次要拍板）</h3>
+      <div class="p"><b>P1 编排者缺位</b>：流程写死在 service.py，工具散落 7 个路由 → agent 无法复用按钮能力</div>
+      <div class="p"><b>P2 主笔只到"结构"为止</b>：正文页没有 agent，作者的"说不清但看得出不对"无处表达</div>
+      <div class="p"><b>P3 文字层无责任人</b>：写手/体检/润色/质检各干一段、互不通信；A2 的"评审"有职责却没身份没入口</div>
+      <div class="p"><b>P4 角色不在场</b>：角色 agent 只在导演台跑；写手写正文时只有"角色卡文本"，没有角色的当场反应</div>
+      <div class="p"><b>P5 命名混淆</b>：页面叫"导演台"但操作者是作者；"导演 Agent"其实只是回合提示生成器</div>
+      <div class="p"><b>P6 彩排决策无人负责</b>：现在只能人工判断"这场要不要先演"，没有任何 agent 给建议</div>
+    </div>
+    <div class="pcard ok">
+      <h3>可以被信任、不要重做的部分</h3>
+      <div class="p"><b>校验层（0-token）</b>：S2/A3 规则、护栏、R1–R7 诊断 —— 已实测有效，只该被工具化，不该被重写</div>
+      <div class="p"><b>账簿层</b>：伏笔/信念/世界状态三本账已闭环，只缺"谁来读、怎么用"</div>
+      <div class="p"><b>LLM 客户端约束</b>：只有 <span style="font-family:var(--mono)">call_strong(json_schema)</span>，无 function calling → 编排第一版走"计划式工具调用"</div>
+    </div>
+    <div class="pcard">
+      <h3>四个能力范围（讨论用）</h3>
+      <div class="p"><b>读 / 写</b>：每个 agent 现在读写什么，图上已逐条标注</div>
+      <div class="p"><b>触发者</b>：作者点按钮 / 回合循环 / 批准后自动 —— 现在没有"agent 触发 agent"</div>
+      <div class="p"><b>产物落点</b>：灵感卡·骨架 / TurnArchive / final_prose + prose_notes / 三本账</div>
+      <div class="p"><b>闸门</b>：骨架确认 · 采纳高光 · 批准记账 —— 都要求人点头</div>
+    </div>
+  </div>
+</div>
+</body></html>

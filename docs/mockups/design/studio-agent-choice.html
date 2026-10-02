@@ -1,0 +1,114 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+:root{--bg:#0D0F14;--panel:#151922;--elev:#1C2130;--line:#232836;--line2:#2D3446;
+--t1:#C9CDD6;--t2:#7A8194;--t3:#4A5166;--hi:#EDEFF2;--gold:#E8B860;--red:#D96A6A;--cyan:#6AB5C9;--green:#7CB87C;--blue:#7C9CD4;
+--ui:"Noto Sans SC","Microsoft YaHei",system-ui,sans-serif;--mono:"JetBrains Mono",Consolas,monospace}
+*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(ellipse at 50% -10%, rgba(74,91,138,.32) 0%, rgba(13,15,20,0) 55%),var(--bg);color:var(--t1);font-family:var(--ui);font-size:12.5px;line-height:1.6;padding:20px 24px}
+h1{font-size:17px;color:var(--hi);margin:0 0 3px}
+.sub{color:var(--t2);font-size:12px;margin-bottom:14px}
+.three{display:flex;gap:14px;align-items:flex-start}
+.plan{flex:1;min-width:0;background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--line2);border-radius:8px;padding:11px 13px}
+.plan.a{border-left-color:var(--green)}.plan.b{border-left-color:var(--red)}.plan.c{border-left-color:var(--gold)}
+.plan h3{margin:0 0 3px;font-size:13.5px;color:var(--hi);display:flex;align-items:center;gap:8px}
+.plan h3 .tag{margin-left:auto;font-size:10.5px;border:1px solid var(--line2);border-radius:999px;padding:1px 8px;color:var(--t2);font-weight:400}
+.plan .verdict{font-size:11.5px;color:var(--t2);margin-bottom:8px}
+.plan.a .verdict b{color:var(--green)}
+.plan.b .verdict b{color:var(--red)}
+.plan.c .verdict b{color:var(--gold)}
+.split{display:flex;gap:8px;margin-top:6px}
+.side{flex:1;min-width:0;background:var(--elev);border:1px solid var(--line2);border-radius:6px;padding:8px 10px}
+.side .st{font-size:11.5px;font-weight:600;color:var(--hi);margin-bottom:5px}
+.side.share{border-color:var(--green)}
+.side.own{border-color:var(--gold)}
+.side ul{margin:0;padding-left:15px}
+.side li{font-size:11px;color:var(--t2);line-height:1.7}
+.side li b{color:var(--t1);font-weight:500}
+.cons{font-size:11px;color:var(--t2);margin-top:8px;line-height:1.7;border-top:1px dashed var(--line);padding-top:7px}
+.cons b{color:var(--red)}
+.bar{margin-top:14px;background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--cyan);border-radius:8px;padding:11px 13px}
+.bar h3{margin:0 0 7px;font-size:13px;color:var(--hi)}
+.bar .row{display:flex;gap:10px;font-size:11.5px;color:var(--t2);padding:3px 0}
+.bar .row b{color:var(--t1);font-weight:500;flex:0 0 78px}
+code{font-family:var(--mono);font-size:11px;color:var(--cyan)}
+</style></head><body>
+<h1>正文协作的 agent：复用主笔，还是新建？</h1>
+<div class="sub">"复用"该发生在<b>能力层</b>（工具 / 约束 / 账本 / 审计），不该发生在<b>人格层</b></div>
+<div class="three">
+
+  <div class="plan a">
+    <h3>A · 新建「责编」，共享底座<span class="tag">建议</span></h3>
+    <div class="verdict"><b>选它</b>：职责分层，能力全共享 —— 用户看不出重复，系统不会串味</div>
+    <div class="split">
+      <div class="side share">
+        <div class="st">共享（一套实现）</div>
+        <ul>
+          <li><b>书级约束表</b>：方向 / 世界观 / 硬规则 / 节奏 / 信息</li>
+          <li><b>工具集</b>：同一份 ToolRegistry</li>
+          <li><b>三本账读取</b>：同一裁剪视图</li>
+          <li><b>审计</b>：同一 <code>prose_notes</code>，只记"谁发起"</li>
+          <li><b>模型档位 / 事实闸门 / 校验层</b></li>
+        </ul>
+      </div>
+      <div class="side own">
+        <div class="st">专属（各自差异）</div>
+        <ul>
+          <li><b>system prompt</b>：总编（结构）vs 责编（本场文字）</li>
+          <li><b>感知 scope</b>：书级（树+诊断）vs 本场（正文+批注+事实）</li>
+          <li><b>记忆域</b>：书级记忆 / 回合史 vs 本场工作记忆+批注</li>
+          <li><b>产物落点</b>：骨架 / 角色卡 vs <code>final_prose</code> + 批注</li>
+        </ul>
+      </div>
+    </div>
+    <div class="cons">成本：多一个 <code>AgentSpec</code> + 一段 system prompt。<b>几乎为零</b>（底座本来就要建）</div>
+  </div>
+
+  <div class="plan b">
+    <h3>B · 直接复用主笔（一人格跨页）<span class="tag">不建议</span></h3>
+    <div class="verdict"><b>不要</b>：等于让总编下到句子级，两个优势同时丢</div>
+    <div class="split">
+      <div class="side own" style="border-color:var(--red)">
+        <div class="st">后果</div>
+        <ul>
+          <li><b>上下文膨胀</b>：一个 prompt 要塞 书树+全书诊断+本场正文+批注</li>
+          <li><b>俯瞰优势丢失</b>：总编最值钱的是全局视角</li>
+          <li><b>无法归因</b>：分不清是"结构错"还是"句子错"</li>
+          <li><b>对话史混淆</b>：全书规划与"这一段改一下"混在一条会话里</li>
+          <li><b>约束失效</b>：主笔既是规则制定者又是执行者，没人把关</li>
+        </ul>
+      </div>
+    </div>
+    <div class="cons">唯一好处：少写一个 agent —— <b>省下的成本远小于上述代价</b></div>
+  </div>
+
+  <div class="plan c">
+    <h3>C · 同一 agent、两个视角<span class="tag">过渡方案</span></h3>
+    <div class="verdict"><b>可作过渡</b>：双 system prompt（书级 / 场景级）切视角</div>
+    <div class="split">
+      <div class="side own">
+        <div class="st">比 B 好的地方</div>
+        <ul>
+          <li>prompt 不混，感知可按 scope 给</li>
+          <li>工作量最小（复用对话通道）</li>
+        </ul>
+      </div>
+      <div class="side own" style="border-color:var(--red)">
+        <div class="st">仍存在的问题</div>
+        <ul>
+          <li>对话史与记忆域仍共享 → 容易糊</li>
+          <li>审计里"谁说的"区分不清</li>
+          <li>下一步拆分时要迁数据</li>
+        </ul>
+      </div>
+    </div>
+    <div class="cons">只在"想先看效果、一周内要上线"时才选它</div>
+  </div>
+</div>
+
+<div class="bar">
+  <h3>落地时具体长什么样</h3>
+  <div class="row"><b>用户可见</b><span>主笔页顶部 = 「主笔 · 书级」；正文协作页右栏 = 「责编 · 本场」——<b>两个身份、两个入口，同一个工具箱</b></span></div>
+  <div class="row"><b>后端</b><span>两份 <code>AgentSpec</code>（主笔 scope=book / 责编 scope=scene），共用 <code>ToolRegistry</code> · <code>ToolExecutor</code> · 约束表 · 三本账读取 · 审计</span></div>
+  <div class="row"><b>约束谁说话</b><span>主笔<b>维护</b>约束表（书级资产），<b>全员读</b>——这就是你要的"主笔掌管一切"，靠约束生效，而不是靠一个 agent 跨页乱改</span></div>
+  <div class="row"><b>彩排请求</b><span>责编用 <code>agent_tasks</code> 发起 → 编排者派给场记/角色 agent → 产物回填本场（C 批第一条真实任务单）</span></div>
+</div>
+</body></html>

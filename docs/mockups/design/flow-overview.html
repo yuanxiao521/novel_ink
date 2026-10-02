@@ -1,0 +1,128 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+:root{--bg:#0D0F14;--panel:#151922;--elev:#1C2130;--line:#232836;--line2:#2D3446;
+--t1:#C9CDD6;--t2:#7A8194;--t3:#4A5166;--hi:#EDEFF2;--gold:#E8B860;--red:#D96A6A;--cyan:#6AB5C9;--green:#7CB87C;--blue:#7C9CD4;
+--ui:"Noto Sans SC","Microsoft YaHei",system-ui,sans-serif;--rd:"Noto Serif SC",Georgia,serif;--mono:"JetBrains Mono",Consolas,monospace}
+*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(ellipse at 50% -10%, rgba(74,91,138,.35) 0%, rgba(13,15,20,0) 55%),var(--bg);color:var(--t1);font-family:var(--ui);font-size:13px;line-height:1.55;padding:22px 26px}
+h1{font-size:17px;color:var(--hi);margin:0 0 4px}
+.sub{color:var(--t2);font-size:12px;margin-bottom:16px}
+.cols{display:flex;gap:20px;align-items:flex-start}
+.main{flex:1;min-width:0}
+.side{flex:0 0 430px;display:flex;flex-direction:column;gap:12px}
+.card{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--blue);border-radius:8px;padding:11px 14px;box-shadow:0 2px 8px rgba(0,0,0,.3)}
+.card.entry{border-left-color:var(--t3);opacity:.92}
+.card.s1{border-left-color:var(--gold)}
+.card.s2{border-left-color:var(--cyan);border-style:dashed}
+.card.s3{border-left-color:var(--red)}
+.card.s4{border-left-color:var(--green)}
+.card.out{border-left-color:var(--hi)}
+.chead{display:flex;align-items:center;gap:9px;margin-bottom:6px}
+.no{width:20px;height:20px;flex:0 0 20px;border-radius:5px;background:var(--elev);border:1px solid var(--line2);display:grid;place-items:center;font-size:11px;color:var(--t2)}
+.card.s1 .no{background:rgba(232,184,96,.14);color:var(--gold);border-color:var(--gold)}
+.card.s2 .no{background:rgba(106,181,201,.14);color:var(--cyan);border-color:var(--cyan)}
+.card.s3 .no{background:rgba(217,106,106,.14);color:var(--red);border-color:var(--red)}
+.card.s4 .no{background:rgba(124,184,124,.14);color:var(--green);border-color:var(--green)}
+.name{font-size:14px;font-weight:600;color:var(--hi)}
+.route{font-family:var(--mono);font-size:11px;color:var(--t2)}
+.badge{margin-left:auto;font-size:10.5px;border-radius:999px;padding:2px 9px;border:1px solid var(--line2);color:var(--t2);white-space:nowrap}
+.badge.done{color:var(--green);border-color:var(--green);background:rgba(124,184,124,.1)}
+.badge.opt{color:var(--cyan);border-color:var(--cyan);background:rgba(106,181,201,.1)}
+.badge.todo{color:var(--gold);border-color:var(--gold);background:rgba(232,184,96,.1)}
+.kv{display:flex;gap:8px;font-size:12px;padding:2px 0}
+.kv span{flex:0 0 62px;color:var(--t3)}
+.kv b{font-weight:500;color:var(--t1)}
+.kv em{font-style:normal;color:var(--gold)}
+.arrow{display:flex;align-items:center;justify-content:center;gap:10px;height:26px;color:var(--t3);font-size:12px}
+.arrow b{color:var(--cyan);font-weight:500}
+.arrow i{font-style:normal;color:var(--t2)}
+.arrow.dash{color:var(--cyan)}
+.sidecard{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:11px 14px}
+.sidecard h3{font-size:12.5px;color:var(--hi);margin:0 0 7px;font-weight:600}
+.sidecard .item{font-size:11.5px;color:var(--t2);padding:3px 0;border-bottom:1px dashed var(--line)}
+.sidecard .item:last-child{border:none}
+.sidecard .item b{color:var(--t1);font-weight:500}
+.loop{font-size:11.5px;color:var(--t2);background:rgba(232,184,96,.06);border:1px dashed var(--gold);border-radius:6px;padding:8px 10px;line-height:1.7}
+.loop b{color:var(--gold)}
+</style></head><body>
+<h1>墨卷 · 从选题到成书：创作主链</h1>
+<div class="sub">5 个站点 + 3 类旁路资源 + 2 条回流；<b>② 导演台是「可选 · 场景级」</b>（不必经，跳过直接写）</div>
+<div class="cols">
+  <div class="main">
+    <div class="card entry">
+      <div class="chead"><span class="no">0</span><span class="name">新建作品</span><span class="route">书架 /</span><span class="badge done">已实现</span></div>
+      <div class="kv"><span>输入</span><b>书名 + 题材 + <em>一句话方向（可跳过）</em></b></div>
+      <div class="kv"><span>落点</span><b>book + <code>book_memories(topic=direction)</code>（P0 已实现）</b></div>
+    </div>
+    <div class="arrow"><span>▼</span></div>
+
+    <div class="card s1">
+      <div class="chead"><span class="no">1</span><span class="name">主笔规划</span><span class="route">/maestro</span><span class="badge done">已实现 P0/P1</span></div>
+      <div class="kv"><span>形态</span><b><em>对话式共创</em>：主笔 agent + 灵感池 + 骨架树 + 书级记忆</b></div>
+      <div class="kv"><span>干什么</span><b>定方向 → 生成灵感卡 → 排章/场景骨架 → 生成角色卡 → 确认落库</b></div>
+      <div class="kv"><span>产出</span><b>chapters / scenes / characters / worldview / world_rules</b></div>
+      <div class="kv"><span>闸门</span><b>骨架预览「✓ 确认落库」才写库</b></div>
+      <div class="kv"><span>待做</span><b>A4 分批交付（每批 N 章 → 汇报 → 确认 → 再下批）</b></div>
+    </div>
+    <div class="arrow dash"><span>┆</span><b>需要碰撞的场景才下钻（可选）</b><span>┆</span></div>
+
+    <div class="card s2">
+      <div class="chead"><span class="no">2</span><span class="name">导演台演绎</span><span class="route">/director/:sceneId</span><span class="badge opt">◆ 可选 · 场景级</span></div>
+      <div class="kv"><span>形态</span><b>回合推演：多角色 think/act 自主演绎（"彩排"）</b></div>
+      <div class="kv"><span>干什么</span><b>只给方向不给台词；产出事件流 / 思考档 / 张力 / 高光</b></div>
+      <div class="kv"><span>产出</span><b>TurnArchive（含 thoughts）+ 高光 hits + 成文候选</b></div>
+      <div class="kv"><span>桥接</span><b>勾选采纳 → 作为【涌现素材】注入写手（S4 已交付，<em>不给就完全沉默</em>）</b></div>
+    </div>
+    <div class="arrow dash"><span>┆</span><b>素材注入（勾选才给）</b><span>┆</span></div>
+
+    <div class="card s3">
+      <div class="chead"><span class="no">3</span><span class="name">正文协作</span><span class="route">/studio/:sceneId</span><span class="badge todo">★ 本次要设计</span></div>
+      <div class="kv"><span>形态</span><b><em>副驾 agent</em>（Supervisor + 工具箱）+ 同样的按钮</b></div>
+      <div class="kv"><span>干什么</span><b>写手初稿 ⇄ 体检 / 润色 / 质检 / AI 味 / 定点修复 / 质量回环</b></div>
+      <div class="kv"><span>交互</span><b><em>段落序号</em> + 选中句子 → 批注给 agent（"第 3 段这里不像他说的"）</b></div>
+      <div class="kv"><span>产出</span><b>scenes.final_prose + prose_notes 审计（谁发起：作者/副驾）</b></div>
+      <div class="kv"><span>已有</span><b>A2 质量回环 · A3 反 AI 味 · S2 口吻校验（引擎侧齐了，缺"副驾层"）</b></div>
+    </div>
+    <div class="arrow"><span>▼</span></div>
+
+    <div class="card s4">
+      <div class="chead"><span class="no">4</span><span class="name">概览复盘</span><span class="route">/dashboard</span><span class="badge done">已实现 S3</span></div>
+      <div class="kv"><span>形态</span><b>仪表盘（张力 / 伏笔 / 诊断 / 体检）</b></div>
+      <div class="kv"><span>干什么</span><b>全书张力曲线 + R1–R7 结构诊断 + 伏笔呼应网络 + 一致性</b></div>
+      <div class="kv"><span>回流</span><b>不满意 → 回 ① 调骨架，或回 ③ 重写某场</b></div>
+    </div>
+    <div class="arrow"><span>▼</span></div>
+
+    <div class="card out">
+      <div class="chead"><span class="no">5</span><span class="name">成书</span><span class="route">导出</span><span class="badge">待做（已有雏形）</span></div>
+      <div class="kv"><span>干什么</span><b>scenes.final_prose → 章 → 书 组装；导出 Markdown / 逐章校对</b></div>
+    </div>
+  </div>
+
+  <div class="side">
+    <div class="sidecard">
+      <h3>旁路 · 随时可改的资源（不占主链）</h3>
+      <div class="item"><b>人物</b> /characters —— 角色卡库（书级），一键让主笔补齐</div>
+      <div class="item"><b>设定</b> /settings —— 方向 / 世界观 / 世界状态 / 约束 / 记忆</div>
+      <div class="item"><b>素材库</b> —— <b>跨书全局</b>，RAG 落地后开放（当前灰态）</div>
+    </div>
+    <div class="sidecard">
+      <h3>三处「作者掌控」闸门</h3>
+      <div class="item">① 骨架预览 → <b>确认落库</b>（已实现）</div>
+      <div class="item">② 高光 hits → <b>勾选采纳</b>（已实现）</div>
+      <div class="item">③ 工具副作用（保存 / 落账 / 采纳）→ <b>需确认</b>（副驾层要做）</div>
+    </div>
+    <div class="sidecard">
+      <h3>② 导演台到底放哪？三个选项</h3>
+      <div class="item"><b>A 可选彩排（建议）</b>：默认跳过；场景级开关「先演一次」。主链 = ①→③→④</div>
+      <div class="item"><b>B 主链必经</b>：每场先演后写——产出更"活"，但成本 ×N、作者等待长</div>
+      <div class="item"><b>C 混合</b>：重头戏（高潮/对决/收束）自动标"建议排演"，其余跳过</div>
+    </div>
+    <div class="loop">
+      <b>回流（现在的缺口）</b><br>
+      · ④ 发现第 3 章太平 → 现在只能手动回 ① 改<br>
+      · ③ 写手说"本场目标没定" → 应能<b>就地</b>改场景字段，不必跳页<br>
+      · ② 演出的高光若写手没用上 → <b>没有任何提示</b>（缺"素材使用率"）
+    </div>
+  </div>
+</div>
+</body></html>

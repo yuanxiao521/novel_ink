@@ -1,0 +1,93 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+:root{--bg:#0D0F14;--panel:#151922;--elev:#1C2130;--line:#232836;--line2:#2D3446;
+--t1:#C9CDD6;--t2:#7A8194;--t3:#4A5166;--hi:#EDEFF2;--gold:#E8B860;--red:#D96A6A;--cyan:#6AB5C9;--green:#7CB87C;--blue:#7C9CD4;--purple:#8B7CC9;
+--ui:"Noto Sans SC","Microsoft YaHei",system-ui,sans-serif;--mono:"JetBrains Mono",Consolas,monospace}
+*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(ellipse at 50% -10%, rgba(74,91,138,.32) 0%, rgba(13,15,20,0) 55%),var(--bg);color:var(--t1);font-family:var(--ui);font-size:12.5px;line-height:1.6;padding:20px 24px}
+h1{font-size:17px;color:var(--hi);margin:0 0 3px}
+.sub{color:var(--t2);font-size:12px;margin-bottom:14px}
+.wrap{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.row{display:flex;gap:14px;align-items:stretch}
+.actor{flex:0 0 250px;background:var(--elev);border:1px solid var(--line2);border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;justify-content:center}
+.actor.book{border-left:4px solid var(--gold)}
+.actor.scene{border-left:4px solid var(--cyan)}
+.actor .an{font-size:14px;font-weight:600;color:var(--hi)}
+.actor .ad{font-size:11px;color:var(--t2);margin-top:4px;line-height:1.7}
+.between{flex:1;min-width:0;display:flex;flex-direction:column;gap:9px;justify-content:center}
+.flow{border-radius:8px;padding:9px 12px;font-size:11.5px;line-height:1.7}
+.flow .ft{font-size:12px;font-weight:600;color:var(--hi);display:flex;align-items:center;gap:8px;margin-bottom:4px}
+.flow .ft em{font-style:normal;font-size:10.5px;font-family:var(--mono);color:var(--t3);margin-left:auto}
+.flow.down{background:rgba(232,184,96,.07);border:1px solid var(--gold)}
+.flow.up{background:rgba(106,181,201,.07);border:1px solid var(--cyan)}
+.flow.mid{background:rgba(139,124,201,.07);border:1px dashed var(--purple)}
+.flow b{color:var(--t1);font-weight:500}
+.pill{font-size:10px;border-radius:999px;padding:1px 7px;border:1px solid var(--line2);color:var(--t2)}
+.pill.y{color:var(--green);border-color:var(--green);background:rgba(124,184,124,.1)}
+.pill.n{color:var(--red);border-color:var(--red);background:rgba(217,106,106,.1)}
+.bot{display:flex;gap:12px;margin-top:14px}
+.card{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 13px}
+.card h3{margin:0 0 7px;font-size:12.5px;color:var(--hi);display:flex;align-items:center;gap:8px}
+.card h3 .tag{margin-left:auto;font-size:10.5px;border:1px solid var(--line2);border-radius:999px;padding:1px 8px;color:var(--t2);font-weight:400}
+.card .r{font-size:11.5px;color:var(--t2);padding:3px 0;border-bottom:1px dashed var(--line);line-height:1.7}
+.card .r:last-child{border:none}
+.card .r b{color:var(--t1);font-weight:500}
+.card.no{border-left:3px solid var(--red)}
+.card.yes{border-left:3px solid var(--green)}
+.card.der{border-left:3px solid var(--blue)}
+code{font-family:var(--mono);font-size:11px;color:var(--cyan)}
+</style></head><body>
+<h1>主笔 ↔ 责编：信息怎么流（下行约束 / 上行信号 / 按需复盘）</h1>
+<div class="sub">不是"主笔盯着责编"，也不是"写完就自理"；两者<b>只能建议，不能互相直接改</b></div>
+
+<div class="wrap">
+  <div class="row">
+    <div class="actor book">
+      <div class="an">主笔 <span class="pill">书级</span></div>
+      <div class="ad">掌管<b>结构与约束</b>：书树 / 节奏 / 伏笔 / 角色弧 / 方向·世界观·硬规则<br><b>不能改正文</b></div>
+    </div>
+    <div class="between">
+      <div class="flow down">
+        <div class="ft">① 下行 · 约束（已有，且是"全员读"）<em>book → scene</em><span class="pill y">已实现</span></div>
+        <b>约束表</b>（方向/世界观/硬规则/节奏/信息） · <b>书树</b>（本章本场目标） · <b>伏笔计划</b> · 建议彩排<br>
+        形式：<b>只读约束 + 场景任务</b>，不是逐句指令
+      </div>
+      <div class="flow up">
+        <div class="ft">② 上行 · 场景信号包（结构化，<b>不是全文回灌</b>）<em>scene → book</em><span class="pill n">缺</span></div>
+        <b>字数达成</b>（实际 / 目标） · <b>本场张力</b>（回合归档） · <b>伏笔</b>（埋了没 / 收了没） · <b>角色口吻偏离</b>（voice_findings） · <b>批注热点</b>（哪类问题反复出现） · <b>重写次数 / 被驳回项</b> · <b>偏离场景目标</b>（质检 risks）<br>
+        现状断点：<code>prose_notes</code> 里有这些原始记录，<b>但只给人看，agent 不读</b>
+      </div>
+      <div class="flow mid">
+        <div class="ft">③ 横向 · 请求-应答（L3 任务总线）<em>scene → 场记/角色</em><span class="pill n">缺</span></div>
+        责编："这场没把握，<b>请求彩排</b>" → <code>agent_tasks</code> → 编排者派给场记/角色 → 素材回填本场（勾选才注入）
+      </div>
+    </div>
+    <div class="actor scene">
+      <div class="an">责编 <span class="pill">本场</span></div>
+      <div class="ad">掌管<b>这一场的文字</b>：正文 / 口吻 / 事实一致 / 伏笔落地 / 读批注<br><b>不能改骨架与约束</b></div>
+    </div>
+  </div>
+
+  <div class="bot">
+    <div class="card der">
+      <h3>④ 主笔什么时候读上行信号<span class="tag">按需，不打断</span></h3>
+      <div class="r"><b>作者召唤</b>时（主笔对话 / 让主笔排骨架）→ 读<b>汇总视图</b>，不是逐条原文</div>
+      <div class="r"><b>作者在概览点「让主笔复盘」</b> → 读全书信号 → 产出<b>约束修订建议 / 骨架调整建议</b></div>
+      <div class="r"><b>场景收束时</b> → 只落信号（<b>不自动叫主笔</b>），避免打断作者心流</div>
+      <div class="r" style="color:var(--gold)"><b>产出永远是"建议 + 确认"</b>，主笔不会自动改骨架</div>
+    </div>
+    <div class="card yes">
+      <h3>实现：不新建表（沿用 S3 纪律）</h3>
+      <div class="r"><b>数据源已存在</b>：<code>prose_notes</code>（kind/status/created_by）+ <code>TurnArchive.tension</code> + 批注状态 + <code>final_prose</code> 字数</div>
+      <div class="r"><b>做法</b>：在 S3 <code>global_view.py</code> 上加一段<b>0-token 派生的「写作侧信号」</b>（统计 + 热点），与曲线/诊断同源</div>
+      <div class="r"><b>三个落点</b>：正文保存后（已有 <code>_bookkeep_after_save</code> 钩子）· 场景收束 · 概览复盘</div>
+      <div class="r"><b>好处</b>：零新表、可回放、可测试（纯派生）；主笔的上下文只多"一段摘要"</div>
+    </div>
+    <div class="card no">
+      <h3>为什么不用另外两种</h3>
+      <div class="r"><b>方案一 · 单向（现状）</b>：主笔给完约束就不管 → 第 4 章才发现第 1 章跑偏，已经太晚；<b>"主笔掌管一切"变成一句口号</b></div>
+      <div class="r"><b>方案二 · 全文回灌</b>：把正文全塞回主笔 → 上下文爆炸，且主笔会忍不住改句子（<b>越界</b>），与责编互相覆盖</div>
+      <div class="r" style="color:var(--green)"><b>方案三 · 信号上行（选它）</b>：场景层给<b>结构化的"发生了什么"</b>，主笔给<b>结构化的"接下来该怎么"</b>——各管一层，靠信号与建议衔接</div>
+    </div>
+  </div>
+</div>
+</body></html>
