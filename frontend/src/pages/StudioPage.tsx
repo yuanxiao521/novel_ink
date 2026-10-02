@@ -12,6 +12,8 @@ import {
   saveSceneProse,
 } from '../api/novel';
 import type { ProseNote, SceneDetail, VerifyOpinion } from '../api/novel';
+import { ContextBar } from '../components/common/ContextBar';
+import { useWorkspace } from '../context/WorkspaceContext';
 
 /* ---------- 常量 ---------- */
 
@@ -37,7 +39,10 @@ const STATUS_CLS: Record<string, string> = {
 /* ---------- 组件 ---------- */
 
 export function StudioPage() {
-  const { sceneId } = useParams<{ sceneId: string }>();
+  const { sceneId: routeSceneId } = useParams<{ sceneId: string }>();
+  const { sceneId: ctxSceneId } = useWorkspace();
+  // 路径参数优先；无路径时用全局上下文（ContextBar 切场景后仍可用）
+  const sceneId = routeSceneId || ctxSceneId;
   const nav = useNavigate();
 
   const [scene, setScene] = useState<SceneDetail | null>(null);
@@ -142,6 +147,7 @@ export function StudioPage() {
 
   return (
     <div className="studio-page">
+      <ContextBar step="studio" />
       {toast && <div className="studio-toast">{toast}</div>}
 
       {/* 顶栏 */}

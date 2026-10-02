@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ScriptView } from '../components/director/ScriptView';
+import { ContextBar } from '../components/common/ContextBar';
+import { useWorkspace } from '../context/WorkspaceContext';
 import { Link, useLocation, useParams } from 'react-router-dom';
 import { useTheme } from '../theme/ThemeContext';
 import { useDirectorSim } from '../hooks/useDirectorSim';
@@ -30,6 +32,7 @@ export function DirectorPage() {
   const location = useLocation();
   // 深链：从主笔/概览进入时携带 book_id/chapter_id
   const navState = (location.state ?? {}) as { book_id?: string; chapter_id?: string };
+  const { sceneId: wsSceneId, bookId: wsBookId, setScene: setWsScene, setBook: setWsBook } = useWorkspace();
 
   // —— 书选择（驱动顶部场景下拉；同人物页交互）——
   const [books, setBooks] = useState<BookMeta[]>([]);
@@ -112,6 +115,7 @@ export function DirectorPage() {
   // 换书：复位目标（需重新选场景；同角色页"选书→列表"）
   const changeBook = (bid: string) => {
     setBookId(bid);
+    setWsBook(bid);
     setTarget({ sceneId: '', bookId: bid, fresh: false });
   };
   // 换场景（顶部下拉）：页内切换，不走路由 → 不整页重载
@@ -119,7 +123,18 @@ export function DirectorPage() {
     const ch = selTree?.chapters.find((c) => c.scenes.some((s) => s.id === sid));
     const t: DirectorTarget = { sceneId: sid, bookId: selTree?.id ?? bookId, chapterId: ch?.id, fresh };
     setTarget(t);
+    setWsScene(sid);
   };
+
+  // 与全局上下文条双向同步：栏里换书/换场景 → 页内跟着切（不整页重载）
+  useEffect(() => {
+    if (wsBookId && wsBookId !== bookId) {
+      changeBook(wsBookId);
+      return;
+    }
+    if (wsSceneId && wsSceneId !== sceneId) changeScene(wsSceneId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wsBookId, wsSceneId]);
   // 从头新开当前场景（丢弃上次进度）
   const freshRestart = () => {
     if (!sceneId) return;
@@ -150,6 +165,7 @@ export function DirectorPage() {
   return (
     <div className="app-shell">
       <div className={`view workbench ${view === 'workbench' ? 'active' : ''}`} id="view-workbench">
+        <ContextBar step="director" />
         <header className="topbar">
           <div className="brand-group">
             <span className="brand-dot"></span>
@@ -161,17 +177,6 @@ export function DirectorPage() {
             </svg>
           </div>
           <div className="scene-group">
-            <select
-              className="scene-switch"
-              value={bookId}
-              title="切换书"
-              onChange={(e) => changeBook(e.target.value)}
-            >
-              {books.length === 0 && <option value="">（暂无书）</option>}
-              {books.map((b) => (
-                <option key={b.id} value={b.id}>{b.title}</option>
-              ))}
-            </select>
             <select
               className="scene-switch scene-picker"
               value={sceneId}

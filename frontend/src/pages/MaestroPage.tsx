@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Sidebar } from '../components/backoffice/Sidebar';
-import { ThemeToggle } from '../components/backoffice/ThemeToggle';
+import { ContextBar } from '../components/common/ContextBar';
+import { useWorkspace } from '../context/WorkspaceContext';
 import { useDialog } from '../components/common/Dialog';
 import { API_BASE } from '../types/types';
 import {
-  listBooks,
   fetchBookTree,
   listInspirations,
   createBook,
@@ -27,7 +27,7 @@ import {
   updateMemory,
   deleteMemory,
 } from '../api/novel';
-import type { BookMeta, BookTree, BookMemoryMeta, InspirationCard, MemoryTopic, SceneMeta, ScenePatchItem } from '../api/novel';
+import type { BookTree, BookMemoryMeta, InspirationCard, MemoryTopic, SceneMeta, ScenePatchItem } from '../api/novel';
 
 /* ---------- 类型 ---------- */
 
@@ -91,8 +91,7 @@ const zoneCls = (badge?: string) => {
 export function MaestroPage() {
   const { showPrompt, showConfirm } = useDialog();
   const nav = useNavigate();
-  const [books, setBooks] = useState<BookMeta[]>([]);
-  const [bookId, setBookId] = useState('');
+  const { bookId, book: ctxBook, setBook, refreshBooks } = useWorkspace();
   const [tree, setTree] = useState<BookTree | null>(null);
 
   // —— 结构编辑（原规划页功能并入：选节点 → 编辑/增删）——
@@ -139,19 +138,6 @@ export function MaestroPage() {
   const [sceneSaving, setSceneSaving] = useState(false);
 
   const statusText = agentState === 'idle' ? '主笔空闲中' : agentState === 'thinking' ? '主笔思考中' : '调用工具中';
-
-  /* ---------- 数据加载 ---------- */
-  useEffect(() => {
-    void (async () => {
-      try {
-        const bs = await listBooks();
-        setBooks(bs);
-        if (bs.length > 0) setBookId(bs[0].id);
-      } catch {
-        /* 后端不可用时保持演示数据 */
-      }
-    })();
-  }, []);
 
   useEffect(() => {
     if (!bookId) {
@@ -509,9 +495,6 @@ export function MaestroPage() {
 
   /* ---------- 结构编辑（原规划页功能并入） ---------- */
   const briefFlash = (t: string) => { setFlash(t); setTimeout(() => setFlash(''), 1500); };
-  const loadBooks = async () => {
-    try { const bs = await listBooks(); setBooks(bs); } catch { /* ignore */ }
-  };
   const reload = async () => {
     try { const t = await fetchBookTree(bookId); setTree(t); } catch { /* ignore */ }
   };
@@ -600,8 +583,8 @@ export function MaestroPage() {
     if (!title) return;
     try {
       const b = await createBook({ title, genre: '玄幻', status: 'planned' });
-      await loadBooks();
-      setBookId(b.id);
+      refreshBooks();
+      setBook(b.id);
       briefFlash('已建书');
     } catch (e) { briefFlash(`建书失败：${String(e)}`); }
   };
@@ -647,6 +630,7 @@ export function MaestroPage() {
     <div className="app-shell">
       <Sidebar active="maestro" />
       <div className="main-col">
+        <ContextBar step="maestro" />
         <div className="maestro-workbench">
           {flash && <div className="maestro-feedback">{flash}</div>}
           {/* 顶栏 */}
@@ -654,25 +638,9 @@ export function MaestroPage() {
             <div className="topbar-left">
               <span className="brand-seal">墨</span>
               <div className="book-meta">
-                <div className="book-title">
-                  {tree ? tree.title : books.find((b) => b.id === bookId)?.title ?? '本书骨架'}
-                </div>
-                <div className="book-switch">
-                  <select
-                    className="char-scope-select"
-                    value={bookId}
-                    onChange={(e) => setBookId(e.target.value)}
-                    title="切换书"
-                    style={{ maxWidth: 220 }}
-                  >
-                    {books.length === 0 && <option value="">（暂无书）</option>}
-                    {books.map((b) => (
-                      <option key={b.id} value={b.id}>{b.title}</option>
-                    ))}
-                  </select>
-                  <button className="btn-icon" title="新建书" onClick={() => void onAddBook()}>＋</button>
-                </div>
+                <div className="book-title">{tree ? tree.title : ctxBook?.title ?? '本书骨架'}</div>
               </div>
+              <button className="btn-icon" title="新建书" onClick={() => void onAddBook()}>＋</button>
             </div>
 
             <div className="topbar-center">
@@ -699,7 +667,6 @@ export function MaestroPage() {
                 <span className="status-dot"></span>
                 <span className="status-text">{statusText}</span>
               </div>
-              <ThemeToggle />
             </div>
           </header>
 

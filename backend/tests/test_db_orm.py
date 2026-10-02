@@ -170,3 +170,35 @@ async def test_schema_matches_orm_no_drift():
         if miss or extra:
             problems.append(f"{name}: DB 缺 {miss} / DB 多 {extra}")
     assert not problems, "ORM 与 DB 结构漂移（需补对齐迁移）：" + "；".join(problems)
+
+
+@pytest.mark.skipif(not settings.persist, reason="persist=False，走内存态")
+async def test_save_chapter_syncs_book_chapter_count(repo):
+    """B23 回归：建章后 books.chapter_count 必须跟着变。
+
+    此前 chapter_count 只在 save_book（建书）时同步 → 建章 / 删章 / plan commit
+    全都不更新，侧栏书目长期失真（实测 4 本书 3 本错：book-0938c02c 显示 0 章/实 2 章、
+    book-7d16f6cd 显示 15 章/实 0 章）。删章路径本来就有 sync，建章没有 → 本用例守住建章。
+    """
+    from uuid import uuid4
+
+    if not await _db_ready():
+        pytest.skip("DB 不可用，跳过真实库测试")
+
+    bid = f"b-b23-{uuid4().hex[:8]}"
+    cid = f"c-b23-{uuid4().hex[:8]}"
+    await repo.save_book({
+        "id": bid, "title": "B23 测试书", "genre": "测试",
+        "status": "planned", "cover_init": "测", "synopsis": "",
+    })
+    try:
+        assert (await repo.get_book(bid) or {}).get("chapter_count") == 0
+        await repo.save_chapter({
+            "id": cid, "book_id": bid, "title": "第 1 章",
+            "summary": "", "order_no": 0, "tone": "action", "word_target": 3000,
+        })
+        assert (await repo.get_book(bid) or {}).get("chapter_count") == 1
+        await repo.delete_chapter(cid)
+        assert (await repo.get_book(bid) or {}).get("chapter_count") == 0
+    finally:
+        await repo.delete_book(bid)

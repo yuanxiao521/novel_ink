@@ -277,7 +277,12 @@
 
 ## 6. 分批落地
 
-### P0 · IA 骨架（先做这一批，只碰 IA 与导航，不动引擎）
+### P0 · IA 骨架 —— ✅ 已落地（2026-10-01，tag v1.16）
+
+验收：`tsc --noEmit` 0 · pytest **160 passed** · 全仓真实 `href="#"` = 0 · 深链与跨书切换上下文一致（DOM 断言 `book-rain`）· 截图归档 [docs/mockups/p0/](mockups/p0/)。
+顺带修 **B23**（chapter_count 建章不更新，实测修正 3/4 本书）。
+
+原计划条目：
 
 1. **WorkspaceContext**：状态 `{bookId, chapterId, sceneId}`；优先级 路径参数 > `?query` > localStorage > 第一本书；`set*` 同步写 URL（`replace: true`）；派生 chapterOptions / sceneOptions / prevStep / nextStep / blockers。
 2. **ContextBar**：面包屑三段下拉 + 前置条件 chip + 主题切换 + 上一步/下一步；接入 3 个工作页。

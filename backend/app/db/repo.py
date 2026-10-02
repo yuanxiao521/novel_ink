@@ -290,6 +290,15 @@ class Repo:
 
     async def save_chapter(self, data: dict) -> None:
         await self._upsert(Chapter, data)
+        # B23：章增删后重算 chapter_count。
+        # 此前只在 save_book（建书）时同步 → 建章/plan commit 全都不更新，
+        # 侧栏书目长期显示"玄幻 · 0 章"而骨架树里有 2 章（实测 4 本书 3 本失真）。
+        book_id = str(data.get("book_id") or "")
+        if not book_id:
+            ch = await self.get_chapter(str(data.get("id") or ""))
+            book_id = str((ch or {}).get("book_id") or "")
+        if book_id:
+            await self._sync_book_chapter_count(book_id)
 
     # ------------------------------------------------------------------
     # scenes（第三层）

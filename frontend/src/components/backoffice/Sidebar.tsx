@@ -1,46 +1,69 @@
 import { useEffect, useState } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { listBooks, createBook } from '../../api/novel';
+import { Link, useNavigate } from 'react-router-dom';
+import { createBook, createMemory, listBooks } from '../../api/novel';
+import type { BookMeta, MemoryTopic } from '../../api/novel';
 import { useDialog } from '../common/Dialog';
-import type { BookMeta } from '../../api/novel';
+import { useWorkspace, type StepKey } from '../../context/WorkspaceContext';
 
-const NAV_ITEMS = [
-  { key: 'home', to: '/', icon: '▤', text: '书架' },
-  { key: 'dashboard', to: '/dashboard', icon: '◉', text: '概览' },
-  { key: 'maestro', to: '/maestro', icon: '✎', text: '主笔创作' },
-  { key: 'characters', to: '/characters', icon: '☺', text: '人物' },
-  // 以下为未来扩展点（死链保留，不加假功能）
-  { key: 'settings', icon: '☷', text: '设定' },
-  { key: 'outline', icon: '☷', text: '大纲' },
-  { key: 'foreshadow', icon: '⟡', text: '伏笔' },
-  { key: 'chapters', icon: '☰', text: '章节' },
-  { key: 'memory', icon: '▦', text: '记忆包' },
-  { key: 'checkup', icon: '♥', text: '体检' },
+/* ==========================================================================
+   Sidebar —— 三段式（书架 / 本书工作区 / 全局）
+   规则：导航项要么能到，要么显式灰态；不再保留任何 href="#" 死链。
+   ========================================================================== */
+
+type SidebarKey = StepKey | 'home' | 'characters';
+
+const STEPS: Array<{ key: StepKey; no: string; text: string }> = [
+  { key: 'maestro', no: '1', text: '主笔创作' },
+  { key: 'director', no: '2', text: '导演台' },
+  { key: 'studio', no: '3', text: '正文协作' },
+  { key: 'dashboard', no: '4', text: '概览复盘' },
 ];
 
-export function Sidebar({ active }: { active: 'home' | 'dashboard' | 'maestro' | 'characters' }) {
+export function Sidebar({ active }: { active: SidebarKey }) {
   const nav = useNavigate();
-  const location = useLocation();
+  const ws = useWorkspace();
   const { showPrompt } = useDialog();
-  const [books, setBooks] = useState<BookMeta[]>([]);
+  const [fallbackBooks, setFallbackBooks] = useState<BookMeta[]>([]);
 
-  const load = () => {
-    listBooks().then(setBooks).catch(() => setBooks([]));
-  };
+  // 兜底：context 尚未就绪时也能显示书列表
   useEffect(() => {
-    load();
-  }, []);
+    if (ws.books.length > 0) return;
+    listBooks().then(setFallbackBooks).catch(() => setFallbackBooks([]));
+  }, [ws.books.length]);
+  const books = ws.books.length > 0 ? ws.books : fallbackBooks;
 
-  // 当前选中书（来自 ?book=，供书架高亮）
-  const selBook = new URLSearchParams(location.search).get('book') || '';
+  const stepTo = (key: StepKey): string => {
+    if (key === 'director') return ws.sceneId ? `/director/${ws.sceneId}` : '/director';
+    if (key === 'studio') return ws.sceneId ? `/studio/${ws.sceneId}` : '/studio';
+    if (key === 'dashboard') return ws.bookId ? `/dashboard?book=${ws.bookId}` : '/dashboard';
+    return '/maestro';
+  };
 
+  const stepDot = (key: StepKey): string => {
+    const { outline, turns, prose } = ws.status;
+    if (key === 'maestro') return outline ? 'done' : 'idle';
+    if (key === 'director') return turns ? 'done' : outline ? 'run' : 'idle';
+    if (key === 'studio') return prose ? 'done' : turns ? 'run' : 'idle';
+    return (ws.globalView?.diagnostics?.length ?? 0) > 0 ? 'run' : 'idle';
+  };
+
+  // 建书：书名 + 一句话方向（可跳过）→ 方向落成 book_memories(topic=direction)
   const newBook = async () => {
     const title = await showPrompt('新书名', '新书');
     if (!title) return;
     try {
-      const r = await createBook({ title, genre: '玄幻', status: 'planned' });
-      await load();
-      nav(`/dashboard?book=${r.id}`);
+      const b = await createBook({ title, genre: '玄幻', status: 'planned' });
+      const direction = await showPrompt('一句话方向（可留空跳过）', '');
+      if (direction && direction.trim()) {
+        try {
+          await createMemory(b.id, { topic: 'direction' as MemoryTopic, content: direction.trim() });
+        } catch {
+          /* 方向写失败不阻塞建书 */
+        }
+      }
+      ws.refreshBooks();
+      ws.setBook(b.id);
+      nav(`/maestro?book=${b.id}`);
     } catch (e) {
       console.warn('[书架] 建书失败：', e);
     }
@@ -53,58 +76,81 @@ export function Sidebar({ active }: { active: 'home' | 'dashboard' | 'maestro' |
         <span className="brand-name">墨卷</span>
       </div>
 
-      <div className="sidebar-section">
-        <div className="section-label">书架</div>
+      {/* ---------- 书架 ---------- */}
+      <div className="sidebar-group">
+        <div className="sidebar-group-label">书架</div>
         <div className="book-list">
           {books.length === 0 && (
-            <div className="char-empty">暂无书<br />点「新书」创建</div>
+            <div className="char-empty">
+              暂无书
+              <br />
+              点「新书」创建
+            </div>
           )}
-          {books.map((b) => (
-            <Link
-              className={`book-item ${selBook === b.id ? 'active' : ''}`}
-              to={`/dashboard?book=${b.id}`}
-              key={b.id}
-            >
-              <span className="book-init">{b.cover_init || b.title.slice(0, 1)}</span>
-              <div className="book-meta">
-                <div className="book-title">{b.title}</div>
-                <div className="book-sub">{b.genre} · {b.chapter_count} 章</div>
-              </div>
-            </Link>
-          ))}
+          {books.map((b) => {
+            const cur = b.id === ws.bookId;
+            const count = cur && ws.tree ? ws.tree.chapters.length : b.chapter_count;
+            return (
+              <Link
+                className={`book-item ${cur ? 'active' : ''}`}
+                to={`/dashboard?book=${b.id}`}
+                key={b.id}
+                onClick={() => ws.setBook(b.id)}
+              >
+                <span className="book-init">{b.cover_init || b.title.slice(0, 1)}</span>
+                <div className="book-meta">
+                  <div className="book-title">{b.title}</div>
+                  <div className="book-sub">
+                    {b.genre} · {count} 章
+                  </div>
+                </div>
+              </Link>
+            );
+          })}
         </div>
-        <button className="new-book-btn" onClick={newBook}>
+        <button className="new-book-btn" onClick={() => void newBook()}>
           <span className="plus-icon">+</span>
           <span>新书</span>
         </button>
       </div>
 
-      <div className="sidebar-divider"></div>
-
-      <div className="sidebar-section nav-section">
-        <div className="section-label">本书工作区</div>
+      {/* ---------- 本书工作区 ---------- */}
+      <div className="sidebar-group">
+        <div className="sidebar-group-label">本书工作区</div>
         <nav className="nav-list">
-          {NAV_ITEMS.map((it) =>
-            it.to ? (
-              <Link className={`nav-item ${active === it.key ? 'active' : ''}`} to={it.to} key={it.key}>
-                <span className="nav-icon">{it.icon}</span>
-                <span className="nav-text">{it.text}</span>
-              </Link>
-            ) : (
-              <a className="nav-item" href="#" key={it.key}>
-                <span className="nav-icon">{it.icon}</span>
-                <span className="nav-text">{it.text}</span>
-              </a>
-            ),
-          )}
+          {STEPS.map((s) => (
+            <Link className={`nav-item ${active === s.key ? 'active' : ''}`} to={stepTo(s.key)} key={s.key}>
+              <span className="nav-step-no">{s.no}</span>
+              <span className="nav-text">{s.text}</span>
+              <span className={`nav-dot ${stepDot(s.key)}`} title="进度状态" />
+            </Link>
+          ))}
+          <Link className={`nav-item ${active === 'characters' ? 'active' : ''}`} to={ws.bookId ? `/characters?book=${ws.bookId}` : '/characters'}>
+            <span className="nav-ico">☺</span>
+            <span className="nav-text">人物</span>
+            {ws.characterCount > 0 && <span className="nav-badge">{ws.characterCount}</span>}
+          </Link>
+          <Link className={`nav-item ${active === 'settings' ? 'active' : ''}`} to="/settings">
+            <span className="nav-ico">☷</span>
+            <span className="nav-text">设定</span>
+          </Link>
         </nav>
       </div>
 
-      <div className="sidebar-footer">
-        <a className="nav-item" href="#">
-          <span className="nav-icon">⚙</span>
-          <span className="nav-text">全局设置</span>
-        </a>
+      {/* ---------- 全局 ---------- */}
+      <div className="sidebar-group sidebar-group-footer">
+        <div className="sidebar-group-label">全局</div>
+        <nav className="nav-list">
+          <div className="nav-item nav-soon" title="跨书素材库：RAG 落地后开放">
+            <span className="nav-ico">▦</span>
+            <span className="nav-text">素材库</span>
+            <span className="nav-chip">RAG 后</span>
+          </div>
+          <Link className="nav-item" to="/settings?tab=global">
+            <span className="nav-ico">⚙</span>
+            <span className="nav-text">全局设置</span>
+          </Link>
+        </nav>
       </div>
     </aside>
   );
