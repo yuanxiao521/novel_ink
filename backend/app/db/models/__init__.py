@@ -1,4 +1,5 @@
 """ORM 模型包：Book / Belief / Chapter / Scene / Character / Foreshadow / Simulation / InspirationCard / BookMemory / ProseNote / ProseAnnotation / ChatHistory / WorldState。"""
+from app.db.models.agent_task import AgentMessage, AgentTask
 from app.db.models.annotation import ProseAnnotation
 from app.db.models.belief import Belief
 from app.db.models.book import Book
@@ -15,5 +16,6 @@ from app.db.models.world_state import WorldState
 
 __all__ = [
     "Belief", "Book", "BookMemory", "ChatHistory", "Chapter", "Foreshadow", "InspirationCard",
+    "AgentMessage", "AgentTask",
     "ProseNote", "ProseAnnotation", "Scene", "Character", "Simulation", "WorldState",
 ]

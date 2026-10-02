@@ -44,6 +44,7 @@ EDITOR = AgentSpec(
         "prose.draft", "prose.review", "prose.polish", "prose.verify",
         "prose.scan_tone", "prose.spot_fix", "prose.quality_loop",
         "prose.save", "annotation.list", "annotation.resolve",
+        "task.rehearsal", "task.list", "task.transition",
     ),
     emits=("action.plan", "prose.candidate", "prose.saved"),
     can_initiate_tasks=True,
@@ -60,7 +61,24 @@ CHARACTER = AgentSpec(
     can_initiate_tasks=False,
 )
 
-SPECS: dict[str, AgentSpec] = {s.id: s for s in (CHIEF, EDITOR, CHARACTER)}
+# 场记（原"导演 Agent"）：只出回合软引导，**不允许发起任务**
+STAGE_MANAGER = AgentSpec(
+    id="stage_manager", name="场记", scope="round", persona="stage_manager",
+    reads=("sim_state", "scene", "characters"),
+    writes=("director_hint",),
+    tools=(),
+    emits=("round.hint",),
+    can_initiate_tasks=False,
+)
+
+# 作者（唯一人类）：可以发起任务（如"请求彩排"），但"发起者"更多是 UI 语义
+AUTHOR = AgentSpec(
+    id="author", name="作者", scope="task", persona="author",
+    reads=(), writes=(), tools=(), model_tier="none",
+    emits=("task.created",), can_initiate_tasks=True,
+)
+
+SPECS: dict[str, AgentSpec] = {s.id: s for s in (CHIEF, EDITOR, CHARACTER, STAGE_MANAGER, AUTHOR)}
 
 
 def get_spec(agent_id: str) -> AgentSpec | None:

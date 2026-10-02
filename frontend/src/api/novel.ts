@@ -1013,3 +1013,72 @@ export async function patchAnnotation(
 export async function deleteAnnotation(id: string): Promise<void> {
   return send<void>('DELETE', `/api/v1/annotations/${id}`);
 }
+
+// ---------------------------------------------------------------------------
+// A+ · 任务总线（L3）：请求彩排 / 曝光 / 裁决 / 重写 —— 只传请求与裁决，不传状态
+// ---------------------------------------------------------------------------
+
+export interface AgentTask {
+  id: string;
+  book_id: string;
+  scene_id: string;
+  from_agent: string;
+  to_agent: string;
+  kind: 'rehearsal' | 'expose' | 'adjudicate' | 'rewrite' | string;
+  kind_label: string;
+  goal: string;
+  status: 'submitted' | 'working' | 'input-required' | 'completed' | 'failed' | string;
+  input_ref: Record<string, unknown>;
+  artifact_ref: Record<string, unknown>;
+  ts: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface AgentSpecInfo {
+  id: string;
+  name: string;
+  scope: string;
+  reads: string[];
+  writes: string[];
+  tools: string[];
+  can_initiate_tasks: boolean;
+  needs_confirm: string[];
+}
+
+export async function listAgentTasks(sceneId: string, status = ''): Promise<AgentTask[]> {
+  const q = status ? `?status=${status}` : '';
+  return getJson<AgentTask[]>(`${API_BASE}/api/v1/scenes/${sceneId}/agent/tasks${q}`);
+}
+
+export async function createAgentTask(
+  sceneId: string,
+  body: { kind?: string; goal?: string; to_agent?: string; from_agent?: string },
+): Promise<AgentTask> {
+  const res = await fetch(`${API_BASE}/api/v1/scenes/${sceneId}/agent/tasks`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kind: 'rehearsal', from_agent: 'author', ...body }),
+  });
+  if (!res.ok) {
+    let detail = `${res.status} ${res.statusText}`;
+    try {
+      const j = (await res.json()) as { detail?: string };
+      if (j?.detail) detail = j.detail;
+    } catch { /* 忽略 */ }
+    throw new Error(detail);
+  }
+  return (await res.json()) as AgentTask;
+}
+
+export async function patchAgentTask(taskId: string, status: string, note = ''): Promise<AgentTask> {
+  return send<AgentTask>('PATCH', `/api/v1/agent/tasks/${taskId}`, { status, note });
+}
+
+export async function taskMessages(taskId: string): Promise<Array<{ id: string; role: string; from_agent: string; to_agent: string; content_json: string; ts: number }>> {
+  return getJson(`${API_BASE}/api/v1/agent/tasks/${taskId}/messages`);
+}
+
+export async function listAgentSpecs(): Promise<{ specs: AgentSpecInfo[]; write_matrix: Array<{ target: string; owner: string; note: string; enforced: boolean }> }> {
+  return getJson(`${API_BASE}/api/v1/agent/specs`);
+}

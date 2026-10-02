@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.db.base import Base
 from app.db.engine import get_session_factory
-from app.db.models import Belief, Book, BookMemory, ChatHistory, Chapter, Character, Foreshadow, InspirationCard, ProseAnnotation, ProseNote, Scene, Simulation, WorldState
+from app.db.models import AgentMessage, AgentTask, Belief, Book, BookMemory, ChatHistory, Chapter, Character, Foreshadow, InspirationCard, ProseAnnotation, ProseNote, Scene, Simulation, WorldState
 from app.schemas.models import CharacterCard, SimulationState
 
 logger = logging.getLogger(__name__)
@@ -767,6 +767,93 @@ class Repo:
 
     async def delete_annotation(self, ann_id: str) -> None:
         await self._delete_row(ProseAnnotation, ann_id)
+
+    # ------------------------------------------------------------------
+    # agent tasks / messages（任务总线 · L3 消息层 · A+ 批）
+    # ------------------------------------------------------------------
+    async def list_tasks(self, *, book_id: str = "", scene_id: str = "", status: str = "", limit: int = 50) -> list[dict]:
+        """任务单：按场景或书过滤（新在前）。"""
+        async def _q(session: AsyncSession):
+            stmt = select(AgentTask)
+            if scene_id:
+                stmt = stmt.where(AgentTask.scene_id == scene_id)
+            if book_id:
+                stmt = stmt.where(AgentTask.book_id == book_id)
+            if status:
+                stmt = stmt.where(AgentTask.status == status)
+            stmt = stmt.order_by(AgentTask.ts.desc()).limit(limit)
+            rows = (await session.execute(stmt)).scalars().all()
+            return [self._task_dict(r) for r in rows]
+
+        if not self.use_db:
+            rows = [v for v in self._mem.values() if isinstance(v, dict) and "from_agent" in v and "kind" in v]
+            if scene_id:
+                rows = [x for x in rows if x.get("scene_id") == scene_id]
+            if book_id:
+                rows = [x for x in rows if x.get("book_id") == book_id]
+            if status:
+                rows = [x for x in rows if x.get("status") == status]
+            rows.sort(key=lambda x: x.get("ts") or 0, reverse=True)
+            return rows[:limit]
+        return await self._query_or_mem(_q, [])
+
+    async def save_task(self, data: dict) -> None:
+        await self._upsert(AgentTask, data)
+
+    async def get_task(self, task_id: str) -> Optional[dict]:
+        if not self.use_db:
+            v = self._mem.get(task_id)
+            return v if isinstance(v, dict) and "kind" in v else None
+
+        async def _q(session: AsyncSession):
+            r = await session.get(AgentTask, task_id)
+            return self._task_dict(r) if r else None
+
+        return await self._query_or_mem(_q, None)
+
+    async def update_task(self, task_id: str, patch: dict) -> Optional[dict]:
+        cur = await self.get_task(task_id)
+        if cur is None:
+            return None
+        merged = {**cur, **patch, "id": task_id}
+        merged.pop("created_at", None)
+        merged.pop("updated_at", None)
+        await self._upsert(AgentTask, merged)
+        return await self.get_task(task_id)
+
+    async def list_messages(self, task_id: str, limit: int = 100) -> list[dict]:
+        async def _q(session: AsyncSession):
+            stmt = (select(AgentMessage).where(AgentMessage.task_id == task_id)
+                    .order_by(AgentMessage.ts.asc()).limit(limit))
+            rows = (await session.execute(stmt)).scalars().all()
+            return [self._message_dict(r) for r in rows]
+
+        if not self.use_db:
+            rows = [v for v in self._mem.values() if isinstance(v, dict) and v.get("task_id") == task_id and "role" in v]
+            rows.sort(key=lambda x: x.get("ts") or 0)
+            return rows[:limit]
+        return await self._query_or_mem(_q, [])
+
+    async def save_message(self, data: dict) -> None:
+        await self._upsert(AgentMessage, data)
+
+    @staticmethod
+    def _task_dict(r: AgentTask) -> dict:
+        return {
+            "id": r.id, "book_id": r.book_id, "scene_id": r.scene_id,
+            "from_agent": r.from_agent, "to_agent": r.to_agent, "kind": r.kind,
+            "goal": r.goal, "input_ref": r.input_ref, "status": r.status,
+            "artifact_ref": r.artifact_ref, "ts": r.ts,
+            "created_at": str(r.created_at), "updated_at": str(r.updated_at),
+        }
+
+    @staticmethod
+    def _message_dict(r: AgentMessage) -> dict:
+        return {
+            "id": r.id, "task_id": r.task_id, "role": r.role,
+            "from_agent": r.from_agent, "to_agent": r.to_agent,
+            "content_json": r.content_json, "ts": r.ts, "created_at": str(r.created_at),
+        }
 
     @staticmethod
     def _annotation_dict(r: ProseAnnotation) -> dict:

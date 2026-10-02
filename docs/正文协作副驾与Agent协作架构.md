@@ -251,7 +251,7 @@ class AgentSpec:
 | 批 | 内容 | 验收（可执行） |
 | --- | --- | --- |
 | **A** | ToolRegistry + ToolExecutor + **责编**（对话 + 批注）+ `prose_annotations` + 7 个按钮**全部工具化** —— **A 批已全部落地**（后端 v1.18 · 前端 v1.19） | ① 按钮与 `POST /scenes/{id}/agent/chat` 走**同一工具**（审计里都能看到，带"谁发起"）；② 批注 CRUD + 状态机；③ FakeLLM 下计划式工具调用可测；④ `tsc` 0 + `pytest` 全绿 |
-| **A+** | `AgentSpec` + `agent_tasks`/`agent_messages` + 写权限矩阵**启用** | ① 越权调用被拒（含测试用例）；② "请求彩排"落一条 task 并可见；③ 状态机含 `input-required` |
+| **A+** | `AgentSpec` + `agent_tasks`/`agent_messages` + 写权限矩阵**启用** —— **已落地 v1.20**（任务总线/发起者硬边界/矩阵草案已出；矩阵**强制**留到 B 批） | ① 越权调用被拒（含测试用例）；② "请求彩排"落一条 task 并可见；③ 状态机含 `input-required` |
 | **B** | 约束表全局化 + `perceive(scope)`（先主笔+责编） | ① 同一 PerceptPacket 渲染两种 prompt；② `dropped` 留痕有测试；③ 行为等价（现有用例不回归） |
 | **C** | 彩排三方决策（主笔建议 / 责编请求 / 作者开关）+ **素材使用率** | ① 第一条真实任务单闭环；② 场景行显示"采纳 N 条 · 引用 M 条" |
 | **D** | 文字层合并为**一次审稿会** + 评审给身份 | ① 按钮从 7 个收敛；② 审计里出现"评审" |

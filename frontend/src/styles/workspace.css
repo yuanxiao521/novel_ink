@@ -486,6 +486,33 @@
 .s2-note-by { font-size: 11px; color: var(--text-muted); }
 .s2-note-ts { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); }
 
+
+/* 任务总线面板（A+） */
+.tp-wrap { display: flex; flex-direction: column; gap: 10px; }
+.tp-new { display: flex; gap: 8px; }
+.tp-input {
+  flex: 1; font-family: inherit; font-size: 12px; background: var(--bg-elevated);
+  border: 1px solid var(--border-light); border-radius: var(--radius-md);
+  color: var(--text-primary); padding: 7px 10px;
+}
+.tp-task {
+  border: 1px solid var(--border); border-left: 3px solid var(--accent-gold);
+  background: var(--bg-panel); border-radius: var(--radius-md); padding: 8px 11px;
+}
+.tp-task.completed { border-left-color: var(--accent-green); opacity: .9; }
+.tp-task.failed { border-left-color: var(--accent-red); opacity: .85; }
+.tp-head { display: flex; align-items: center; gap: 8px; font-size: 11.5px; }
+.tp-kind { color: var(--text-highlight); font-weight: 600; }
+.tp-status {
+  font-size: 10.5px; border: 1px solid var(--border-light); border-radius: 999px;
+  padding: 1px 7px; color: var(--accent-gold);
+}
+.tp-from { margin-left: auto; font-size: 10.5px; color: var(--text-muted); font-family: var(--font-mono); }
+.tp-goal { font-size: 12px; color: var(--text-primary); margin: 5px 0; line-height: 1.7; }
+.tp-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+.tp-actions .ws-btn { padding: 3px 9px; font-size: 11px; }
+.tp-done { font-size: 11px; color: var(--text-muted); }
+
 /* ---------- 设定页 ---------- */
 .settings-page { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 .settings-head {

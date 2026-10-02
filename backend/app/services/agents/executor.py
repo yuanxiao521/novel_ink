@@ -53,6 +53,9 @@ async def call_tool(
         raise ToolDenied(f"{agent_id} 无权调用 {tool}（不在其 AgentSpec.tools 白名单）")
     if scene_id and "scene_id" in decl.params and not args.get("scene_id"):
         args["scene_id"] = scene_id
+    # "谁发起"由 executor 提供（调用方身份），工具不必自己传
+    if "from_agent" in (*decl.params, *decl.optional) and not args.get("from_agent"):
+        args["from_agent"] = agent_id or "author"
     missing = [p for p in decl.params if not args.get(p)]
     if missing:
         raise ToolDenied(f"缺少必需参数：{', '.join(missing)}")

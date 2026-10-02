@@ -32,6 +32,18 @@ class AnnotationIn(BaseModel):
     quote: str = ""
 
 
+class TaskIn(BaseModel):
+    kind: str = "rehearsal"
+    goal: str = ""
+    to_agent: str = "stage_manager"
+    from_agent: str = "author"
+
+
+class TaskPatch(BaseModel):
+    status: str
+    note: str = ""
+
+
 class ToolCallIn(BaseModel):
     args: dict = {}
     confirm: bool = False
@@ -53,6 +65,62 @@ async def agent_tools():
 async def agent_chat(scene_id: str, body: EditorChatIn, svc: SimulationService = Depends(get_service)):
     """责编对话：感知 → 计划 → 执行（同一工具链）→ 汇报。"""
     return await editor_chat(svc, scene_id, body.message, body.text, body.who or "author")
+
+
+@router.get("/agent/specs")
+async def agent_specs():
+    """能力声明 + 写权限矩阵（**草案**，尚未强制）：让"谁能读/写什么"从口头约定变成可见数据。"""
+    from app.services.agents.permissions import matrix
+    from app.services.agents.spec import SPECS
+
+    return {
+        "specs": [
+            {
+                "id": s.id, "name": s.name, "scope": s.scope, "persona": s.persona,
+                "reads": list(s.reads), "writes": list(s.writes), "tools": list(s.tools),
+                "model_tier": s.model_tier, "emits": list(s.emits),
+                "can_initiate_tasks": s.can_initiate_tasks, "needs_confirm": list(s.needs_confirm),
+            }
+            for s in SPECS.values()
+        ],
+        "write_matrix": matrix(),
+    }
+
+
+@router.get("/scenes/{scene_id}/agent/tasks")
+async def list_tasks(scene_id: str, status: str = "", svc: SimulationService = Depends(get_service)):
+    """本场任务单（请求彩排 / 曝光 / 裁决 / 重写）。"""
+    return await svc.agent_task_list(scene_id=scene_id, status=status)
+
+
+@router.post("/scenes/{scene_id}/agent/tasks", status_code=201)
+async def create_task(scene_id: str, body: TaskIn, svc: SimulationService = Depends(get_service)):
+    """发起任务。**角色 agent 会被拒**（409）：发起者边界不靠约定，靠代码。"""
+    from app.services.agents.tasks import TaskDenied
+
+    try:
+        return await svc.agent_task_create(
+            scene_id, goal=body.goal, kind=body.kind, to_agent=body.to_agent, from_agent=body.from_agent
+        )
+    except TaskDenied as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+
+
+@router.patch("/agent/tasks/{task_id}")
+async def patch_task(task_id: str, body: TaskPatch, svc: SimulationService = Depends(get_service)):
+    """推进任务状态（submitted→working→input-required→completed/failed）。"""
+    from app.services.agents.tasks import TaskDenied
+
+    try:
+        return await svc.agent_task_transition(task_id, body.status, note=body.note)
+    except TaskDenied as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+
+
+@router.get("/agent/tasks/{task_id}/messages")
+async def task_messages(task_id: str, svc: SimulationService = Depends(get_service)):
+    """任务消息（request / response / notify）——只传请求与裁决，不传状态。"""
+    return await svc.agent_task_messages(task_id)
 
 
 @router.post("/scenes/{scene_id}/tools/{tool_name}")

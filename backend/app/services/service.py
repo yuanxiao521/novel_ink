@@ -712,6 +712,45 @@ class SimulationService:
             book_id = chapter.get("book_id") or ""
         return scene, book_id
 
+    # ------------------------------------------------------------------
+    # 任务总线（L3 · A+ 批）：请求 / 查看 / 流转
+    # ------------------------------------------------------------------
+    async def agent_task_create(
+        self, scene_id: str, goal: str = "", kind: str = "rehearsal",
+        to_agent: str = "stage_manager", from_agent: str = "author",
+    ) -> dict:
+        """发起一条任务（如"请求彩排"）。发起者越界 → TaskDenied（路由转 409）。"""
+        from app.services.agents.tasks import create_task, task_dict
+
+        book_id = ""
+        scene = await self.repo.get_scene(scene_id) or {}
+        if scene.get("chapter_id"):
+            ch = await self.repo.get_chapter(scene["chapter_id"])
+            book_id = (ch or {}).get("book_id", "")
+        task = await create_task(
+            self.repo, from_agent=from_agent, to_agent=to_agent, kind=kind,
+            goal=goal or f"让角色先演一遍《{scene.get('title', '本场')}》",
+            scene_id=scene_id, book_id=book_id,
+            input_ref={"scene_id": scene_id, "goal": scene.get("goal", "")},
+        )
+        return task_dict(task)
+
+    async def agent_task_list(self, scene_id: str = "", book_id: str = "", status: str = "") -> list[dict]:
+        from app.services.agents.tasks import task_dict
+
+        rows = await self.repo.list_tasks(scene_id=scene_id, book_id=book_id, status=status)
+        return [task_dict(r) for r in rows]
+
+    async def agent_task_transition(self, task_id: str, status: str, note: str = "") -> dict:
+        """推进任务状态（状态机校验在 tasks.transition）。"""
+        from app.services.agents.tasks import task_dict, transition
+
+        out = await transition(self.repo, task_id, status, note=note)
+        return task_dict(out)
+
+    async def agent_task_messages(self, task_id: str) -> list[dict]:
+        return await self.repo.list_messages(task_id)
+
     async def prose_draft(self, scene_id: str) -> dict:
         """写手：生成正文初稿（注入角色卡 + 前文摘要），并留 writer 追溯记录。"""
         from app.services.engine.prose import draft_prose

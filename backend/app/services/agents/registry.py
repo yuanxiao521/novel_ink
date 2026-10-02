@@ -71,6 +71,25 @@ TOOLS: dict[str, ToolDecl] = {
 }
 
 
+TOOLS.update({
+    # ---------- 任务总线（L3）：请求 / 查看 / 流转 ----------
+    "task.rehearsal": ToolDecl(
+        "task.rehearsal", "请求本场先彩排一次（派给场记/角色，产物回填本场）", "write",
+        params=("scene_id",), optional=("goal", "kind", "to_agent", "from_agent"),
+        handler="agent_task_create", group="task",
+    ),
+    "task.list": ToolDecl(
+        "task.list", "列出本场任务单（含状态）", "read",
+        params=("scene_id",), handler="agent_task_list", group="task",
+    ),
+    "task.transition": ToolDecl(
+        "task.transition", "推进任务状态（working / input-required / completed / failed）", "destructive",
+        params=("task_id", "status"), optional=("note",), needs_confirm=True,
+        handler="agent_task_transition", group="task",
+    ),
+})
+
+
 def get_tool(name: str) -> ToolDecl | None:
     return TOOLS.get(name)
 

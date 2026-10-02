@@ -1,17 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Sidebar } from '../components/backoffice/Sidebar';
 import { ContextBar } from '../components/common/ContextBar';
 import { Tabs } from '../components/common/Tabs';
 import { useDialog } from '../components/common/Dialog';
 import { EditorChat } from '../components/studio/EditorChat';
+import { TasksPanel } from '../components/studio/TasksPanel';
 import { ProseBody, splitParagraphs } from '../components/studio/ProseBody';
 import { useWorkspace } from '../context/WorkspaceContext';
 import {
-  callAgentTool, createAnnotation, deleteAnnotation, fetchSceneDetail, listAgentTools,
-  listAnnotations, listProseNotes, sceneScriptUrl,
+  callAgentTool, createAnnotation, deleteAnnotation, fetchSceneDetail, listAgentTasks,
+  listAgentTools, listAnnotations, listProseNotes, sceneScriptUrl,
 } from '../api/novel';
-import type { ProseAnnotation, ProseNote, SceneDetail } from '../api/novel';
+import type { AgentTask, ProseAnnotation, ProseNote, SceneDetail } from '../api/novel';
 
 /* ==========================================================================
    StudioPage —— 正文协作（P2）
@@ -20,7 +21,7 @@ import type { ProseAnnotation, ProseNote, SceneDetail } from '../api/novel';
      write 只出候选 → 采纳才改正文；destructive（保存/批注状态）先弹确认再带 confirm 重试。
    ========================================================================== */
 
-type SideTab = 'editor' | 'quality';
+type SideTab = 'editor' | 'quality' | 'tasks';
 type AuditFilter = 'all' | 'pending' | 'approved' | 'rejected';
 
 const KIND_LABEL: Record<string, string> = {
@@ -46,10 +47,15 @@ export function StudioPage() {
   const [notes, setNotes] = useState<ProseNote[]>([]);
   const [annotations, setAnnotations] = useState<ProseAnnotation[]>([]);
   const [toolCount, setToolCount] = useState(0);
+  const [tasks, setTasks] = useState<AgentTask[]>([]);
   const [busy, setBusy] = useState('');
   const [toast, setToast] = useState('');
   const [last, setLast] = useState<{ tool: string; data: Record<string, unknown> } | null>(null);
-  const [sideTab, setSideTab] = useState<SideTab>('editor');
+  // 侧栏 tab 支持深链：?tab=editor|quality|tasks（便于分享与截图核对）
+  const [params, setParams] = useSearchParams();
+  const tabParam = params.get('tab') as SideTab | null;
+  const [sideTab, setSideTab] = useState<SideTab>(tabParam && ['editor', 'quality', 'tasks'].includes(tabParam) ? tabParam : 'editor');
+  const switchTab = (k: SideTab) => { setSideTab(k); setParams({ tab: k }); };
   const [auditFilter, setAuditFilter] = useState<AuditFilter>('all');
   const [auditAll, setAuditAll] = useState(false);
   const [chatSeed, setChatSeed] = useState('');
@@ -62,6 +68,7 @@ export function StudioPage() {
       try { const d = await fetchSceneDetail(sceneId); setScene(d); setText(d.final_prose ?? ''); } catch { /* 保持现状 */ }
       try { setNotes(await listProseNotes(sceneId)); } catch { /* 保持现状 */ }
       try { setAnnotations(await listAnnotations(sceneId)); } catch { setAnnotations([]); }
+      try { setTasks(await listAgentTasks(sceneId)); } catch { setTasks([]); }
     })();
   }, [sceneId]);
 
@@ -265,7 +272,7 @@ export function StudioPage() {
             editing={editing}
             onChange={setText}
             onAnnotate={(i, q, n) => void onAnnotate(i, q, n)}
-            onAskEditor={(m) => { setSideTab('editor'); setChatSeed(m); }}
+            onAskEditor={(m) => { switchTab('editor'); setChatSeed(m); }}
             onResolve={(id, s) => void onResolve(id, s)}
             onDeleteAnnotation={(id) => void onDeleteAnnotation(id)}
           />
@@ -274,13 +281,21 @@ export function StudioPage() {
         <aside className="s2-side">
           <div className="s2-side-head">
             <Tabs
-              items={[{ key: 'editor', label: '责编' }, { key: 'quality', label: '质检', badge: openAnns.length }]}
+              items={[
+                { key: 'editor', label: '责编' },
+                { key: 'quality', label: '质检', badge: openAnns.length },
+                { key: 'tasks', label: '任务', badge: tasks.filter((t) => t.status !== 'completed' && t.status !== 'failed').length },
+              ]}
               value={sideTab}
-              onChange={(k) => setSideTab(k as SideTab)}
+              onChange={(k) => switchTab(k as SideTab)}
             />
             <span className="s2-tool-count" title="可用工具（按钮与对话共用）">{toolCount} 个工具</span>
           </div>
-          {sideTab === 'editor' ? (
+          {sideTab === 'tasks' ? (
+            <div className="s2-quality">
+              <TasksPanel sceneId={sceneId} tasks={tasks} onRefresh={load} onFlash={flash} />
+            </div>
+          ) : sideTab === 'editor' ? (
             <EditorChat
               sceneId={sceneId}
               text={text}

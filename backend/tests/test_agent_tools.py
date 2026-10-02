@@ -259,3 +259,87 @@ async def test_annotation_crud_persists():
 
 
 pytestmark = pytest.mark.asyncio
+
+# ---------------------------------------------------------------- 任务总线（A+）
+
+
+async def test_task_initiator_boundary():
+    """角色 agent 不允许发起任务——白名单 + AgentSpec 双重校验。"""
+    from app.services.agents.tasks import TaskDenied, check_initiator
+
+    check_initiator("author")
+    check_initiator("editor")
+    check_initiator("chief")
+    for bad in ("character", "stage_manager", "writer", "someone"):
+        with pytest.raises(TaskDenied):
+            check_initiator(bad)
+
+
+async def test_task_create_and_transition_rules():
+    from app.services.agents.tasks import create_task, transition
+
+    class _Repo:
+        def __init__(self):
+            self.rows: dict = {}
+            self.msgs: list = []
+
+        async def save_task(self, data):
+            self.rows[data["id"]] = data
+
+        async def get_task(self, tid):
+            return self.rows.get(tid)
+
+        async def update_task(self, tid, patch):
+            self.rows[tid] = {**self.rows[tid], **patch}
+            return self.rows[tid]
+
+        async def save_message(self, data):
+            self.msgs.append(data)
+
+    repo = _Repo()
+    t = await create_task(repo, from_agent="editor", to_agent="stage_manager", kind="rehearsal",
+                          goal="先演一遍", scene_id="scene-1", book_id="book-1")
+    assert t["status"] == "submitted"
+    assert repo.msgs[0]["role"] == "request"
+
+    # 合法流转：submitted → input-required（等作者确认）
+    await transition(repo, t["id"], "input-required", note="要不要演？")
+    assert repo.rows[t["id"]]["status"] == "input-required"
+
+    # 非法流转：input-required → submitted（不能回退）
+    with pytest.raises(Exception):
+        await transition(repo, t["id"], "submitted")
+
+    # 终态不可再动
+    await transition(repo, t["id"], "completed")
+    with pytest.raises(Exception):
+        await transition(repo, t["id"], "working")
+
+    # 未知类型/状态
+    with pytest.raises(Exception):
+        await create_task(repo, from_agent="author", kind="nope")
+    with pytest.raises(Exception):
+        await transition(repo, t["id"], "nope")
+
+
+async def test_write_matrix_is_draft_but_complete():
+    from app.services.agents.permissions import matrix
+
+    rows = matrix()
+    owners = {r["target"]: r["owner"] for r in rows}
+    assert owners["beliefs"] == "bookkeeping"          # 账本只有记账写
+    assert owners["prose_notes"] == "executor"         # 审计只有 executor 写
+    assert owners["scenes:final_prose"] == "editor"    # 正文归责编
+    assert owners["chapters"] == "chief"               # 结构归主笔
+    assert all(r["enforced"] is False for r in rows)   # A+ 只出草案，不强制
+
+
+async def test_specs_expose_capabilities():
+    from app.services.agents.spec import SPECS
+
+    assert SPECS["character"].can_initiate_tasks is False
+    assert SPECS["stage_manager"].can_initiate_tasks is False
+    assert SPECS["editor"].can_initiate_tasks is True
+    assert "prose.save" in SPECS["editor"].needs_confirm
+    assert "outline.commit" in SPECS["chief"].needs_confirm
+
