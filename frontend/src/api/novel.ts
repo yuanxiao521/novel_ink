@@ -771,7 +771,7 @@ export async function fetchGlobalView(bookId: string): Promise<GlobalView> {
 // ---------------------------------------------------------------------------
 // 正文协作工作区（阶段④ · 四角色 + 审计记录）
 // ---------------------------------------------------------------------------
-export type ProseNoteKind = 'writer' | 'editor' | 'polisher' | 'verifier';
+export type ProseNoteKind = 'writer' | 'editor' | 'polisher' | 'verifier' | 'tool' | 'bookkeeping' | string;
 export type ProseNoteStatus = 'pending' | 'approved' | 'rejected';
 
 export interface ProseNote {
@@ -887,4 +887,129 @@ export async function rejectProseNote(noteId: string): Promise<{ id: string; sta
 /** 作者保存正文 → final_prose 幂等落库。 */
 export async function saveSceneProse(sceneId: string, text: string): Promise<{ scene_id: string; unchanged: boolean; word_count: number }> {
   return send('PUT', `/api/v1/scenes/${sceneId}/prose`, { text });
+}
+
+// ---------------------------------------------------------------------------
+// P2 · 正文协作副驾（Agent 工具层 + 段落批注 + 责编对话）
+// 按钮与对话走**同一条工具链**：callAgentTool 与 editorChat 最终都落到后端 ToolExecutor
+// ---------------------------------------------------------------------------
+
+export type ToolSideEffect = 'read' | 'write' | 'destructive';
+
+export interface AgentToolDecl {
+  name: string;
+  desc: string;
+  side_effect: ToolSideEffect;
+  params: string[];
+  optional: string[];
+  needs_confirm: boolean;
+  group: string;
+}
+
+export interface AgentAction {
+  tool: string;
+  args: Record<string, unknown>;
+  why?: string;
+}
+
+export interface AgentExecuted {
+  tool: string;
+  ok: boolean;
+  side_effect: ToolSideEffect | string;
+  note_id?: string;
+  error?: string;
+  why?: string;
+  data?: Record<string, unknown>;
+}
+
+export interface PerceptSummary {
+  who: { id: string; name: string };
+  scope: string;
+  scene_id: string;
+  sources: string[];
+  counts: Record<string, number>;
+  dropped: Array<{ src?: string; reason: string }>;
+}
+
+export interface EditorChatResult {
+  reply: string;
+  actions: AgentAction[];
+  executed: AgentExecuted[];
+  percept: PerceptSummary;
+}
+
+export type AnnotationStatus = 'open' | 'handled' | 'dismissed';
+
+export interface ProseAnnotation {
+  id: string;
+  scene_id: string;
+  para_index: number;
+  quote: string;
+  note: string;
+  status: AnnotationStatus;
+  created_by: string;
+  handled_by_note_id?: string;
+  handled_at?: string | null;
+  ts: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+/** 工具清单（前端按 group 分组、按 side_effect 决定是否弹确认）。 */
+export async function listAgentTools(): Promise<AgentToolDecl[]> {
+  const r = await getJson<{ tools: AgentToolDecl[] }>(`${API_BASE}/api/v1/agent/tools`);
+  return r.tools;
+}
+
+/** 作者直调工具（= 界面按钮）：与责编对话同一条链。409（抛错）= 需确认 / 被拒。 */
+export async function callAgentTool(
+  sceneId: string,
+  tool: string,
+  args: Record<string, unknown>,
+  confirm = false,
+): Promise<AgentExecuted> {
+  const res = await fetch(`${API_BASE}/api/v1/scenes/${sceneId}/tools/${encodeURIComponent(tool)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ args, confirm }),
+  });
+  if (!res.ok) {
+    let detail = `${res.status} ${res.statusText}`;
+    try {
+      const j = (await res.json()) as { detail?: string };
+      if (j?.detail) detail = j.detail;
+    } catch {
+      /* 忽略解析失败 */
+    }
+    throw new Error(detail);
+  }
+  return (await res.json()) as AgentExecuted;
+}
+
+/** 责编对话：感知包 → 计划 → 执行 → 汇报。 */
+export async function editorChat(sceneId: string, message: string, text: string): Promise<EditorChatResult> {
+  return send<EditorChatResult>('POST', `/api/v1/scenes/${sceneId}/agent/chat`, { message, text, who: 'author' });
+}
+
+export async function listAnnotations(sceneId: string, status = ''): Promise<ProseAnnotation[]> {
+  const q = status ? `?status=${status}` : '';
+  return getJson<ProseAnnotation[]>(`${API_BASE}/api/v1/scenes/${sceneId}/annotations${q}`);
+}
+
+export async function createAnnotation(
+  sceneId: string,
+  body: { note: string; para_index: number; quote: string },
+): Promise<ProseAnnotation> {
+  return send<ProseAnnotation>('POST', `/api/v1/scenes/${sceneId}/annotations`, body);
+}
+
+export async function patchAnnotation(
+  id: string,
+  patch: { status?: AnnotationStatus; note?: string; handled_by_note_id?: string },
+): Promise<ProseAnnotation> {
+  return send<ProseAnnotation>('PATCH', `/api/v1/annotations/${id}`, patch);
+}
+
+export async function deleteAnnotation(id: string): Promise<void> {
+  return send<void>('DELETE', `/api/v1/annotations/${id}`);
 }

@@ -32,6 +32,11 @@ class AnnotationIn(BaseModel):
     quote: str = ""
 
 
+class ToolCallIn(BaseModel):
+    args: dict = {}
+    confirm: bool = False
+
+
 class AnnotationPatch(BaseModel):
     status: str | None = None
     note: str | None = None
@@ -48,6 +53,23 @@ async def agent_tools():
 async def agent_chat(scene_id: str, body: EditorChatIn, svc: SimulationService = Depends(get_service)):
     """责编对话：感知 → 计划 → 执行（同一工具链）→ 汇报。"""
     return await editor_chat(svc, scene_id, body.message, body.text, body.who or "author")
+
+
+@router.post("/scenes/{scene_id}/tools/{tool_name}")
+async def call_tool_endpoint(
+    scene_id: str, tool_name: str, body: ToolCallIn, svc: SimulationService = Depends(get_service)
+):
+    """作者直调工具（= 界面按钮）。**与责编对话走同一条工具链**：同一份声明、同一道闸门、同一套审计。
+
+    409 = 被拒（未知工具 / 越权 / 缺参 / 破坏性操作未确认）——前端据此弹确认后带 confirm=true 重试。
+    """
+    from app.services.agents.executor import ToolDenied, call_tool
+
+    try:
+        res = await call_tool(svc, "", tool_name, body.args, who="author", confirm=body.confirm, scene_id=scene_id)
+    except ToolDenied as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    return res.to_dict()
 
 
 @router.get("/scenes/{scene_id}/annotations")
