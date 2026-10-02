@@ -67,6 +67,18 @@ async def agent_chat(scene_id: str, body: EditorChatIn, svc: SimulationService =
     return await editor_chat(svc, scene_id, body.message, body.text, body.who or "author")
 
 
+@router.get("/books/{book_id}/rehearsal-plan")
+async def book_rehearsal_plan(book_id: str, svc: SimulationService = Depends(get_service)):
+    """C 批：彩排建议（主笔视角的"重头戏判定"，0-token）+ 每场已排演回合数。"""
+    return await svc.book_rehearsal_plan(book_id)
+
+
+@router.get("/books/{book_id}/material-usage")
+async def book_material_usage(book_id: str, svc: SimulationService = Depends(get_service)):
+    """C 批：素材使用率（已采纳素材 vs 正文命中）——启发式文本命中法。"""
+    return await svc.book_material_usage(book_id)
+
+
 @router.get("/books/{book_id}/constraints")
 async def book_constraints(book_id: str, svc: SimulationService = Depends(get_service)):
     """书级约束表（B 批）：主笔维护、**全员读**。0-token 派生（不新建表），缺失项走 dropped 留痕。"""

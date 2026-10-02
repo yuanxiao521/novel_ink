@@ -191,6 +191,20 @@ class SimulationService:
             return 0.5
 
     # ---------------------------------------------------------------- Dashboard 聚合
+    async def book_rehearsal_plan(self, book_id: str) -> dict:
+        """C 批：全书**彩排建议**（0-token 重头戏判定）+ 每场已排演回合数。"""
+        from app.services.agents.rehearsal import build_plan
+
+        archives = await self._archives_by_scene(book_id)
+        foreshadows = await self.repo.list_foreshadows(book_id)
+        return await build_plan(self.repo, book_id, archives, foreshadows)
+
+    async def book_material_usage(self, book_id: str) -> dict:
+        """C 批：**素材使用率**（已采纳素材 vs 正文命中）——启发式，给"值不值得继续演"的信号。"""
+        from app.services.agents.material_usage import build_usage
+
+        return await build_usage(self.repo, book_id, await self._archives_by_scene(book_id))
+
     async def book_global_view(self, book_id: str) -> dict:
         """S3 全局结构与张力视图（0-token 派生，零新表）。
 

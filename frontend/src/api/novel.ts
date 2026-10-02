@@ -1079,6 +1079,58 @@ export async function taskMessages(taskId: string): Promise<Array<{ id: string; 
   return getJson(`${API_BASE}/api/v1/agent/tasks/${taskId}/messages`);
 }
 
+
+// ---------------------------------------------------------------------------
+// C 批 · 彩排建议（主笔）+ 素材使用率（启发式）
+// ---------------------------------------------------------------------------
+
+export interface RehearsalScene {
+  scene_id: string;
+  scene_title: string;
+  chapter_id: string;
+  chapter_title: string;
+  chapter_no: number;
+  rehearsed_turns: number;
+  suggested: boolean;
+  score: number;
+  reasons: string[];
+}
+
+export interface RehearsalPlan {
+  book_id: string;
+  method: string;
+  threshold: number;
+  scenes: RehearsalScene[];
+  summary: { scenes: number; suggested: number; rehearsed: number };
+}
+
+export interface MaterialUsageScene {
+  scene_id: string;
+  scene_title: string;
+  prose_chars: number;
+  adopted: number;
+  referenced: number;
+  items: Array<{ id: string; title: string; referenced: boolean; match: string }>;
+}
+
+export interface MaterialUsage {
+  book_id: string;
+  method: string;
+  adopted_cards: Array<{ id: string; title: string }>;
+  scenes: MaterialUsageScene[];
+  summary: { adopted: number; referenced_slots: number; slot_total: number; rate: number | null };
+}
+
+/** 彩排建议（0-token 重头戏判定）：主笔视角，作者可覆盖。 */
+export async function fetchRehearsalPlan(bookId: string): Promise<RehearsalPlan> {
+  return getJson<RehearsalPlan>(`${API_BASE}/api/v1/books/${bookId}/rehearsal-plan`);
+}
+
+/** 素材使用率：演了的素材写的时候用上没有（启发式文本命中）。 */
+export async function fetchMaterialUsage(bookId: string): Promise<MaterialUsage> {
+  return getJson<MaterialUsage>(`${API_BASE}/api/v1/books/${bookId}/material-usage`);
+}
+
 export interface ConstraintTable {
   book_id: string;
   source: string;

@@ -9,7 +9,10 @@ import { useWorkspace } from '../context/WorkspaceContext';
 import { useDialog } from '../components/common/Dialog';
 import { API_BASE } from '../types/types';
 import {
+  createAgentTask,
   fetchBookTree,
+  fetchMaterialUsage,
+  fetchRehearsalPlan,
   fetchSceneDetail,
   listInspirations,
   createBook,
@@ -31,7 +34,10 @@ import {
   updateMemory,
   deleteMemory,
 } from '../api/novel';
-import type { BookTree, BookMemoryMeta, InspirationCard, MemoryTopic, SceneDetail, ScenePatchItem } from '../api/novel';
+import type {
+  BookTree, BookMemoryMeta, InspirationCard, MaterialUsage, MemoryTopic,
+  RehearsalPlan, SceneDetail, ScenePatchItem,
+} from '../api/novel';
 
 /* ---------- 类型 ---------- */
 
@@ -150,6 +156,26 @@ export function MaestroPage() {
     });
 
   const [panelTab, setPanelTab] = useState<'chat' | 'memory'>('chat');
+
+  // C 批：彩排建议（主笔）+ 素材使用率
+  const [rehearsal, setRehearsal] = useState<RehearsalPlan | null>(null);
+  const [usage, setUsage] = useState<MaterialUsage | null>(null);
+  useEffect(() => {
+    if (!bookId) { setRehearsal(null); setUsage(null); return; }
+    fetchRehearsalPlan(bookId).then(setRehearsal).catch(() => setRehearsal(null));
+    fetchMaterialUsage(bookId).then(setUsage).catch(() => setUsage(null));
+  }, [bookId, tree]);
+  const sceneRehearsal = (sceneId: string) => rehearsal?.scenes.find((s) => s.scene_id === sceneId);
+  const sceneUsage = (sceneId: string) => usage?.scenes.find((s) => s.scene_id === sceneId);
+  const requestRehearsal = async (sceneId: string, title: string) => {
+    try {
+      await createAgentTask(sceneId, { kind: 'rehearsal', goal: `先演一遍《${title}》`, from_agent: 'author' });
+      briefFlash('已发起彩排任务（可在正文协作「任务」里看状态）');
+      fetchRehearsalPlan(bookId).then(setRehearsal).catch(() => undefined);
+    } catch (e) {
+      briefFlash(`发起失败：${String(e)}`);
+    }
+  };
   const [sceneDetail, setSceneDetail] = useState<SceneDetail | null>(null);
   useEffect(() => {
     if (selKind !== 'scene' || !selId) {
@@ -821,7 +847,29 @@ export function MaestroPage() {
                                   <span className="row-title">{s.title}</span>
                                   <span className="scene-stage">{s.stage_desc ? `舞台 · ${s.stage_desc}` : '舞台 · 未布置'}</span>
                                   <span className="scene-goal">{s.goal || s.scene_summary || '未定目标'}</span>
+                                  {(() => {
+                                    const r = sceneRehearsal(s.id);
+                                    if (!r) return null;
+                                    return (
+                                      <>
+                                        {r.suggested && (
+                                          <span className="rs-badge" title={r.reasons.join('；')}>◐ 建议排演</span>
+                                        )}
+                                        {r.rehearsed_turns > 0 && (
+                                          <span className="rs-done" title="该场已在导演台推演过">已演 {r.rehearsed_turns} 回合</span>
+                                        )}
+                                      </>
+                                    );
+                                  })()}
                                   <span className="row-act">
+                                    {sceneRehearsal(s.id)?.suggested && (
+                                      <button
+                                        title="以作者身份发起彩排任务（任务总线会记状态）"
+                                        onClick={(e) => { e.stopPropagation(); void requestRehearsal(s.id, s.title); }}
+                                      >
+                                        ◐ 彩排
+                                      </button>
+                                    )}
                                     <button title="进入导演台" onClick={(e) => { e.stopPropagation(); nav(`/director/${s.id}`); }}>▶</button>
                                     <button title="正文协作" onClick={(e) => { e.stopPropagation(); nav(`/studio/${s.id}`); }}>✎</button>
                                   </span>
@@ -864,6 +912,29 @@ export function MaestroPage() {
                               <div className="node-kv"><span>舞台</span><b>{selScene?.stage_desc || '未布置'}</b></div>
                               <div className="node-kv"><span>本场目标</span><b>{selScene?.goal || '未定'}</b></div>
                               {selScene?.content_desc ? <div className="node-kv"><span>内容描述</span><b>{selScene.content_desc}</b></div> : null}
+                              {(() => {
+                                const r = sceneRehearsal(selId);
+                                const u = sceneUsage(selId);
+                                return (
+                                  <>
+                                    {r && (
+                                      <div className="node-kv">
+                                        <span>彩排</span>
+                                        <b>
+                                          {r.rehearsed_turns > 0 ? `已演 ${r.rehearsed_turns} 回合` : r.suggested ? '建议先演一遍' : '不必演'}
+                                          {r.reasons.length > 0 && <em style={{ fontStyle: 'normal', color: 'var(--text-muted)' }}> · {r.reasons.join('；')}</em>}
+                                        </b>
+                                      </div>
+                                    )}
+                                    {u && (
+                                      <div className="node-kv">
+                                        <span>素材</span>
+                                        <b>采纳 {u.adopted} · 正文命中 {u.referenced}（启发式）</b>
+                                      </div>
+                                    )}
+                                  </>
+                                );
+                              })()}
                               <div className="node-kv">
                                 <span>上场角色</span>
                                 <b>{sceneDetail ? ((sceneDetail.characters ?? []).map((c) => c.name).join('、') || '未配置') : '读取中…'}</b>

@@ -72,6 +72,9 @@ class _FakeRepo:
     async def get_chapter(self, chapter_id: str) -> dict:
         return {"id": chapter_id, "book_id": "book-1"}
 
+    async def list_inspirations(self, book_id: str) -> list[dict]:
+        return []
+
     async def get_book_tree(self, book_id: str) -> dict:
         return {
             "id": book_id, "title": "雨夜书房", "genre": "悬疑",
@@ -287,6 +290,82 @@ async def test_annotation_crud_persists():
 
 
 pytestmark = pytest.mark.asyncio
+
+
+# ---------------------------------------------------------------- C 批：彩排建议 + 素材使用率
+
+
+async def test_rehearsal_suggestion_rules():
+    """主笔建议排演：0-token 重头戏判定（可解释），已排演过就不再建议。"""
+    from app.services.agents.rehearsal import suggest_for_scene
+
+    # 章基调属于重头戏 → 建议
+    s1 = suggest_for_scene({"title": "普通场景"}, {"tone": "tension"})
+    assert s1["suggested"] is True and any("基调" in r for r in s1["reasons"])
+
+    # 场景关键词命中 → 建议
+    s2 = suggest_for_scene({"title": "祠堂前的决裂", "goal": "当众除名"}, {"tone": "action"})
+    assert s2["suggested"] is True and any("关键词" in r for r in s2["reasons"])
+
+    # 平淡场景 → 不建议（不打扰）
+    s3 = suggest_for_scene({"title": "晨起洗漱"}, {"tone": "action"})
+    assert s3["suggested"] is False and s3["reasons"] == []
+
+    # 已排演 → 不再建议（避免重复花钱）
+    s4 = suggest_for_scene({"title": "祠堂前的决裂"}, {"tone": "tension"}, rehearsed_turns=3)
+    assert s4["suggested"] is False and any("已排演" in r for r in s4["reasons"])
+
+
+async def test_rehearsal_plan_counts_rehearsed_turns():
+    from app.services.agents.rehearsal import build_plan
+
+    repo = _FakeRepo()
+    plan = await build_plan(repo, "book-1", {"scene-1": [{}, {}]}, [])
+    assert plan["summary"]["scenes"] == 2
+    assert plan["summary"]["rehearsed"] == 1
+    assert plan["method"].startswith("0-token")
+    s1 = next(x for x in plan["scenes"] if x["scene_id"] == "scene-1")
+    assert s1["rehearsed_turns"] == 2 and s1["suggested"] is False
+
+
+async def test_material_usage_heuristic_marks_referenced():
+    """素材使用率：标题（或前 4 字）出现在正文里 → 记"引用"。"""
+    from app.services.agents.material_usage import build_usage
+
+    class _R(_FakeRepo):
+        async def list_inspirations(self, book_id: str) -> list[dict]:
+            return [
+                {"id": "i1", "title": "血脉被夺之夜", "adopted": True},
+                {"id": "i2", "title": "冷面师兄", "adopted": True},
+                {"id": "i3", "title": "没采纳的卡", "adopted": False},
+            ]
+
+        async def get_book_tree(self, book_id: str) -> dict:
+            return {"id": book_id, "title": "雨夜书房", "chapters": [
+                {"title": "第 1 章", "tone": "action", "scenes": [
+                    {"id": "scene-1", "title": "开篇", "final_prose": "他在血脉被夺的那一夜醒来。"},
+                ]},
+            ]}
+
+    usage = await build_usage(_R(), "book-1")
+    assert usage["summary"]["adopted"] == 2              # 只算已采纳
+    scene = usage["scenes"][0]
+    assert scene["referenced"] == 1
+    hit = next(i for i in scene["items"] if i["referenced"])
+    assert hit["title"] == "血脉被夺之夜" and hit["match"] == "血脉被夺"
+    assert usage["summary"]["rate"] == 0.5
+    assert "启发式" in usage["method"]
+
+
+async def test_material_usage_empty_book_is_safe():
+    from app.services.agents.material_usage import build_usage
+
+    class _Empty(_FakeRepo):
+        async def get_book_tree(self, book_id: str) -> dict:
+            return {"id": book_id, "chapters": []}
+
+    usage = await build_usage(_Empty(), "book-x")
+    assert usage["scenes"] == [] and usage["summary"]["rate"] is None
 
 
 # ---------------------------------------------------------------- B 批：约束表 + 统一感知
