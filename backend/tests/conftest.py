@@ -38,6 +38,7 @@ def _disable_llm(monkeypatch):
     import app.services.engine.character as char_mod
     import app.services.engine.chief_planner as chief_mod
     import app.services.engine.graph as graph_mod
+    import app.services.agents.editor as editor_mod
     import app.services.service as service_mod
 
     class _Off:
@@ -59,4 +60,5 @@ def _disable_llm(monkeypatch):
     monkeypatch.setattr(chief_mod, "llm_client", fake)
     monkeypatch.setattr(graph_mod, "llm_client", fake)
     monkeypatch.setattr(service_mod, "llm_client", fake)
+    monkeypatch.setattr(editor_mod, "llm_client", fake)
     yield fake

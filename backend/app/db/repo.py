@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.db.base import Base
 from app.db.engine import get_session_factory
-from app.db.models import Belief, Book, BookMemory, ChatHistory, Chapter, Character, Foreshadow, InspirationCard, ProseNote, Scene, Simulation, WorldState
+from app.db.models import Belief, Book, BookMemory, ChatHistory, Chapter, Character, Foreshadow, InspirationCard, ProseAnnotation, ProseNote, Scene, Simulation, WorldState
 from app.schemas.models import CharacterCard, SimulationState
 
 logger = logging.getLogger(__name__)
@@ -716,6 +716,67 @@ class Repo:
             return self._prose_note_dict(r) if r else None
 
         return await self._query_or_mem(_q, None)
+
+    # ------------------------------------------------------------------
+    # prose annotations（段落批注 · P2 副驾工作记忆）
+    # ------------------------------------------------------------------
+    async def list_annotations(self, scene_id: str, status: str = "", limit: int = 200) -> list[dict]:
+        """场景批注，按段落号升序（同段按写入时间）。status 为空 = 全部。"""
+        async def _q(session: AsyncSession):
+            stmt = select(ProseAnnotation).where(ProseAnnotation.scene_id == scene_id)
+            if status:
+                stmt = stmt.where(ProseAnnotation.status == status)
+            stmt = stmt.order_by(ProseAnnotation.para_index.asc(), ProseAnnotation.created_at.asc()).limit(limit)
+            rows = (await session.execute(stmt)).scalars().all()
+            return [self._annotation_dict(r) for r in rows]
+
+        if not self.use_db:
+            rows = [v for v in self._mem.values()
+                    if isinstance(v, dict) and v.get("scene_id") == scene_id
+                    and "para_index" in v]
+            if status:
+                rows = [r for r in rows if r.get("status") == status]
+            rows.sort(key=lambda x: (x.get("para_index") or 0, x.get("ts") or 0))
+            return rows[:limit]
+        return await self._query_or_mem(_q, [])
+
+    async def save_annotation(self, data: dict) -> None:
+        await self._upsert(ProseAnnotation, data)
+
+    async def get_annotation(self, ann_id: str) -> Optional[dict]:
+        if not self.use_db:
+            v = self._mem.get(ann_id)
+            return v if isinstance(v, dict) and "para_index" in v else None
+
+        async def _q(session: AsyncSession):
+            r = await session.get(ProseAnnotation, ann_id)
+            return self._annotation_dict(r) if r else None
+
+        return await self._query_or_mem(_q, None)
+
+    async def update_annotation(self, ann_id: str, patch: dict) -> Optional[dict]:
+        """部分更新（状态机 open→handled/dismissed）。读-合并-upsert，幂等。"""
+        cur = await self.get_annotation(ann_id)
+        if cur is None:
+            return None
+        merged = {**cur, **patch, "id": ann_id}
+        merged.pop("created_at", None)
+        merged.pop("updated_at", None)
+        await self._upsert(ProseAnnotation, merged)
+        return await self.get_annotation(ann_id)
+
+    async def delete_annotation(self, ann_id: str) -> None:
+        await self._delete_row(ProseAnnotation, ann_id)
+
+    @staticmethod
+    def _annotation_dict(r: ProseAnnotation) -> dict:
+        return {
+            "id": r.id, "scene_id": r.scene_id, "para_index": r.para_index,
+            "quote": r.quote, "note": r.note, "status": r.status,
+            "created_by": r.created_by, "handled_by_note_id": r.handled_by_note_id,
+            "handled_at": str(r.handled_at) if r.handled_at else None, "ts": r.ts,
+            "created_at": str(r.created_at), "updated_at": str(r.updated_at),
+        }
 
     @staticmethod
     def _prose_note_dict(r: ProseNote) -> dict:

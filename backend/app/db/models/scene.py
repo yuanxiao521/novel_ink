@@ -19,6 +19,7 @@ from app.db.base import Base, TimestampMixin
 if TYPE_CHECKING:
     from app.db.models.character import Character
     from app.db.models.chapter import Chapter
+    from app.db.models.annotation import ProseAnnotation
     from app.db.models.note import ProseNote
 
 
@@ -43,5 +44,8 @@ class Scene(TimestampMixin, Base):
         back_populates="scene", cascade="all, delete-orphan"
     )
     notes: Mapped[list["ProseNote"]] = relationship(
+        back_populates="scene", cascade="all, delete-orphan"
+    )
+    annotations: Mapped[list["ProseAnnotation"]] = relationship(
         back_populates="scene", cascade="all, delete-orphan"
     )
