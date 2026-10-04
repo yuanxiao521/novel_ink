@@ -30,6 +30,7 @@ const KIND_LABEL: Record<string, string> = {
 };
 const STATUS_LABEL: Record<string, string> = { pending: '待审阅', approved: '已批准', rejected: '已驳回' };
 const TOOL_LABEL: Record<string, string> = {
+  'prose.review_meeting': '审稿会', 'prose.quality_score': '评审',
   'prose.review': '体检', 'prose.polish': '润色', 'prose.verify': '质检',
   'prose.scan_tone': 'AI 味扫描', 'prose.spot_fix': '定点修复', 'prose.quality_loop': '质量回环',
 };
@@ -150,13 +151,28 @@ export function StudioPage() {
 
   const resultCard = (r: { tool: string; data: Record<string, unknown> }) => {
     const d = r.data;
-    const t = (d.text ?? d.after) as string | undefined;
+    const t = (d.text ?? d.after ?? d.candidate) as string | undefined;
+    const verdict = typeof d.verdict === 'string' ? d.verdict : '';
+    const steps = Array.isArray(d.steps) ? (d.steps as Array<Record<string, unknown>>) : [];
     const report = d.report as { overall?: string; issues?: Array<{ severity: string; text: string; suggestion?: string }> } | undefined;
     const opinion = d.opinion as { risks?: string[]; foreshadow_updates?: unknown[]; belief_deltas?: unknown[] } | undefined;
     const score = d.total ?? d.score;
     return (
       <div className="s2-result">
-        <div className="s2-result-head">最近一次：<b>{r.tool}</b></div>
+        <div className="s2-result-head">最近一次：<b>{TOOL_LABEL[r.tool] ?? r.tool}</b></div>
+        {verdict && <div className="s2-verdict">裁决：{verdict}</div>}
+        {steps.length > 0 && (
+          <div className="s2-steps">
+            {steps.map((s, i) => (
+              <span className="s2-step" key={i}>
+                {String(s.step)}
+                {typeof s.total === 'number' ? ` ${s.total}` : ''}
+                {typeof s.issues === 'number' ? ` ${s.issues} 条` : ''}
+                {typeof s.risks === 'number' ? ` 风险 ${s.risks}` : ''}
+              </span>
+            ))}
+          </div>
+        )}
         {typeof score === 'number' && <div className="s2-score">质量分 <b>{Math.round(score as number)}</b></div>}
         {report && (
           <>
@@ -230,15 +246,19 @@ export function StudioPage() {
         <button className="ws-btn ws-btn-primary" disabled={!!busy} onClick={() => void runTool('prose.draft', {}, { label: '写手·初稿' })}>
           {busy === 'prose.draft' ? '写手中…' : '✍ 写手 · 初稿'}
         </button>
-        {(['prose.review', 'prose.polish', 'prose.verify'] as const).map((tool) => (
-          <button key={tool} className="ws-btn" disabled={!!busy || !text.trim()} onClick={() => void runTool(tool, { text }, { label: TOOL_LABEL[tool] })}>
-            {busy === tool ? '处理中…' : TOOL_LABEL[tool]}
-          </button>
-        ))}
+        {/* D 批：三个按钮收敛成一次"审稿会"（体检 → 润色 → 质检 → 评审 + 裁决） */}
+        <button
+          className="ws-btn s2-meeting"
+          disabled={!!busy || !text.trim()}
+          title="体检 → 润色（有问题才做）→ 质检 → 评审，一次跑完并给出裁决"
+          onClick={() => void runTool('prose.review_meeting', { text }, { label: '审稿会' })}
+        >
+          {busy === 'prose.review_meeting' ? '审稿中…' : '🗂 审稿会'}
+        </button>
         <details className="s2-more">
           <summary>精修工具 ▾</summary>
           <div className="s2-more-body">
-            {(['prose.scan_tone', 'prose.spot_fix', 'prose.quality_loop'] as const).map((tool) => (
+            {(['prose.review', 'prose.polish', 'prose.verify', 'prose.quality_score', 'prose.scan_tone', 'prose.spot_fix', 'prose.quality_loop'] as const).map((tool) => (
               <button key={tool} className="ws-btn" disabled={!!busy || !text.trim()} onClick={() => void runTool(tool, { text }, { label: TOOL_LABEL[tool] })}>
                 {TOOL_LABEL[tool]}
               </button>

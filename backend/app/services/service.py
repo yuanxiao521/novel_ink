@@ -765,6 +765,23 @@ class SimulationService:
     async def agent_task_messages(self, task_id: str) -> list[dict]:
         return await self.repo.list_messages(task_id)
 
+    async def prose_quality_score(self, scene_id: str, text: str = "") -> dict:
+        """**评审**（D 批给身份）：A2 的 0-token 合分 + LLM 五维自评（只读，不改正文）。"""
+        from app.services.engine.quality import score_text
+
+        scene, _ = await self._scene_and_book(scene_id)
+        chars = await self.repo.list_characters_for_scene(scene_id) if scene_id else []
+        body = (text or "").strip() or str(scene.get("final_prose") or "")
+        if not body:
+            return {"total": None, "scores": {}, "weak_points": [], "note": "正文为空，无评分"}
+        return await score_text(llm_client, body, characters=chars)
+
+    async def prose_review_meeting(self, scene_id: str, text: str = "") -> dict:
+        """D 批 · **审稿会**：体检 → 润色（仅当有问题）→ 质检 → 评审，一次跑完并给裁决。"""
+        from app.services.agents.review_meeting import run_meeting
+
+        return await run_meeting(self, scene_id, text)
+
     async def prose_draft(self, scene_id: str) -> dict:
         """写手：生成正文初稿（注入角色卡 + 前文摘要），并留 writer 追溯记录。"""
         from app.services.engine.prose import draft_prose
@@ -772,6 +789,12 @@ class SimulationService:
         scene, book_id = await self._scene_and_book(scene_id)
         memory = await self.chief_perceive(book_id, limit=8) if book_id else ""
         existing = str(scene.get("final_prose") or "")
+
+        # B/D 批：把**书级约束表**（全员读的那一份）真正注入写手 prompt
+        from app.services.agents.constraints import build_constraints
+        from app.services.agents.constraints import render as render_constraints
+
+        constraints_text = render_constraints(await build_constraints(self.repo, book_id)) if book_id else ""
 
         # 获取出场角色卡
         characters = await self.repo.list_characters_for_scene(scene_id) if scene_id else []
@@ -817,7 +840,7 @@ class SimulationService:
         text = await draft_prose(llm_client, scene, memory, existing,
                                  characters=characters, prev_prose=prev_prose,
                                  emergence=emergence, motives=motives,
-                                 world_states=world_states)
+                                 world_states=world_states, constraints=constraints_text)
         await self.repo.save_prose_note({
             "id": f"note-{uuid.uuid4().hex[:10]}",
             "scene_id": scene_id, "kind": "writer", "status": "approved",

@@ -44,6 +44,7 @@ EDITOR = AgentSpec(
         "prose.draft", "prose.review", "prose.polish", "prose.verify",
         "prose.scan_tone", "prose.spot_fix", "prose.quality_loop",
         "prose.save", "annotation.list", "annotation.resolve",
+        "prose.quality_score", "prose.review_meeting",
         "task.rehearsal", "task.list", "task.transition",
     ),
     emits=("action.plan", "prose.candidate", "prose.saved"),
@@ -78,7 +79,17 @@ AUTHOR = AgentSpec(
     emits=("task.created",), can_initiate_tasks=True,
 )
 
-SPECS: dict[str, AgentSpec] = {s.id: s for s in (CHIEF, EDITOR, CHARACTER, STAGE_MANAGER, AUTHOR)}
+# 评审（D 批给身份）：A2 的 score_text 从 quality.py 里请出来——有名字、有入口、有审计
+REVIEWER = AgentSpec(
+    id="reviewer", name="评审", scope="scene", persona="reviewer",
+    reads=("scene", "characters", "prose_notes", "constraints"),
+    writes=("prose_notes",),
+    tools=("prose.quality_score",),
+    emits=("review.score",),
+    can_initiate_tasks=False,
+)
+
+SPECS: dict[str, AgentSpec] = {s.id: s for s in (CHIEF, EDITOR, CHARACTER, STAGE_MANAGER, AUTHOR, REVIEWER)}
 
 
 def get_spec(agent_id: str) -> AgentSpec | None:

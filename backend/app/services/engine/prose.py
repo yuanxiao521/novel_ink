@@ -138,6 +138,9 @@ _DRAFT_PROMPT = """你是小说正文【写手】。根据场景设定、出场�
 书级记忆（务必遵守）：
 {memory}
 
+书级约束（方向 / 世界观 / 硬规则 / 写作约束 —— 全员必须遵守，由主笔维护）：
+{constraints}
+
 涌现素材（作者已采纳的剧本高光，当素材参考、不必照抄）：
 {emergence}
 
@@ -332,7 +335,8 @@ async def draft_prose(llm_client: Any, scene: dict, memory: str,
                       prev_prose: str = "",
                       world_states: list[dict] | None = None,
                       emergence: list[dict] | None = None,
-                      motives: list[dict] | None = None) -> str:
+                      motives: list[dict] | None = None,
+                      constraints: str = "") -> str:
     """写手：正文初稿（自由文本，非结构化；无 LLM → 空串由调用方提示）。"""
     if not llm_client.available:
         return ""
@@ -343,6 +347,7 @@ async def draft_prose(llm_client: Any, scene: dict, memory: str,
         world_states=_world_states_block(world_states),
         prev_prose=prev_prose or "（无前文，本场为开场）",
         memory=memory or "（无）",
+        constraints=constraints or "（无）",
         emergence=_emergence_block(emergence),
         motives=_motives_block(motives),
         existing_block=existing_block,

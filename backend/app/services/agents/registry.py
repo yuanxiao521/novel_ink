@@ -29,6 +29,14 @@ TOOLS: dict[str, ToolDecl] = {
         "prose.scan_tone", "AI 味扫描（0-token 规则命中，改不了正文）", "read",
         params=("scene_id", "text"), handler="prose_ai_tone",
     ),
+    "prose.quality_score": ToolDecl(
+        "prose.quality_score", "评审：五维自评 + 0-token 硬信号合分（只读，不改正文）", "read",
+        params=("scene_id",), optional=("text",), handler="prose_quality_score",
+    ),
+    "prose.review_meeting": ToolDecl(
+        "prose.review_meeting", "审稿会：体检 → 润色（有问题才做）→ 质检 → 评审，一次跑完并给裁决", "write",
+        params=("scene_id",), optional=("text",), handler="prose_review_meeting",
+    ),
     "annotation.list": ToolDecl(
         "annotation.list", "列出本场批注（默认只看未处理）", "read",
         params=("scene_id",), optional=("status",), handler="repo.list_annotations", group="annotation",

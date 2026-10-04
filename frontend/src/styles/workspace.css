@@ -521,6 +521,19 @@
 }
 .rs-done { font-size: 10.5px; color: var(--accent-green); white-space: nowrap; }
 
+
+/* D 批：审稿会（按钮收敛 + 裁决展示） */
+.s2-actions .s2-meeting { border-color: var(--accent-cyan); color: var(--accent-cyan); }
+.s2-verdict {
+  font-size: 12.5px; color: var(--accent-gold); background: var(--accent-gold-light, rgba(232,184,96,.10));
+  border: 1px solid var(--accent-gold); border-radius: var(--radius-md); padding: 6px 10px; margin: 6px 0;
+}
+.s2-steps { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 8px; }
+.s2-step {
+  font-size: 11px; border: 1px solid var(--border-light); border-radius: 999px;
+  padding: 1px 8px; color: var(--text-secondary);
+}
+
 /* ---------- 设定页 ---------- */
 .settings-page { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 .settings-head {
