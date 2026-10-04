@@ -765,6 +765,12 @@ class SimulationService:
     async def agent_task_messages(self, task_id: str) -> list[dict]:
         return await self.repo.list_messages(task_id)
 
+    async def character_voices(self, scene_id: str, text: str = "") -> dict:
+        """E 批 · **角色在场感**：请角色就当前正文说一句（只读意见卡，不改正文/账本）。"""
+        from app.services.agents.character_voice import build_voices
+
+        return await build_voices(self, scene_id, text)
+
     async def prose_quality_score(self, scene_id: str, text: str = "") -> dict:
         """**评审**（D 批给身份）：A2 的 0-token 合分 + LLM 五维自评（只读，不改正文）。"""
         from app.services.engine.quality import score_text

@@ -4,6 +4,7 @@ import { Sidebar } from '../components/backoffice/Sidebar';
 import { ContextBar } from '../components/common/ContextBar';
 import { Tabs } from '../components/common/Tabs';
 import { useDialog } from '../components/common/Dialog';
+import { CharacterVoices } from '../components/studio/CharacterVoices';
 import { EditorChat } from '../components/studio/EditorChat';
 import { TasksPanel } from '../components/studio/TasksPanel';
 import { ProseBody, splitParagraphs } from '../components/studio/ProseBody';
@@ -21,7 +22,7 @@ import type { AgentTask, ProseAnnotation, ProseNote, SceneDetail } from '../api/
      write 只出候选 → 采纳才改正文；destructive（保存/批注状态）先弹确认再带 confirm 重试。
    ========================================================================== */
 
-type SideTab = 'editor' | 'quality' | 'tasks';
+type SideTab = 'editor' | 'quality' | 'tasks' | 'voices';
 type AuditFilter = 'all' | 'pending' | 'approved' | 'rejected';
 
 const KIND_LABEL: Record<string, string> = {
@@ -55,7 +56,9 @@ export function StudioPage() {
   // 侧栏 tab 支持深链：?tab=editor|quality|tasks（便于分享与截图核对）
   const [params, setParams] = useSearchParams();
   const tabParam = params.get('tab') as SideTab | null;
-  const [sideTab, setSideTab] = useState<SideTab>(tabParam && ['editor', 'quality', 'tasks'].includes(tabParam) ? tabParam : 'editor');
+  const [sideTab, setSideTab] = useState<SideTab>(
+    tabParam && ['editor', 'quality', 'tasks', 'voices'].includes(tabParam) ? tabParam : 'editor',
+  );
   const switchTab = (k: SideTab) => { setSideTab(k); setParams({ tab: k }); };
   const [auditFilter, setAuditFilter] = useState<AuditFilter>('all');
   const [auditAll, setAuditAll] = useState(false);
@@ -305,13 +308,18 @@ export function StudioPage() {
                 { key: 'editor', label: '责编' },
                 { key: 'quality', label: '质检', badge: openAnns.length },
                 { key: 'tasks', label: '任务', badge: tasks.filter((t) => t.status !== 'completed' && t.status !== 'failed').length },
+                { key: 'voices', label: '角色' },
               ]}
               value={sideTab}
               onChange={(k) => switchTab(k as SideTab)}
             />
             <span className="s2-tool-count" title="可用工具（按钮与对话共用）">{toolCount} 个工具</span>
           </div>
-          {sideTab === 'tasks' ? (
+          {sideTab === 'voices' ? (
+            <div className="s2-quality">
+              <CharacterVoices sceneId={sceneId} text={text} onFlash={flash} />
+            </div>
+          ) : sideTab === 'tasks' ? (
             <div className="s2-quality">
               <TasksPanel sceneId={sceneId} tasks={tasks} onRefresh={load} onFlash={flash} />
             </div>

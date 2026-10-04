@@ -1,7 +1,7 @@
 
 # 正文协作副驾 与 Agent 协作架构（设计稿）
 
-> 版本 v0.1 · 2026-10-01 · **已确认（待落地）**
+> 版本 v0.2 · 2026-10-04 · **已确认 · A→E 已全部落地（v1.18 → v1.24）**
 > 定位：在已交付的 **S1/S2/S3/S4 + A2/A3 + T9** 之上，补上「**编排层**」与「**场景层副驾**」两块。
 > **不动引擎**：`services/engine/*` 的写手/体检/润色/质检/质量回环/AI 味/定点修复、0-token 校验层、三本账幂等 upsert 全部复用。
 > 配图（8 张，本目录）：[流程总图](mockups/design/flow-overview.png) · [副驾架构](mockups/design/agent-architecture.png) · [现状 agent 清单](mockups/design/agent-inventory.png) · [五模块×通信三层](mockups/design/agent-modules.png) · [最终架构](mockups/design/final-architecture.png) · [感知包](mockups/design/percept-packet.png) · [复用选择](mockups/design/studio-agent-choice.png) · [主笔↔责编信息流](mockups/design/chief-editor-loop.png)
@@ -255,7 +255,7 @@ class AgentSpec:
 | **B** | 约束表全局化 + `perceive(scope)`（先主笔+责编）—— **已落地 v1.21**（写手侧注入留 D 批） | ① 同一 PerceptPacket 渲染两种 prompt；② `dropped` 留痕有测试；③ 行为等价（现有用例不回归） |
 | **C** | 彩排三方决策（主笔建议 / 责编请求 / 作者开关）+ **素材使用率** —— **已落地 v1.22** | ① 第一条真实任务单闭环；② 场景行显示"采纳 N 条 · 引用 M 条" |
 | **D** | 文字层合并为**一次审稿会** + 评审给身份 + 写手注入约束 —— **已落地 v1.23** | ① 按钮从 7 个收敛；② 审计里出现"评审" |
-| **E** | 角色在场感（正文页"角色意见"只读卡） | 复用 `character.think`，不改角色 agent 边界 |
+| **E** | 角色在场感（正文页「角色意见」只读卡）—— **已落地 v1.24（A→E 全部完成）** | 复用角色卡 + 0-token 腔调统计，不改角色 agent 边界 |
 
 **顺序**：A → A+ → B → C → D → E。**样板先行**：五模块只先落 **主笔** 与 **责编**，其余 agent 保持现状再推广。
 

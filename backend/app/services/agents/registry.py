@@ -37,6 +37,10 @@ TOOLS: dict[str, ToolDecl] = {
         "prose.review_meeting", "审稿会：体检 → 润色（有问题才做）→ 质检 → 评审，一次跑完并给裁决", "write",
         params=("scene_id",), optional=("text",), handler="prose_review_meeting",
     ),
+    "character.voices": ToolDecl(
+        "character.voices", "角色在场感：请本场角色就当前正文说一句（只读，不改正文）", "read",
+        params=("scene_id",), optional=("text",), handler="character_voices", group="character",
+    ),
     "annotation.list": ToolDecl(
         "annotation.list", "列出本场批注（默认只看未处理）", "read",
         params=("scene_id",), optional=("status",), handler="repo.list_annotations", group="annotation",

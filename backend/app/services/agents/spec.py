@@ -44,7 +44,7 @@ EDITOR = AgentSpec(
         "prose.draft", "prose.review", "prose.polish", "prose.verify",
         "prose.scan_tone", "prose.spot_fix", "prose.quality_loop",
         "prose.save", "annotation.list", "annotation.resolve",
-        "prose.quality_score", "prose.review_meeting",
+        "prose.quality_score", "prose.review_meeting", "character.voices",
         "task.rehearsal", "task.list", "task.transition",
     ),
     emits=("action.plan", "prose.candidate", "prose.saved"),
