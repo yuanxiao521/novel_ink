@@ -145,6 +145,16 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     refreshBooks();
   }, [refreshBooks]);
 
+  // 记忆里的书已被删除（例如清理掉的两本 ???? 空壳书）→ 回落到第一本，
+  // 否则上下文条的书不在选项里、页面停在「未选场景」这种半死状态。
+  useEffect(() => {
+    if (!bookId || books.length === 0) return;
+    if (books.some((b) => b.id === bookId)) return;
+    setChapterId('');
+    setSceneId('');
+    setBookId(books[0].id);
+  }, [bookId, books]);
+
   // 没有书 id 且**非深链**（无场景）→ 取第一本。
   // 深链（/director/:sceneId）必须等下面的"场景 → 章 → 书"反查：否则这里会先落第一本书，
   // 反查 effect 的 cleanup 随 bookId 变化触发 cancel → 反查结果被丢弃（实测 /director/scene-betrayal-night

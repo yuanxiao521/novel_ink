@@ -16,6 +16,22 @@
   --font-ui: "Noto Sans SC", system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
   --font-reader: "Noto Serif SC", Georgia, "Songti SC", "SimSun", serif;
   --font-mono: "JetBrains Mono", "SF Mono", Consolas, "Courier New", monospace;
+
+  /* 间距阶（UI 重构方案 §4.1：4·8·12·16·24·32） */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  /* 字号阶（12·13·14·16·20·28） */
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --text-md: 16px;
+  --text-lg: 20px;
+  --text-xl: 28px;
 }
 
 /* ===== 墨模式（深色 · 深夜批阅） ===== */
@@ -50,6 +66,19 @@
   --accent-gold-light: rgba(232, 184, 96, 0.12);
 
   --on-accent: #1A1815;        /* 主色按钮上的文字 */
+
+  /* 背景层（§4.1）：墨模式背景用渐变，不用纯黑 */
+  --page-grad: radial-gradient(ellipse at 50% 0%, rgba(74, 91, 138, 0.45) 0%, rgba(13, 15, 20, 0) 55%), var(--bg-page);
+  --stage-grad: radial-gradient(ellipse at 50% 30%, rgba(74, 91, 138, 0.5) 0%, rgba(10, 13, 20, 0) 70%);
+  --stage-base: #0A0D14;
+  --panel-trans: rgba(21, 25, 34, 0.74);
+
+  /* 状态色语义别名（P3 统一命名，等价于上面的矿物色） */
+  --accent-ok: var(--accent-green);
+  --accent-run: var(--accent-cyan);
+  --accent-warn: var(--accent-gold);
+  --accent-err: var(--accent-red);
+
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.35);
   --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.45);
@@ -87,6 +116,18 @@
   --accent-gold-light: rgba(199, 125, 35, 0.10);
 
   --on-accent: #FFFFFF;
+
+  /* 背景层（§4.1）：纸模式同一位置换柔和纸光 */
+  --page-grad: radial-gradient(ellipse at 50% 0%, rgba(181, 69, 46, 0.06) 0%, rgba(245, 239, 224, 0) 55%), var(--bg-page);
+  --stage-grad: radial-gradient(ellipse at 50% 30%, rgba(181, 69, 46, 0.07) 0%, rgba(240, 233, 216, 0) 70%);
+  --stage-base: #F0E9D8;
+  --panel-trans: rgba(250, 246, 234, 0.78);
+
+  --accent-ok: var(--accent-green);
+  --accent-run: var(--accent-cyan);
+  --accent-warn: var(--accent-gold);
+  --accent-err: var(--accent-red);
+
   --shadow-sm: 0 1px 2px rgba(43, 41, 37, 0.06);
   --shadow-md: 0 4px 12px rgba(43, 41, 37, 0.07);
   --shadow-lg: 0 8px 24px rgba(43, 41, 37, 0.10);

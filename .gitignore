@@ -33,3 +33,5 @@ backend/app/logs/
 *.bak
 # tsc -b 会为 tsconfig.node.json 生成这份 JS 产物（源码只有 .ts）
 frontend/vite.config.js
+backups/
+.git-commit-msg.tmp
