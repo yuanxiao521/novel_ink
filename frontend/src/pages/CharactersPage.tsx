@@ -7,7 +7,6 @@ import chenImg from '../assets/portrait-chenmo.png';
 import liwImg from '../assets/portrait-liwen.png';
 import zhouImg from '../assets/portrait-zhoushen.png';
 import {
-  listBooks,
   listBookCharacters,
   createBookCharacter,
   generateBookCharacters,
@@ -18,7 +17,8 @@ import {
   updateBelief,
   deleteBelief,
 } from '../api/novel';
-import type { BeliefChannel, BeliefMeta, BookMeta, CharacterCardMeta, CharacterSpec } from '../api/novel';
+import type { BeliefChannel, BeliefMeta, CharacterCardMeta, CharacterSpec } from '../api/novel';
+import { useWorkspace } from '../context/WorkspaceContext';
 
 type Tab = 'basic' | 'belief' | 'memory' | 'relation';
 
@@ -90,8 +90,8 @@ const RELATIONS = [
 export function CharactersPage() {
   const [tab, setTab] = useState<Tab>('basic');
   const [beliefFilter, setBeliefFilter] = useState('all');
-  const [bookId, setBookId] = useState('');
-  const [books, setBooks] = useState<BookMeta[]>([]);
+  // 书 = 全局上下文（与上下文条 / 导演台 / 正文协作同一真相源，避免「这页一本、那页另一本」）
+  const { books, bookId, setBook } = useWorkspace();
   const [chars, setChars] = useState<CharacterCardMeta[]>([]);
   const [selected, setSelected] = useState('');
   const [draft, setDraft] = useState<CharacterSpec | null>(null);
@@ -125,14 +125,7 @@ export function CharactersPage() {
     window.setTimeout(() => setMsg(null), 4000);
   };
 
-  useEffect(() => {
-    listBooks()
-      .then((bs) => {
-        setBooks(bs);
-        if (bs.length) setBookId(bs[0].id);
-      })
-      .catch((e) => flash('err', `书列表加载失败：${e instanceof Error ? e.message : e}`));
-  }, []);
+  // 书列表由全局上下文拉取（refreshBooks），本页不再自持一份
 
   // 书 → 书级角色库（全书共享，一次编辑到处生效）
   useEffect(() => {
@@ -305,7 +298,7 @@ export function CharactersPage() {
 
         <div className="char-scope-row">
           <label className="char-scope-label">书</label>
-          <select className="char-scope-select" value={bookId} onChange={(e) => setBookId(e.target.value)}>
+          <select className="char-scope-select" value={bookId} onChange={(e) => setBook(e.target.value)}>
             {books.length === 0 && <option value="">（暂无书）</option>}
             {books.map((b) => (
               <option key={b.id} value={b.id}>{b.title}</option>

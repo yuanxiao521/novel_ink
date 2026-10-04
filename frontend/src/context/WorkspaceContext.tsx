@@ -98,6 +98,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [tree, setTree] = useState<BookTree | null>(null);
   const bookIdRef = useRef('');
   bookIdRef.current = bookId;
+  // 用户是否在「书」下拉里**显式**换过书：显式选择优先，场景反查不得把书拽回去
+  const userPickedBookRef = useRef(false);
   const [globalView, setGlobalView] = useState<GlobalView | null>(null);
 
   /* ---------- 首帧：从 localStorage 恢复 ---------- */
@@ -113,8 +115,18 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ---------- 后续：URL 变化（外部 navigate）时同步 ---------- */
+  // 我们自己写过的地址：URL → 状态 的同步必须忽略它，否则「换章时退出深链」这类自带 nav 的操作
+  // 会被 URL 里还没更新的旧 chapter 立刻拽回去（实测：章怎么点都弹回第 1 章）。
+  const selfUrlRef = useRef('');
+  const goTo = useCallback((pathname: string, search = '') => {
+    const qs = search && search !== '?' ? (search.startsWith('?') ? search : '?' + search) : '';
+    selfUrlRef.current = pathname + qs;
+    nav({ pathname, search: qs }, { replace: true });
+  }, [nav]);
+
+  /* ---------- 后续：URL 变化（外部 navigate / 前进后退）时同步 ---------- */
   useEffect(() => {
+    if (location.pathname + location.search === selfUrlRef.current) return;
     const q = new URLSearchParams(location.search);
     const deep = pathScene(location.pathname);
     if (deep) setSceneId(deep);
@@ -171,6 +183,15 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     // 场景已在本书记忆的书树里 → 无需反查
     const inTree = (tree?.chapters ?? []).some((c) => (c.scenes ?? []).some((s) => s.id === sceneId));
     if (inTree) return;
+    // 书树还没换到当前书（正在加载 / 还是上一本）→ 等下一轮，别拿旧树的场景乱猜
+    if (bookIdRef.current && tree?.id !== bookIdRef.current) return;
+    // 书是用户显式选的 → 场景不得反噬书：该场景不属于当前书，丢弃它并退出深链
+    if (userPickedBookRef.current && bookIdRef.current) {
+      setSceneId('');
+      const seg = window.location.pathname.match(/^\/(director|studio)(?:\/|$)/)?.[1];
+      if (seg) goTo('/' + seg);
+      return;
+    }
     let cancel = false;
     void (async () => {
       let resolved = '';
@@ -191,7 +212,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     return () => {
       cancel = true;
     };
-  }, [sceneId, tree, books]);
+  }, [sceneId, tree, books, location.pathname, goTo]);
 
   /* ---------- 派生：章 / 场景 ---------- */
   const chapters: ChapterOption[] = useMemo(
@@ -239,23 +260,34 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }, [bookId, tree]);
 
   // 章失效（换书/深链）→ 回落到场景所属章或第一章
+  // 同样要等书树换到当前书：否则换书瞬间会把**上一本的章**写进 URL/记忆（实测 chapter-01）
   useEffect(() => {
     if (chapters.length === 0) return;
+    if (!bookId || tree?.id !== bookId) return;
     if (chapters.some((c) => c.id === chapterId)) return;
     setChapterId(scene?.chapter_id ?? chapters[0].id);
-  }, [chapters, chapterId, scene]);
+  }, [chapters, chapterId, scene, bookId, tree]);
 
   // 场景为空且有场景可选 → 自动取第一个（保证"一键直达"可用）
+  // 两条约束：① 必须等书树换到当前书（否则会把上一本的场景塞进来，随后反查又判回旧书 = 「书选不了」）；
+  //           ② 只在**当前章**里挑（跨章挑会出现「栏里第 2 章、场景却是第 1 章」的下拉错位）。
   useEffect(() => {
-    if (sceneId || allScenes.length === 0) return;
-    setSceneId(allScenes[0].id);
-  }, [sceneId, allScenes]);
+    if (sceneId) return;
+    if (!bookId || tree?.id !== bookId) return;
+    const wantChapter = chapterId || chapters[0]?.id || '';
+    const first = chapters.find((c) => c.id === wantChapter)?.scenes[0]?.id;
+    if (first) setSceneId(first);
+  }, [sceneId, chapters, chapterId, bookId, tree]);
 
   /* ---------- 落点写 URL + 记忆 ---------- */
   useEffect(() => {
     if (!bookId) return;
-    const q = new URLSearchParams(location.search);
-    const deep = pathScene(location.pathname);
+    // 必须用**实时**地址：React Router 的 location 提交可能晚于同一次 effect flush 里的其它 state 更新，
+    // 用 render 期的 location 会出现「子组件(SceneEntry)刚跳到 /director/:sceneId，父级又把 URL 写回 /director?scene=…」，
+    // 结果停在 SceneEntry 空态页 = 用户看到的「选了卡住 / 不知道在哪本书」。
+    const live = window.location;
+    const q = new URLSearchParams(live.search);
+    const deep = pathScene(live.pathname);
     let changed = false;
     const put = (k: string, v: string) => {
       if (q.get(k) !== v) {
@@ -266,13 +298,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     put('book', bookId);
     if (chapterId) put('chapter', chapterId);
     if (sceneId && !deep) put('scene', sceneId);
-    if (changed) nav({ pathname: location.pathname, search: q.toString() }, { replace: true });
+    if (changed) goTo(live.pathname, q.toString());
     try {
       localStorage.setItem(LS_KEY, JSON.stringify({ bookId, chapterId, sceneId }));
     } catch {
       /* 无痕模式忽略 */
     }
-  }, [bookId, chapterId, sceneId, location.pathname, location.search, nav]);
+  }, [bookId, chapterId, sceneId, location.pathname, location.search, goTo]);
 
   /* ---------- 状态点 ---------- */
   const status: WorkspaceStatus = useMemo(() => {
@@ -286,11 +318,48 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }, [chapters, globalView, characterCount]);
 
   /* ---------- 上一步 / 下一步 ---------- */
-  const setBook = useCallback((id: string) => {
-    setBookId(id);
-    setChapterId('');
-    setSceneId('');
-  }, []);
+  const setBook = useCallback(
+    (id: string) => {
+      userPickedBookRef.current = true;
+      setBookId(id);
+      setChapterId('');
+      setSceneId('');
+      // 深链路径 /director|studio/:sceneId 里的旧场景会把书拽回去（反查 → 旧书）：
+      // 换书时一并退回「无场景入口」，再由上面的「自动取第一个场景」落到新书的场景。
+      const live = window.location;
+      const q = new URLSearchParams(live.search);
+      q.delete('scene');
+      q.delete('chapter');
+      q.set('book', id);
+      const seg = live.pathname.match(/^\/(director|studio)(?:\/|$)/)?.[1];
+      goTo(seg ? '/' + seg : live.pathname, q.toString());
+    },
+    [goTo],
+  );
+
+  // 换场景：深链页把场景写回路径（清空则退出深链），刷新 / 返回才不会跳回旧场景
+  const setScene = useCallback(
+    (id: string) => {
+      setSceneId(id);
+      const live = window.location;
+      const seg = live.pathname.match(/^\/(director|studio)(?:\/|$)/)?.[1];
+      if (!seg || pathScene(live.pathname) === id) return;
+      const q = new URLSearchParams(live.search);
+      if (id) q.delete('scene');
+      goTo(id ? '/' + seg + '/' + encodeURIComponent(id) : '/' + seg, q.toString());
+    },
+    [goTo],
+  );
+
+  // 换章：不属于本章的旧场景要清掉（并退出深链），否则会「栏里第 2 章、路径还是第 1 章的场景」
+  const setChapter = useCallback(
+    (id: string) => {
+      setChapterId(id);
+      const ch = tree?.chapters.find((c) => c.id === id);
+      if (ch && sceneId && !(ch.scenes ?? []).some((s) => s.id === sceneId)) setScene('');
+    },
+    [tree, sceneId, setScene],
+  );
 
   const stepLink = useCallback(
     (from: StepKey, dir: 'prev' | 'next'): StepLink | null => {
@@ -352,8 +421,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     characterCount,
     status,
     setBook,
-    setChapter: setChapterId,
-    setScene: setSceneId,
+    setChapter,
+    setScene,
     reload,
     refreshBooks,
     stepLink,

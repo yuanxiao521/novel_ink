@@ -31,3 +31,5 @@ backend/app/logs/
 
 # æ”¹æ–‡ä»¶å‰çš„ .bak å¿«ç…§ï¼ˆæœ¬åœ°å›æ»šç”¨ï¼Œä¸è¿›ç‰ˆæœ¬åº“ï¼‰
 *.bak
+# tsc -b »áÎª tsconfig.node.json Éú³ÉÕâ·İ JS ²úÎï£¨Ô´ÂëÖ»ÓĞ .ts£©
+frontend/vite.config.js

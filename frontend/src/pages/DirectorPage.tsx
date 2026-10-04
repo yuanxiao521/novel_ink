@@ -1,13 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ScriptView } from '../components/director/ScriptView';
 import { ContextBar } from '../components/common/ContextBar';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { Link, useLocation, useParams } from 'react-router-dom';
 import { useTheme } from '../theme/ThemeContext';
 import { useDirectorSim } from '../hooks/useDirectorSim';
-import { fetchBookTree, finalizeSim, listBooks } from '../api/novel';
-import type { BookMeta, BookTree } from '../api/novel';
-import { API_BASE } from '../types/types';
+import { finalizeSim } from '../api/novel';
 import { CharRail } from '../components/director/CharRail';
 import { CenterStage } from '../components/director/CenterStage';
 import { DirectorPanel } from '../components/director/DirectorPanel';
@@ -18,127 +16,62 @@ function pad(n: number): string {
   return n < 10 ? '0' + n : String(n);
 }
 
-/** 推演目标：当前场景 + 来源书/章 + 是否新开。sceneId 为空 = 未选场景（空态引导） */
-interface DirectorTarget {
-  sceneId: string;
-  bookId?: string;
-  chapterId?: string;
-  fresh?: boolean;
-}
-
 export function DirectorPage() {
   const { moodLabel, theme, toggleTheme, cycleMood } = useTheme();
   const { sceneId: routeSceneId } = useParams();
   const location = useLocation();
-  // 深链：从主笔/概览进入时携带 book_id/chapter_id
+  // 深链：从书架/概览进入时携带 chapter_id（book_id 交给全局上下文按场景反查）
   const navState = (location.state ?? {}) as { book_id?: string; chapter_id?: string };
-  const { sceneId: wsSceneId, bookId: wsBookId, setScene: setWsScene, setBook: setWsBook } = useWorkspace();
+  // —— 书 / 场景的唯一真相源 = 全局上下文（WorkspaceContext）——
+  // 本页原先自持 bookId/selTree，与上下文条各算一套，出现过「栏里雨夜书房、页内异能007」的串书；
+  // 现在书与场景都从上下文读、经上下文改，页面与上下文条结构上不可能不一致。
+  const {
+    books, bookId, tree: selTree, sceneId: wsSceneId,
+    setScene: setWsScene,
+  } = useWorkspace();
 
-  // —— 书选择（驱动顶部场景下拉；同人物页交互）——
-  const [books, setBooks] = useState<BookMeta[]>([]);
-  const [bookId, setBookId] = useState('');
-  const [selTree, setSelTree] = useState<BookTree | null>(null);
+  const sceneId = routeSceneId || wsSceneId || '';
+  // 深链参数回推给上下文：路径 / 上下文条 / 页内三者同源。
+  // 依赖只留 routeSceneId：若跟着 wsSceneId 一起跑，换书后 ws 刚自动选中的新场景
+  // 会被这条旧路径参数拽回去（表现为「换书后自己跳回上一本」）。
+  useEffect(() => {
+    if (routeSceneId && routeSceneId !== wsSceneId) setWsScene(routeSceneId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeSceneId]);
+  // 「从头新开」标志：换场景即复位（与旧 target.fresh 行为一致）
+  const [fresh, setFresh] = useState(() => new URLSearchParams(location.search).get('fresh') === '1');
+  // 换场景复位「新开」标志；首帧不动（否则 ?fresh=1 一挂载就被清掉）
+  const firstSceneRef = useRef(true);
+  useEffect(() => {
+    if (firstSceneRef.current) { firstSceneRef.current = false; return; }
+    setFresh(false);
+  }, [sceneId]);
 
-  // —— 推演目标：仅深链 sceneId 直达；否则空态（用户从顶部下拉选场景，同角色页"选书→列表"）——
-  const [target, setTarget] = useState<DirectorTarget>(() => {
-    if (routeSceneId) {
-      return {
-        sceneId: routeSceneId,
-        bookId: navState.book_id,
-        chapterId: navState.chapter_id,
-        fresh: new URLSearchParams(location.search).get('fresh') === '1',
-      };
-    }
-    return { sceneId: '' };
-  });
-  const sceneId = target.sceneId || '';
+  // 当前章：书树里按场景反推（阅读台按章读正文）；树未到时用深链带来的章
+  const curChapterId =
+    selTree?.chapters.find((c) => c.scenes.some((s) => s.id === sceneId))?.id ??
+    (routeSceneId === sceneId ? navState.chapter_id : undefined);
+  const bookTitle = selTree?.title ?? books.find((b) => b.id === bookId)?.title ?? '未选场景';
+  // 选角用书 id：书树未到（空黑板场景）时回落到上下文里的书
+  const bookIdForCast = selTree?.id ?? bookId;
 
   const { state, playing, simId, play, pause, step, viewTurn, exitView, rewindTo, agreeRaise, rejectRaise, refresh } = useDirectorSim(
     sceneId || undefined,
-    target.bookId,
-    target.chapterId,
-    target.fresh,
+    bookId || undefined,
+    curChapterId,
+    fresh,
   );
   const [view, setView] = useState<'workbench' | 'reader'>('workbench');
   const [scriptOpen, setScriptOpen] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
   const [finalized, setFinalized] = useState<{ wordCount: number } | null>(null);
 
-  // 挂载：加载书列表；确定当前书（深链 book_id → 上次记忆 → 第一本）
-  useEffect(() => {
-    let cancel = false;
-    (async () => {
-      try {
-        const bs = await listBooks();
-        if (cancel) return;
-        setBooks(bs);
-        let bid = navState.book_id;
-        if (!bid && routeSceneId) {
-          // 深链带上/带错书时按 场景→章→书 反查
-          const sc = await fetch(`${API_BASE}/api/v1/scenes/${routeSceneId}`).then((r) => r.json());
-          const ch = sc?.chapter_id ? await fetch(`${API_BASE}/api/v1/chapters/${sc.chapter_id}`).then((r) => r.json()) : null;
-          bid = ch?.book_id;
-        }
-        if (!bid) bid = bs[0]?.id ?? '';
-        if (!cancel) setBookId(bid);
-      } catch {
-        /* 后端不可用：留空 */
-      }
-    })();
-    return () => { cancel = true; };
-  }, [routeSceneId, navState.book_id]);
-
-  // 当前书 → 拉书树（顶部下拉 + 内容反查共用）
-  useEffect(() => {
-    if (!bookId) { setSelTree(null); return; }
-    let cancel = false;
-    (async () => {
-      try {
-        const t = await fetchBookTree(bookId);
-        if (!cancel) setSelTree(t);
-      } catch {
-        if (!cancel) setSelTree(null);
-      }
-    })();
-    return () => { cancel = true; };
-  }, [bookId]);
-
-  const bookTitle = selTree?.title ?? books.find((b) => b.id === bookId)?.title ?? '未选场景';
-  // 选角用书 id：当前书优先，回退目标书（空黑板场景无树时仍可拉角色库）
-  const bookIdForCast = selTree?.id ?? target.bookId ?? bookId;
-
-  // 当前章：目标章优先，其次按场景在书树中反推（阅读台按章读正文）
-  const curChapterId =
-    target.chapterId ??
-    selTree?.chapters.find((c) => c.scenes.some((s) => s.id === sceneId))?.id;
-
-  // 换书：复位目标（需重新选场景；同角色页"选书→列表"）
-  const changeBook = (bid: string) => {
-    setBookId(bid);
-    setWsBook(bid);
-    setTarget({ sceneId: '', bookId: bid, fresh: false });
-  };
-  // 换场景（顶部下拉）：页内切换，不走路由 → 不整页重载
-  const changeScene = (sid: string, fresh = false) => {
-    const ch = selTree?.chapters.find((c) => c.scenes.some((s) => s.id === sid));
-    const t: DirectorTarget = { sceneId: sid, bookId: selTree?.id ?? bookId, chapterId: ch?.id, fresh };
-    setTarget(t);
-    setWsScene(sid);
-  };
-
-  // 与全局上下文条双向同步：栏里换书/换场景 → 页内跟着切（不整页重载）
-  useEffect(() => {
-    if (wsBookId && wsBookId !== bookId) {
-      changeBook(wsBookId);
-      return;
-    }
-    if (wsSceneId && wsSceneId !== sceneId) changeScene(wsSceneId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wsBookId, wsSceneId]);
+  // 换场景：统一走全局上下文（深链页由它把场景写回路径），本页只跟随
+  const changeScene = (sid: string) => setWsScene(sid);
   // 从头新开当前场景（丢弃上次进度）
   const freshRestart = () => {
     if (!sceneId) return;
-    changeScene(sceneId, true);
+    setFresh(true);
   };
 
   // 手动定稿：聚合本场景成文 → scenes.final_prose（幂等覆盖）

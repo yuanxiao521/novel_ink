@@ -280,6 +280,8 @@
   min-height: 100vh; padding: 24px;
   background: var(--bg-page);
 }
+/* 入口兜底页嵌在 view 里：不占满视口，上下文条留在顶部 */
+.ws-entry-body { min-height: 0; flex: 1 1 auto; }
 
 
 /* ==========================================================================

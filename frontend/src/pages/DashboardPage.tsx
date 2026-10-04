@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { Sidebar } from '../components/backoffice/Sidebar';
 import { ThemeToggle } from '../components/backoffice/ThemeToggle';
 import { useDialog } from '../components/common/Dialog';
-import { listBooks, createBook, fetchDashboard, fetchGlobalView } from '../api/novel';
-import type { BookMeta, DashboardData, GlobalView } from '../api/novel';
+import { createBook, fetchDashboard, fetchGlobalView } from '../api/novel';
+import type { DashboardData, GlobalView } from '../api/novel';
+import { useWorkspace } from '../context/WorkspaceContext';
 import { TensionPanel } from '../components/dashboard/TensionPanel';
 
 const TODO_ICON: Record<string, { icon: string; char: string }> = {
@@ -15,26 +16,12 @@ const TODO_ICON: Record<string, { icon: string; char: string }> = {
 };
 
 export function DashboardPage() {
-  const [sp] = useSearchParams();
   const { showPrompt } = useDialog();
-  const [books, setBooks] = useState<BookMeta[]>([]);
-  const [bookId, setBookId] = useState('');
+  // 书 = 全局上下文（URL ?book= 由上下文统一解析；本页不再自持一份）
+  const { books, bookId, setBook, refreshBooks } = useWorkspace();
   const [data, setData] = useState<DashboardData | null>(null);
   const [gview, setGview] = useState<GlobalView | null>(null);
   const [err, setErr] = useState('');
-
-  // 书列表 + 初始选中：URL ?book= 优先；无效或缺失则取首本
-  useEffect(() => {
-    listBooks()
-      .then((bs) => {
-        setBooks(bs);
-        const preset = sp.get('book');
-        if (bs.some((b) => b.id === preset)) setBookId(preset as string);
-        else if (bs.length) setBookId(bs[0].id);
-      })
-      .catch((e) => setErr(`书列表加载失败：${e instanceof Error ? e.message : e}`));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sp]);
 
   useEffect(() => {
     if (!bookId) {
@@ -56,9 +43,8 @@ export function DashboardPage() {
     if (!title) return;
     try {
       const r = await createBook({ title, genre: '玄幻', status: 'planned' });
-      const bs = await listBooks();
-      setBooks(bs);
-      setBookId(r.id);
+      refreshBooks();
+      setBook(r.id);
     } catch (e) {
       setErr(`建书失败：${e instanceof Error ? e.message : e}`);
     }
@@ -104,7 +90,7 @@ export function DashboardPage() {
 
         <div className="char-scope-row">
           <label className="char-scope-label">书</label>
-          <select className="char-scope-select" value={bookId} onChange={(e) => setBookId(e.target.value)}>
+          <select className="char-scope-select" value={bookId} onChange={(e) => setBook(e.target.value)}>
             {books.length === 0 && <option value="">（暂无书）</option>}
             {books.map((b) => (
               <option key={b.id} value={b.id}>{b.title}</option>
