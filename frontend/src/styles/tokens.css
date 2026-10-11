@@ -16,6 +16,9 @@
   --font-ui: "Noto Sans SC", system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
   --font-reader: "Noto Serif SC", Georgia, "Songti SC", "SimSun", serif;
   --font-mono: "JetBrains Mono", "SF Mono", Consolas, "Courier New", monospace;
+  /* 字体族别名：--font-sans/--font-serif 是历史类名，此前**从未定义**（18 处声明静默失效，见 Wiki B26） */
+  --font-sans: var(--font-ui);
+  --font-serif: var(--font-reader);
 
   /* 间距阶（UI 重构方案 §4.1：4·8·12·16·24·32） */
   --space-1: 4px;

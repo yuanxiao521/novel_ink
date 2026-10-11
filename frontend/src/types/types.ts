@@ -63,6 +63,8 @@ export const CHANNEL_CLS: Record<BeliefChannel, string> = {
 };
 
 // 用 IPv4 字面量直连后端，避免 localhost→IPv6 连不上（后端绑定 127.0.0.1）。
-// 可用 window.API_BASE 覆盖（如指向其他后端地址）。
+// 覆盖优先级：window.API_BASE（index.html 注入 VITE_API_BASE）> 默认 8000。
+// Vite 未定义该变量时会原样保留占位符，所以把占位符也当作「未设置」。
+const rawBase = (window as unknown as { API_BASE?: string }).API_BASE;
 export const API_BASE =
-  (window as unknown as { API_BASE?: string }).API_BASE ?? 'http://127.0.0.1:8000';
+  rawBase && !rawBase.startsWith('%') ? rawBase : 'http://127.0.0.1:8000';

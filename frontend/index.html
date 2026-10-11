@@ -17,6 +17,10 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- 后端地址默认 127.0.0.1:8000；被别的项目占用时用 frontend/.env.local 的 VITE_API_BASE 覆盖 -->
+    <script>
+      window.API_BASE = '%VITE_API_BASE%';
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

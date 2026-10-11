@@ -321,7 +321,7 @@ token 补全、卡片统一、`EmptyState` 全量替换、侧栏视觉、纸墨�
 | --- | --- | --- |
 | P3-1 | token 补全（`--page-grad`/`--stage-grad`/`--stage-base`/`--panel-trans`/间距阶/字号阶/状态别名）+ 正文区渐变生效 + `.workbench`/`.reader` 去硬编码 | ✅ 已落地（v1.26，Wiki B25） |
 | P3-2 | 纸墨双模式截图比对（8 页 × 2 主题基线已归档 `docs/mockups/p3/`）→ 按差异逐项修 | ◐ 基线已出，待逐项修 |
-| P3-3 | **主笔页色板统一**：`maestro.css` 自持一整套 `--maestro-*`（34 条硬编码 hex，如 `#0d1117`/`#d4a853`）与 `tokens.css` 的 `--bg-*`/`--accent-*` 并行 → 同一屏两套色板，纸墨切换时两页观感不一致。目标：把 `--maestro-*` 映射到共享 token（或收敛为别名） | ⏳ 未开始（风险：整页观感会变，需双主题截图逐页比对） |
+| P3-3 | **主笔页色板统一**：`maestro.css` 自持一整套 `--maestro-*`（34 条硬编码 hex，如 `#0d1117`/`#d4a853`）与 `tokens.css` 的 `--bg-*`/`--accent-*` 并行 → 同一屏两套色板，纸墨切换时两页观感不一致。目标：把 `--maestro-*` 映射到共享 token（或收敛为别名） | ✅ 已落地（v1.27，Wiki B26）：`--maestro-*` 全部别名到 tokens（`color-mix` 派生边框/辉光），顺带补上从未定义的 `--maestro-radius`/`--maestro-on-gold`/`--font-sans`/`--font-serif`、删 2 条死 canvas 变量；纸墨双主题截图 `docs/mockups/p3/{ink,paper}/02-maestro-new.png` |
 | P3-4 | 卡片统一（左 3px 语义条 + 1px 边 + `--shadow-sm`，hover 抬 1px）+ `EmptyState` 全量替换（各页 `char-empty`/`home-hint` 类 12px 灰字）+ 侧栏视觉 | ⏳ 未开始 |
 
 ---

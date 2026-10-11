@@ -5,50 +5,51 @@
    主题：--maestro-* 挂 [data-theme]，墨(深)/纸(浅)两套，与 tokens.css 一致。
    ========================================================================== */
 
-/* 墨模式（深色，与 tokens.css 墨色系协调） */
+/* 墨模式：P3-3 起**不再是私有色板**，全部别名到 tokens.css（同屏只有一套色板） */
 [data-theme="ink"] {
-  --maestro-bg: #0d1117;
-  --maestro-surface: #151b23;
-  --maestro-surface-2: #1c2430;
-  --maestro-surface-3: #232d3b;
-  --maestro-border: rgba(212, 168, 83, 0.12);
-  --maestro-border-strong: rgba(212, 168, 83, 0.22);
-  --maestro-text: #f4f1ea;
-  --maestro-text-2: #b8b2a6;
-  --maestro-text-3: #8a8276;
-  --maestro-gold: #d4a853;
-  --maestro-gold-soft: rgba(212, 168, 83, 0.12);
-  --maestro-gold-glow: rgba(212, 168, 83, 0.25);
-  --maestro-cyan: #7db9a8;
-  --maestro-cyan-soft: rgba(125, 185, 168, 0.12);
-  --maestro-red: #c96b6b;
-  --maestro-green: #7aa87d;
-  --maestro-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
-  --maestro-canvas-grid: rgba(212, 168, 83, 0.08);
-  --maestro-canvas-dot-stroke: rgba(13, 17, 23, 0.9);
+  --maestro-bg: var(--bg-page);
+  --maestro-surface: var(--bg-panel);
+  --maestro-surface-2: var(--bg-elevated);
+  --maestro-surface-3: var(--bg-surface);
+  --maestro-border: color-mix(in srgb, var(--accent-primary) 12%, transparent);
+  --maestro-border-strong: color-mix(in srgb, var(--accent-primary) 22%, transparent);
+  --maestro-text: var(--text-highlight);
+  --maestro-text-2: var(--text-secondary);
+  --maestro-text-3: var(--text-muted);
+  --maestro-gold: var(--accent-primary);
+  --maestro-gold-soft: var(--accent-primary-light);
+  --maestro-gold-glow: color-mix(in srgb, var(--accent-primary) 25%, transparent);
+  --maestro-cyan: var(--accent-cyan);
+  --maestro-cyan-soft: var(--accent-cyan-light);
+  --maestro-red: var(--accent-red);
+  --maestro-green: var(--accent-green);
+  --maestro-shadow: var(--shadow-lg);
+  /* 此前**从未定义**的变量（B26）：圆角 3 处失效、主笔按钮文字色只能靠 fallback */
+  --maestro-radius: var(--radius-lg);
+  --maestro-on-gold: var(--on-accent);
 }
 
-/* 纸模式（浅色，与 tokens.css 宣纸色系协调） */
+/* 纸模式：同样别名到 tokens.css（主色 = 朱砂红，与其余页面一致） */
 [data-theme="paper"] {
-  --maestro-bg: #f7f1e2;
-  --maestro-surface: #fdfaf0;
-  --maestro-surface-2: #efe7d2;
-  --maestro-surface-3: #e6dcc0;
-  --maestro-border: rgba(199, 125, 35, 0.14);
-  --maestro-border-strong: rgba(199, 125, 35, 0.28);
-  --maestro-text: #2b2925;
-  --maestro-text-2: #6b6458;
-  --maestro-text-3: #a89e8a;
-  --maestro-gold: #c77d23;
-  --maestro-gold-soft: rgba(199, 125, 35, 0.10);
-  --maestro-gold-glow: rgba(199, 125, 35, 0.20);
-  --maestro-cyan: #2e7d8f;
-  --maestro-cyan-soft: rgba(46, 125, 143, 0.10);
-  --maestro-red: #b5452e;
-  --maestro-green: #3d8b5e;
-  --maestro-shadow: 0 10px 30px rgba(43, 41, 37, 0.10);
-  --maestro-canvas-grid: rgba(199, 125, 35, 0.10);
-  --maestro-canvas-dot-stroke: rgba(43, 41, 37, 0.85);
+  --maestro-bg: var(--bg-page);
+  --maestro-surface: var(--bg-panel);
+  --maestro-surface-2: var(--bg-elevated);
+  --maestro-surface-3: var(--bg-surface);
+  --maestro-border: color-mix(in srgb, var(--accent-primary) 14%, transparent);
+  --maestro-border-strong: color-mix(in srgb, var(--accent-primary) 28%, transparent);
+  --maestro-text: var(--text-highlight);
+  --maestro-text-2: var(--text-secondary);
+  --maestro-text-3: var(--text-muted);
+  --maestro-gold: var(--accent-primary);
+  --maestro-gold-soft: var(--accent-primary-light);
+  --maestro-gold-glow: color-mix(in srgb, var(--accent-primary) 20%, transparent);
+  --maestro-cyan: var(--accent-cyan);
+  --maestro-cyan-soft: var(--accent-cyan-light);
+  --maestro-red: var(--accent-red);
+  --maestro-green: var(--accent-green);
+  --maestro-shadow: var(--shadow-lg);
+  --maestro-radius: var(--radius-lg);
+  --maestro-on-gold: var(--on-accent);
 }
 
 .maestro-workbench {
@@ -471,7 +472,7 @@
 
 .maestro-workbench .card-icon.plot { background: var(--maestro-gold-soft); }
 .maestro-workbench .card-icon.character { background: var(--maestro-cyan-soft); }
-.maestro-workbench .card-icon.world { background: color-mix(in srgb, #a06ac4 14%, transparent); }
+.maestro-workbench .card-icon.world { background: color-mix(in srgb, var(--accent-blue) 14%, transparent); }
 
 .maestro-workbench .card-title-wrap {
   flex: 1;
