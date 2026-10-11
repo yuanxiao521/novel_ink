@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { Sidebar } from '../components/backoffice/Sidebar';
 import { ThemeToggle } from '../components/backoffice/ThemeToggle';
 import { useDialog } from '../components/common/Dialog';
-import { createBook, fetchDashboard, fetchGlobalView } from '../api/novel';
+import { createBook, exportBookUrl, fetchDashboard, fetchGlobalView } from '../api/novel';
 import type { DashboardData, GlobalView } from '../api/novel';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { TensionPanel } from '../components/dashboard/TensionPanel';
@@ -71,6 +71,11 @@ export function DashboardPage() {
             <input type="text" placeholder="跨书搜索角色、伏笔、章节…" />
           </div>
           <div className="header-right">
+            {(kpi?.chapters_done ?? 0) > 0 && bookId && (
+              <a className="btn-primary" href={exportBookUrl(bookId)} title="导出全书 markdown（仅含已定稿章节）">
+                <span>导出成书</span>
+              </a>
+            )}
             <button className="btn-primary" onClick={newBook}>
               <span>＋ 新建书</span>
             </button>

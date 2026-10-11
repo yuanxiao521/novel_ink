@@ -252,6 +252,18 @@ def test_book_export_markdown(client):
     assert r.status_code == 400
 
 
+def test_book_export_multi_scene_separator_and_wordcount(client):
+    """成书导出（v1.31）：一章两场景 → 正文间有 `* * *` 分隔；头部含「全书约 N 字」。"""
+    bid, cid, (s1, s2) = _make_book_chapter_scene(client, "两场景书", scene_titles=("前场", "后场"))
+    _run_and_finalize(client, bid, cid, s1)
+    _run_and_finalize(client, bid, cid, s2)
+
+    r = client.get(f"/api/v1/books/{bid}/export")
+    assert r.status_code == 200, r.text
+    assert "* * *" in r.text                      # 场景边界可见
+    assert "全书约" in r.text and "字" in r.text  # 字数统计
+
+
 def _start_sim(client, bid, cid, sid):
     r = client.post("/api/v1/sims", json={"book_id": bid, "chapter_id": cid, "scene_id": sid, "resume": False})
     assert r.status_code == 201, r.text

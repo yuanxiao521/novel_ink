@@ -1479,27 +1479,37 @@ class SimulationService:
         }
 
     async def export_book_md(self, book_id: str) -> str:
-        """全书导出 markdown：书名 / 简介 / 各章（order_no）/ 已定稿场景正文。"""
+        """全书导出 markdown：书名 / 简介 / 总字数 / 各章（order_no）/ 已定稿场景正文。
+
+        一章多场景时场景间用 `* * *` 分隔（否则正文直接相连，读者无法分辨场景边界）。
+        """
         book = await self.repo.get_book(book_id)
         if book is None:
             raise SceneNotFoundError(f"未找到书: {book_id}")
         chapters = await self.repo.list_chapters_by_book(book_id)
 
-        lines: list[str] = [f"# {book.get('title', '无题之书')}", ""]
-        if book.get("synopsis"):
-            lines += [f"> {book['synopsis']}", ""]
-        has_prose = False
+        # 先收集（字数统计要全文，故两遍）
+        chapters_out: list[tuple[str, list[str]]] = []
+        total_chars = 0
         for ch in sorted(chapters, key=lambda c: c.get("order_no") or 0):
             scenes = await self.repo.list_scenes_by_chapter(ch["id"])
             finalized = [s for s in scenes if s.get("final_prose")]
             if not finalized:
                 continue  # 未定稿章节不入书稿
-            has_prose = True
-            lines += [f"## {ch.get('title', '')}", ""]
-            for s in finalized:
-                lines += [s["final_prose"], ""]
-        if not has_prose:
+            bodies = [str(s["final_prose"]).strip() for s in finalized]
+            total_chars += sum(len(t.replace(" ", "").replace("\n", "")) for t in bodies)
+            chapters_out.append((str(ch.get("title", "")), bodies))
+        if not chapters_out:
             raise InvalidActionError("本书尚无已定稿内容，先在导演台定稿再导出")
+
+        lines: list[str] = [f"# {book.get('title', '无题之书')}", ""]
+        if book.get("synopsis"):
+            lines += [f"> {book['synopsis']}", ""]
+        lines += [f"全书约 {total_chars:,} 字", ""]
+        for title, bodies in chapters_out:
+            lines += [f"## {title}", ""]
+            lines.append("\n\n* * *\n\n".join(bodies))
+            lines.append("")
         return "\n".join(lines).strip() + "\n"
 
     async def next_scene_seed(self, sim_id: str) -> Optional[dict]:

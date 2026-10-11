@@ -331,6 +331,13 @@
   background: var(--accent-primary-hover);
 }
 
+/* 用在 <a> 上时（如「导出成书」下载链接）：按钮外观 + 去下划线 + 垂直居中 */
+a.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}
+
 .health-badge {
   display: inline-flex;
   align-items: center;
