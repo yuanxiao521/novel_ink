@@ -35,3 +35,4 @@ backend/app/logs/
 frontend/vite.config.js
 backups/
 .git-commit-msg.tmp
+logs/
