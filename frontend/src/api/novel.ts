@@ -1171,6 +1171,24 @@ export async function fetchWorldStates(bookId: string, kind?: string): Promise<W
   return r.states ?? [];
 }
 
+/** 作者手写世界状态（edited=True，质检不再覆盖）；同 (kind,key) 已有行则更新。 */
+export async function createWorldState(bookId: string, body: {
+  kind: string; name: string; value: string; attr?: string; key?: string; scene_no?: number;
+}): Promise<{ id: string }> {
+  return send('POST', `/api/v1/books/${bookId}/world-states`, body);
+}
+
+/** 作者修改世界状态（落库置 edited=True）。 */
+export async function updateWorldState(wsId: string, body: {
+  kind: string; name: string; value: string; key?: string; scene_no?: number;
+}): Promise<{ id: string }> {
+  return send('PUT', `/api/v1/world-states/${wsId}`, body);
+}
+
+export async function deleteWorldState(wsId: string): Promise<void> {
+  return send('DELETE', `/api/v1/world-states/${wsId}`);
+}
+
 export async function listAgentSpecs(): Promise<{ specs: AgentSpecInfo[]; write_matrix: Array<{ target: string; owner: string; note: string; enforced: boolean }> }> {
   return getJson(`${API_BASE}/api/v1/agent/specs`);
 }

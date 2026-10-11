@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import Boolean, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import BigInteger, Boolean, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin
@@ -33,7 +33,7 @@ class WorldState(TimestampMixin, Base):
     source_event_id: Mapped[str] = mapped_column(String(64), default="")  # 溯源：PROSE_SAVE etc.
     previous_value: Mapped[str] = mapped_column(Text, default="")   # 上一个值（append 前值）
     edited: Mapped[bool] = mapped_column(Boolean, default=False)    # 作者手改标记
-    ts: Mapped[int] = mapped_column(Integer, default=0)             # 产生时间（毫秒）
+    ts: Mapped[int] = mapped_column(BigInteger, default=0)             # 产生时间（毫秒）
 
     book: Mapped[Optional["Book"]] = relationship(back_populates="world_states")
 

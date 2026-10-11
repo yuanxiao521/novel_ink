@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Float, ForeignKey, Integer, String, Text
+from sqlalchemy import BigInteger, Float, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin
@@ -33,6 +33,6 @@ class Belief(TimestampMixin, Base):
     text: Mapped[str] = mapped_column(Text, default="")
     confidence: Mapped[float] = mapped_column(Float, default=0.5)
     edited: Mapped[bool] = mapped_column(default=False)  # 作者手改/编辑标记
-    ts: Mapped[int] = mapped_column(Integer, default=0)  # 产生时间（毫秒）
+    ts: Mapped[int] = mapped_column(BigInteger, default=0)  # 产生时间（毫秒，B28：int32 会溢出）
 
     book: Mapped["Book"] = relationship(back_populates="beliefs")

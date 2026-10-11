@@ -5,7 +5,7 @@ import { ContextBar } from '../components/common/ContextBar';
 import { EmptyState } from '../components/common/EmptyState';
 import { Tabs } from '../components/common/Tabs';
 import { useDialog } from '../components/common/Dialog';
-import { createMemory, deleteMemory, fetchConstraints, fetchHealth, fetchWorldStates, listMemories, updateMemory } from '../api/novel';
+import { createMemory, createWorldState, deleteMemory, deleteWorldState, fetchConstraints, fetchHealth, fetchWorldStates, listMemories, updateMemory, updateWorldState } from '../api/novel';
 import type { BookMemoryMeta, ConstraintTable, MemoryTopic, WorldStateMeta } from '../api/novel';
 import { useWorkspace } from '../context/WorkspaceContext';
 
@@ -61,6 +61,9 @@ export function SettingsPage() {
   const [table, setTable] = useState<ConstraintTable | null>(null);
   const [worldStates, setWorldStates] = useState<WorldStateMeta[] | null>(null);
   const [wsKind, setWsKind] = useState<string>('');
+  const [wsEditingId, setWsEditingId] = useState<string | null>(null);
+  const [wsForm, setWsForm] = useState<{ kind: string; name: string; attr: string; value: string } | null>(null);
+  const [wsBusy, setWsBusy] = useState(false);
 
   const load = useCallback(() => {
     if (!ws.bookId) {
@@ -81,12 +84,14 @@ export function SettingsPage() {
     fetchConstraints(ws.bookId).then(setTable).catch(() => setTable(null));
   }, [ws.bookId, ws.tree]);
 
-  // S1 世界状态账本只读浏览（质检 state_deltas 落库后的现状视图）
-  useEffect(() => {
-    if (tab !== 'states') return;
+  // S1 世界状态账本（质检 state_deltas 落库 + 作者编辑）
+  const loadStates = useCallback(() => {
     if (!ws.bookId) { setWorldStates([]); return; }
     fetchWorldStates(ws.bookId, wsKind || undefined).then(setWorldStates).catch(() => setWorldStates(null));
-  }, [ws.bookId, tab, wsKind]);
+  }, [ws.bookId, wsKind]);
+  useEffect(() => {
+    if (tab === 'states') loadStates();
+  }, [tab, loadStates]);
 
   useEffect(() => {
     fetchHealth()
@@ -130,6 +135,53 @@ export function SettingsPage() {
     } catch (e) {
       console.warn('[设定] 删除失败：', e);
     }
+  };
+
+  // ---- S1 世界状态：作者编辑 ----
+  const wsSave = async (editing: WorldStateMeta | null) => {
+    if (!ws.bookId || !wsForm) return;
+    const { kind, name, attr, value } = wsForm;
+    if (!name.trim() || !value.trim()) return;
+    setWsBusy(true);
+    try {
+      if (editing) {
+        await updateWorldState(editing.id, { kind: editing.kind, name: name.trim(), value: value.trim(), key: editing.key, scene_no: editing.scene_no });
+      } else {
+        await createWorldState(ws.bookId, { kind, name: name.trim(), value: value.trim(), attr: attr.trim() || undefined });
+      }
+      setWsForm(null);
+      setWsEditingId(null);
+      loadStates();
+    } catch (e) {
+      console.warn('[世界状态] 保存失败：', e);
+    } finally {
+      setWsBusy(false);
+    }
+  };
+
+  const wsRemove = async (s: WorldStateMeta) => {
+    const ok = await showConfirm('删除状态', `删除「${s.name} · ${s.key}」？质检不会再往这个 key 写，但历史正文不受影响。`, true);
+    if (!ok) return;
+    try {
+      await deleteWorldState(s.id);
+      loadStates();
+    } catch (e) {
+      console.warn('[世界状态] 删除失败：', e);
+    }
+  };
+
+  const startEditWs = (s: WorldStateMeta) => {
+    setWsEditingId(s.id);
+    setWsForm({ kind: s.kind, name: s.name, attr: '', value: s.value });
+  };
+
+  const startNewWs = () => {
+    setWsEditingId(null);
+    setWsForm({ kind: wsKind || 'character', name: '', attr: '', value: '' });
+  };
+
+  const WS_KIND_LABEL: Record<string, string> = {
+    character: '角色', item: '道具', time: '时间', term: '术语', numeric: '数值',
   };
 
   const memoryRows = (rows: BookMemoryMeta[], topic: MemoryTopic) => (
@@ -330,42 +382,78 @@ export function SettingsPage() {
                         {k.label}
                       </button>
                     ))}
+                    <button className="ws-btn" disabled={!ws.bookId} onClick={startNewWs}>＋ 新增</button>
                   </span>
                 </div>
                 {worldStates === null ? (
                   <div className="settings-row"><span className="settings-row-main">加载中…</span></div>
-                ) : worldStates.length === 0 ? (
-                  <EmptyState
-                    compact
-                    icon="▤"
-                    title={!ws.bookId ? '还没有选书' : wsKind ? '这个类别还没有状态记录' : '账本还是空的'}
-                    desc={
-                      !ws.bookId
-                        ? '先在侧栏选一本书，账本按书隔离。'
-                        : '质检（state_deltas）批准后会自动落库；也可以在正文协作里跑一次「审稿会」试试。'
-                    }
-                    primary={
-                      !ws.bookId
-                        ? { label: '去主笔创作', onClick: () => nav('/maestro') }
-                        : { label: '去正文协作', onClick: () => nav(ws.sceneId ? `/studio/${ws.sceneId}` : '/studio') }
-                    }
-                  />
                 ) : (
-                  worldStates.map((s) => (
-                    <div className="settings-row" key={s.id}>
-                      <span className="settings-row-main">
-                        <b>{s.name}</b>
-                        <span className="settings-mono" style={{ marginLeft: 8 }}>{s.key}</span>
-                        <span style={{ marginLeft: 8 }}>＝ {s.value}</span>
-                        {s.previous_value && (
-                          <span style={{ marginLeft: 8, opacity: 0.65 }}>（前值：{s.previous_value}）</span>
+                  <>
+                    {worldStates.length === 0 && !wsForm && (
+                      <EmptyState
+                        compact
+                        icon="▤"
+                        title={!ws.bookId ? '还没有选书' : wsKind ? '这个类别还没有状态记录' : '账本还是空的'}
+                        desc={
+                          !ws.bookId
+                            ? '先在侧栏选一本书，账本按书隔离。'
+                            : '质检（state_deltas）批准后会自动落库；作者也可「＋ 新增」手写设定（手改项质检不再覆盖，主笔写作以此为准）。'
+                        }
+                        primary={
+                          !ws.bookId
+                            ? { label: '去主笔创作', onClick: () => nav('/maestro') }
+                            : { label: '＋ 手写一条', onClick: startNewWs }
+                        }
+                        secondary={{ label: '去正文协作', onClick: () => nav(ws.sceneId ? `/studio/${ws.sceneId}` : '/studio') }}
+                      />
+                    )}
+                    {worldStates.map((s) => (
+                      <div className="settings-row" key={s.id}>
+                        {wsEditingId === s.id && wsForm ? (
+                          <>
+                            <input className="settings-input" style={{ width: 110 }} value={wsForm.name}
+                              onChange={(e) => setWsForm({ ...wsForm, name: e.target.value })} placeholder="对象名" />
+                            <input className="settings-input" style={{ flex: 1 }} value={wsForm.value}
+                              onChange={(e) => setWsForm({ ...wsForm, value: e.target.value })} placeholder="状态值（持续态，如：元婴初期）" />
+                            <button className="ws-btn ws-btn-primary" disabled={wsBusy} onClick={() => void wsSave(s)}>保存</button>
+                            <button className="ws-btn" onClick={() => { setWsEditingId(null); setWsForm(null); }}>取消</button>
+                          </>
+                        ) : (
+                          <>
+                            <span className="settings-row-main">
+                              <b>{s.name}</b>
+                              <span className="settings-mono" style={{ marginLeft: 8 }}>{s.key}</span>
+                              <span style={{ marginLeft: 8 }}>＝ {s.value}</span>
+                              {s.previous_value && (
+                                <span style={{ marginLeft: 8, opacity: 0.65 }}>（前值：{s.previous_value}）</span>
+                              )}
+                            </span>
+                            <span className="settings-row-tag">{WS_KIND_LABEL[s.kind] ?? s.kind}</span>
+                            {s.edited && <span className="settings-row-tag">作者手改</span>}
+                            {s.scene_no > 0 && <span className="settings-row-tag">第 {s.scene_no} 场</span>}
+                            <button className="ws-btn" onClick={() => startEditWs(s)}>编辑</button>
+                            <button className="ws-btn" onClick={() => void wsRemove(s)}>删除</button>
+                          </>
                         )}
-                      </span>
-                      <span className="settings-row-tag">{s.kind}</span>
-                      {s.edited && <span className="settings-row-tag">作者手改</span>}
-                      {s.scene_no > 0 && <span className="settings-row-tag">第 {s.scene_no} 场</span>}
-                    </div>
-                  ))
+                      </div>
+                    ))}
+                    {wsForm && wsEditingId === null && (
+                      <div className="settings-row">
+                        <select className="settings-input" style={{ width: 88 }} value={wsForm.kind}
+                          onChange={(e) => setWsForm({ ...wsForm, kind: e.target.value })}>
+                          {Object.entries(WS_KIND_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                        </select>
+                        <input className="settings-input" style={{ width: 110 }} value={wsForm.name}
+                          onChange={(e) => setWsForm({ ...wsForm, name: e.target.value })} placeholder="对象名（如 林尘）" />
+                        <input className="settings-input" style={{ width: 110 }} value={wsForm.attr}
+                          onChange={(e) => setWsForm({ ...wsForm, attr: e.target.value })} placeholder="属性（如 境界）" />
+                        <input className="settings-input" style={{ flex: 1 }} value={wsForm.value}
+                          onChange={(e) => setWsForm({ ...wsForm, value: e.target.value })} placeholder="状态值（持续态，如：元婴初期）" />
+                        <button className="ws-btn ws-btn-primary" disabled={wsBusy} onClick={() => void wsSave(null)}>添加</button>
+                        <button className="ws-btn" onClick={() => setWsForm(null)}>取消</button>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             )}

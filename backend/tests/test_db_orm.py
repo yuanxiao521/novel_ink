@@ -142,6 +142,7 @@ async def test_schema_matches_orm_no_drift():
     """
     import app.db.models  # noqa: F401  确保全部 ORM 注册
     from app.db.base import Base
+    from sqlalchemy import BigInteger
     from sqlalchemy.ext.asyncio import create_async_engine
 
     if not await _db_ready():
@@ -151,13 +152,15 @@ async def test_schema_matches_orm_no_drift():
     try:
         async with eng.connect() as conn:
             rows = (await conn.execute(text(
-                "select table_name, column_name from information_schema.columns "
+                "select table_name, column_name, data_type from information_schema.columns "
                 "where table_schema='public'"))).all()
     finally:
         await eng.dispose()
     db: dict = {}
-    for tbl, col in rows:
+    dbtype: dict = {}
+    for tbl, col, dtype in rows:
         db.setdefault(tbl, set()).add(col)
+        dbtype.setdefault(tbl, {})[col] = dtype
 
     problems = []
     for name, table in sorted(Base.metadata.tables.items()):
@@ -169,6 +172,13 @@ async def test_schema_matches_orm_no_drift():
         miss, extra = sorted(orm - actual), sorted(actual - orm)
         if miss or extra:
             problems.append(f"{name}: DB 缺 {miss} / DB 多 {extra}")
+        # 类型漂移（B28）：ORM 里 BigInteger 的列，DB 必须是 bigint。
+        # beliefs.ts / world_states.ts 曾是 int32，毫秒时间戳写入溢出 → 静默降级内存态。
+        for c in table.columns:
+            if isinstance(c.type, BigInteger):
+                got = dbtype.get(name, {}).get(c.name)
+                if got is not None and got != "bigint":
+                    problems.append(f"{name}.{c.name}: ORM=BigInteger 但 DB={got}（毫秒 ts 会溢出）")
     assert not problems, "ORM 与 DB 结构漂移（需补对齐迁移）：" + "；".join(problems)
 
 

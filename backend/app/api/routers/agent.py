@@ -90,6 +90,34 @@ async def book_world_states(
     return {"book_id": book_id, "states": rows, "count": len(rows)}
 
 
+class WorldStateIn(BaseModel):
+    kind: str = Field(min_length=1)     # character/item/time/term/numeric
+    name: str = Field(min_length=1)
+    value: str = Field(min_length=1)
+    key: str = ""
+    attr: str = ""
+    scene_no: int = 0
+
+
+@router.post("/books/{book_id}/world-states", status_code=201)
+async def create_world_state(book_id: str, body: WorldStateIn,
+                             svc: SimulationService = Depends(get_service)):
+    """作者手写世界状态（edited=True，质检不再覆盖）。同 (kind,key) 已有行则更新。"""
+    return await svc.create_world_state(book_id, body.model_dump())
+
+
+@router.put("/world-states/{ws_id}")
+async def update_world_state(ws_id: str, body: WorldStateIn,
+                             svc: SimulationService = Depends(get_service)):
+    """作者修改世界状态（落库置 edited=True）。"""
+    return await svc.update_world_state(ws_id, body.model_dump())
+
+
+@router.delete("/world-states/{ws_id}", status_code=204)
+async def delete_world_state(ws_id: str, svc: SimulationService = Depends(get_service)):
+    await svc.delete_world_state(ws_id)
+
+
 @router.get("/books/{book_id}/constraints")
 async def book_constraints(book_id: str, svc: SimulationService = Depends(get_service)):
     """书级约束表（B 批）：主笔维护、**全员读**。0-token 派生（不新建表），缺失项走 dropped 留痕。"""

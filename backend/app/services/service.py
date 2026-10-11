@@ -183,6 +183,71 @@ class SimulationService:
     async def delete_belief(self, belief_id: str) -> None:
         await self.repo.delete_belief(belief_id)
 
+    # ---------------------------------------------------------------- 世界状态（S1 · 作者编辑）
+    _WS_KINDS = {"character", "item", "time", "term", "numeric"}
+
+    async def create_world_state(self, book_id: str, data: dict) -> dict:
+        """作者手写世界状态：edited=True、source=AUTHOR。key 缺省按语义模板生成。"""
+        kind = str(data.get("kind") or "").strip()
+        if kind not in self._WS_KINDS:
+            raise InvalidActionError(f"非法 kind: {kind!r}（可选 {sorted(self._WS_KINDS)}）")
+        name = str(data.get("name") or "").strip()
+        value = str(data.get("value") or "").strip()
+        if not name:
+            raise InvalidActionError("状态对象名 name 不能为空")
+        if not value:
+            raise InvalidActionError("状态值 value 不能为空")
+        key = str(data.get("key") or "").strip()
+        if not key:
+            prefix = {"character": "char", "item": "item", "time": "time",
+                      "term": "term", "numeric": "num"}[kind]
+            attr = str(data.get("attr") or "状态").strip()
+            key = f"{prefix}:{name}:{attr}"
+        # 同 (kind,key) 已有行 → 视为更新（防 UNIQUE 冲突插重复）
+        existing = {}
+        for e in await self.repo.list_world_states(book_id):
+            existing[(str(e.get("kind") or ""), str(e.get("key") or ""))] = e
+        prev = existing.get((kind, key))
+        if prev is not None:
+            wid = str(prev.get("id") or "")
+            prev_value = str(prev.get("value") or "")
+        else:
+            wid = f"ws-{uuid.uuid4().hex[:14]}"
+            prev_value = ""
+        await self.repo.save_world_state({
+            "id": wid, "book_id": book_id, "kind": kind, "name": name, "key": key,
+            "value": value,
+            "scene_no": int(data.get("scene_no") or (prev or {}).get("scene_no") or 0),
+            "source_event_id": "AUTHOR", "previous_value": prev_value,
+            "edited": True, "ts": int(time.time() * 1000),
+        })
+        return {"id": wid}
+
+    async def update_world_state(self, ws_id: str, data: dict) -> dict:
+        """作者修改世界状态（只传要改的字段；落库置 edited=True，质检不再覆盖）。"""
+        cur = await self.repo.get_world_state(ws_id)
+        if cur is None:
+            raise InvalidActionError(f"世界状态不存在: {ws_id}")
+        kind = str(data.get("kind") or cur["kind"])
+        if kind not in self._WS_KINDS:
+            raise InvalidActionError(f"非法 kind: {kind!r}")
+        name = str(data.get("name") if "name" in data else cur["name"]).strip()
+        value = str(data.get("value") if "value" in data else cur["value"]).strip()
+        if not name or not value:
+            raise InvalidActionError("name / value 不能为空")
+        await self.repo.save_world_state({
+            "id": ws_id, "book_id": cur["book_id"], "kind": kind, "name": name,
+            "key": str(data.get("key") or cur["key"]),
+            "value": value,
+            "scene_no": int(data.get("scene_no") if "scene_no" in data else cur.get("scene_no") or 0),
+            "source_event_id": "AUTHOR", "previous_value": cur.get("value") or "",
+            "edited": True, "ts": int(time.time() * 1000),
+        })
+        return {"id": ws_id}
+
+    async def delete_world_state(self, ws_id: str) -> None:
+        await self.repo.delete_world_state(ws_id)
+
     @staticmethod
     def _clamp_conf(value) -> float:
         try:
@@ -700,13 +765,13 @@ class SimulationService:
             pass
 
         try:
-            # 世界状态现状（S1：战力/道具/时间/术语/数字骨架，过滤作者手改项）
+            # 世界状态现状（S1：作者手改 = 最高权威设定，全部注入并标注，不得过滤——B27b）
             world_states = await self.repo.list_world_states(book_id)
-            canon = [w for w in world_states if not w.get("edited")]
-            if canon:
+            if world_states:
                 lines = "\n".join(
                     f"- [{w.get('kind')}] {w.get('name')}：{w.get('value')}"
-                    for w in canon[:30]
+                    + ("（作者手改，以此为准）" if w.get("edited") else "")
+                    for w in world_states[:30]
                 )
                 parts.append("世界状态现状（战力/道具/时间/术语/关键数字，写作保持与账本一致）：\n" + lines)
         except Exception:  # noqa: BLE001
@@ -1070,7 +1135,8 @@ class SimulationService:
             try:
                 opinion = json.loads(note.get("payload_json") or "{}") or {}
                 scene, book_id = await self._scene_and_book(note["scene_id"])
-                if book_id and (opinion.get("foreshadow_updates") or opinion.get("belief_deltas")):
+                if book_id and (opinion.get("foreshadow_updates") or opinion.get("belief_deltas")
+                                or opinion.get("state_deltas")):
                     bookkeeping = await self._apply_verify_bookkeeping(
                         book_id, opinion, source_event_id="PROSE_VERIFY")
             except Exception as e:  # noqa: BLE001
@@ -1092,6 +1158,7 @@ class SimulationService:
         3) 世界状态（S1：战力/道具/时间/术语/数字，按 key upsert，幂等）；
         4) 因果：无事件流跳过。返回实际写入条数（幂等由调用方 hash/状态闸门保证）。"""
         written = 0
+        protected = 0  # 作者手改被质检跳过的条数（B27a）
         # 1) 伏笔推进
         foreshadows = {f["id"]: f for f in await self.repo.list_foreshadows(book_id)}
         valid_status = {"in_progress", "closed"}
@@ -1159,6 +1226,10 @@ class SimulationService:
                 continue
             prev_row = existing.get((kind, key))
             if prev_row is not None:
+                # 作者手改 = 最高权威设定，质检（LLM 提取）不得覆盖（B27a）
+                if prev_row.get("edited"):
+                    protected += 1
+                    continue
                 rid = str(prev_row.get("id") or "")
                 prev_value = str(prev_row.get("value") or "")
                 name = str(s.get("name") or prev_row.get("name") or "").strip()
@@ -1181,6 +1252,8 @@ class SimulationService:
             })
             existing[(kind, key)] = {"id": rid, "name": name}
             written += 1
+        if protected:
+            logger.info("[bookkeeping] 作者手改状态 %d 条，质检未覆盖（B27a）", protected)
         return written
 
     async def save_scene_prose(self, scene_id: str, text: str) -> dict:

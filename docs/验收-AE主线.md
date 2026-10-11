@@ -35,7 +35,7 @@ cd E:\novel_desk-agent\backend
 cd E:\novel_desk-agent\frontend
 npm run dev        # 打开 http://127.0.0.1:5173
 
-# 4) 迁移版本应为 0015
+# 4) 迁移版本应为 0016（0016_ts_bigint：B28 毫秒 ts 溢出修复；A+ 批的 0015 在其下）
 cd E:\novel_desk-agent\backend
 & "E:\novel_desk-agent\.venv\Scripts\python.exe" -m alembic current
 ```
@@ -180,7 +180,7 @@ $py = "E:\novel_desk-agent\.venv\Scripts\python.exe"
 | **Redis** | 未引入（触发条件：多 worker / 后台长任务 / 多人实时 / 高频进度）；纪律：只做传输·缓存·锁，不放业务事实 |
 | **素材库（RAG）** | 侧栏灰态占位「RAG 后」；属 A1 上下文 + 跨书素材，等触发 |
 | **成书 / 导出** | 正文协作可「导出剧本」（场景级）；**章节正文组装成书**仍是雏形 |
-| **世界状态浏览视图** | ✅ 已交付（v1.28）：`GET /books/{id}/world-states` + 设定页真列表（kind 过滤 / 前值 / 作者手改徽标） |
+| **世界状态浏览视图** | ✅ 已交付（v1.28 浏览 / v1.29 作者编辑）：`GET/POST/PUT/DELETE /world-states` + 设定页真列表（kind 过滤 / 前值 / 作者手改徽标 / 行内编辑与新增） |
 | **A4 分批交付** | 主笔仍一次性 commit 骨架（分批复核未做） |
 | **候选池 T1–T8** | 仍待考虑（场景快照 / 文学减法 / 主笔回溯 / 叙事选择 / 角色非理性授权 / 角色卡扩展 / 事实硬闸门 / 四类约束表） |
 | **README** | 未写（作者明确"项目还没完全做好"） |
