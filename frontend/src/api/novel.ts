@@ -673,9 +673,20 @@ export interface DegradedInfo {
   kinds: Record<string, number>;
 }
 
+export interface LlmInfo {
+  configured: boolean;
+  ok: boolean;
+  model: string;
+  failures: number;
+  last_status: number;
+  last_error: string;
+}
+
 export interface HealthStatus {
   status: string;
   degraded: DegradedInfo;
+  /** B32：LLM 可用性（模型名/账号异常时 ok=false）—— 必须可见，否则正文会静默走回退 */
+  llm?: LlmInfo;
 }
 
 /** T9：健康检查（含降级状态）—— 前端据此显示"降级中"横幅。 */

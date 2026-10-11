@@ -29,15 +29,30 @@ export function DegradedBanner() {
   }, []);
 
   const d = health?.degraded;
-  if (dismissed || !d?.active) return null;
+  const llm = health?.llm;
+  const dbBad = Boolean(d?.active);
+  // B32：LLM 不可用（模型名错 / 账号异常 / 额度）同样是降级 —— 正文与角色演绎会静默走确定性回退，必须可见
+  const llmBad = Boolean(llm && llm.configured && !llm.ok);
+  if (dismissed || (!dbBad && !llmBad)) return null;
   return (
     <div className="degraded-banner" role="alert">
       <span className="degraded-dot" />
       <span className="degraded-text">
-        数据库降级中：{d.count} 次操作落内存态
-        {d.structural > 0 ? `（其中 ${d.structural} 次疑似 bug）` : ''}
-        {d.last_op ? ` · 最近：${d.last_op}` : ''}
-        {d.last_reason ? ` · ${d.last_reason.slice(0, 80)}` : ''}
+        {dbBad && (
+          <>
+            数据库降级中：{d?.count} 次操作落内存态
+            {(d?.structural ?? 0) > 0 ? `（其中 ${d?.structural} 次疑似 bug）` : ''}
+            {d?.last_op ? ` · 最近：${d.last_op}` : ''}
+            {d?.last_reason ? ` · ${d.last_reason.slice(0, 80)}` : ''}
+          </>
+        )}
+        {dbBad && llmBad ? ' ｜ ' : ''}
+        {llmBad && (
+          <>
+            LLM 不可用（{llm?.model}）：{llm?.last_error.slice(0, 100)} · 已失败 {llm?.failures} 次
+            —— 正文/角色演绎正在走确定性回退
+          </>
+        )}
       </span>
       <button className="degraded-close" onClick={() => setDismissed(true)}>
         忽略本次

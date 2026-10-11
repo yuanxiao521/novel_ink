@@ -105,4 +105,6 @@ def health():
     structural>0 表示其中含"疑似 bug"的结构性错误（B18/B21 那类）。"""
     from app.db.repo import degradation_status
 
-    return {"status": "ok", "degraded": degradation_status()}
+    from app.services.llm.client import llm_status
+
+    return {"status": "ok", "degraded": degradation_status(), "llm": llm_status()}
