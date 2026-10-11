@@ -5,8 +5,8 @@ import { ContextBar } from '../components/common/ContextBar';
 import { EmptyState } from '../components/common/EmptyState';
 import { Tabs } from '../components/common/Tabs';
 import { useDialog } from '../components/common/Dialog';
-import { createMemory, deleteMemory, fetchConstraints, fetchHealth, listMemories, updateMemory } from '../api/novel';
-import type { BookMemoryMeta, ConstraintTable, MemoryTopic } from '../api/novel';
+import { createMemory, deleteMemory, fetchConstraints, fetchHealth, fetchWorldStates, listMemories, updateMemory } from '../api/novel';
+import type { BookMemoryMeta, ConstraintTable, MemoryTopic, WorldStateMeta } from '../api/novel';
 import { useWorkspace } from '../context/WorkspaceContext';
 
 /* ==========================================================================
@@ -59,6 +59,8 @@ export function SettingsPage() {
   const [busy, setBusy] = useState(false);
   const [health, setHealth] = useState<{ status: string; degraded?: { active?: boolean; count?: number } } | null>(null);
   const [table, setTable] = useState<ConstraintTable | null>(null);
+  const [worldStates, setWorldStates] = useState<WorldStateMeta[] | null>(null);
+  const [wsKind, setWsKind] = useState<string>('');
 
   const load = useCallback(() => {
     if (!ws.bookId) {
@@ -78,6 +80,13 @@ export function SettingsPage() {
     if (!ws.bookId) { setTable(null); return; }
     fetchConstraints(ws.bookId).then(setTable).catch(() => setTable(null));
   }, [ws.bookId, ws.tree]);
+
+  // S1 世界状态账本只读浏览（质检 state_deltas 落库后的现状视图）
+  useEffect(() => {
+    if (tab !== 'states') return;
+    if (!ws.bookId) { setWorldStates([]); return; }
+    fetchWorldStates(ws.bookId, wsKind || undefined).then(setWorldStates).catch(() => setWorldStates(null));
+  }, [ws.bookId, tab, wsKind]);
 
   useEffect(() => {
     fetchHealth()
@@ -302,14 +311,62 @@ export function SettingsPage() {
 
             {tab === 'states' && (
               <div className="settings-card">
-                <div className="settings-card-title">世界状态账本（S1）</div>
-                <EmptyState
-                  icon="▤"
-                  title="账本已落库，浏览视图待补"
-                  desc="S1 的写入（质检 state_deltas）与感知（写手/主笔注入）已交付并落库 world_states；本页只差一个只读列表接口，列为 P1 补项。"
-                  primary={{ label: '看全局诊断', onClick: () => nav(ws.bookId ? `/dashboard?book=${ws.bookId}` : '/dashboard') }}
-                  secondary={{ label: '去正文协作', onClick: () => nav(ws.sceneId ? `/studio/${ws.sceneId}` : '/studio') }}
-                />
+                <div className="settings-card-title">
+                  世界状态账本（S1）
+                  <span style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
+                    {[
+                      { v: '', label: '全部' },
+                      { v: 'character', label: '角色' },
+                      { v: 'item', label: '道具' },
+                      { v: 'time', label: '时间' },
+                      { v: 'term', label: '术语' },
+                      { v: 'numeric', label: '数值' },
+                    ].map((k) => (
+                      <button
+                        key={k.v || 'all'}
+                        className={`ws-btn${wsKind === k.v ? ' ws-btn-primary' : ''}`}
+                        onClick={() => setWsKind(k.v)}
+                      >
+                        {k.label}
+                      </button>
+                    ))}
+                  </span>
+                </div>
+                {worldStates === null ? (
+                  <div className="settings-row"><span className="settings-row-main">加载中…</span></div>
+                ) : worldStates.length === 0 ? (
+                  <EmptyState
+                    compact
+                    icon="▤"
+                    title={!ws.bookId ? '还没有选书' : wsKind ? '这个类别还没有状态记录' : '账本还是空的'}
+                    desc={
+                      !ws.bookId
+                        ? '先在侧栏选一本书，账本按书隔离。'
+                        : '质检（state_deltas）批准后会自动落库；也可以在正文协作里跑一次「审稿会」试试。'
+                    }
+                    primary={
+                      !ws.bookId
+                        ? { label: '去主笔创作', onClick: () => nav('/maestro') }
+                        : { label: '去正文协作', onClick: () => nav(ws.sceneId ? `/studio/${ws.sceneId}` : '/studio') }
+                    }
+                  />
+                ) : (
+                  worldStates.map((s) => (
+                    <div className="settings-row" key={s.id}>
+                      <span className="settings-row-main">
+                        <b>{s.name}</b>
+                        <span className="settings-mono" style={{ marginLeft: 8 }}>{s.key}</span>
+                        <span style={{ marginLeft: 8 }}>＝ {s.value}</span>
+                        {s.previous_value && (
+                          <span style={{ marginLeft: 8, opacity: 0.65 }}>（前值：{s.previous_value}）</span>
+                        )}
+                      </span>
+                      <span className="settings-row-tag">{s.kind}</span>
+                      {s.edited && <span className="settings-row-tag">作者手改</span>}
+                      {s.scene_no > 0 && <span className="settings-row-tag">第 {s.scene_no} 场</span>}
+                    </div>
+                  ))
+                )}
               </div>
             )}
 

@@ -79,6 +79,17 @@ async def book_material_usage(book_id: str, svc: SimulationService = Depends(get
     return await svc.book_material_usage(book_id)
 
 
+@router.get("/books/{book_id}/world-states")
+async def book_world_states(
+    book_id: str,
+    kind: str | None = None,
+    svc: SimulationService = Depends(get_service),
+):
+    """S1 世界状态账本只读浏览（设定页）：可按 kind 过滤；edited 标记区分作者手改。"""
+    rows = await svc.repo.list_world_states(book_id, kind=kind)
+    return {"book_id": book_id, "states": rows, "count": len(rows)}
+
+
 @router.get("/books/{book_id}/constraints")
 async def book_constraints(book_id: str, svc: SimulationService = Depends(get_service)):
     """书级约束表（B 批）：主笔维护、**全员读**。0-token 派生（不新建表），缺失项走 dropped 留痕。"""

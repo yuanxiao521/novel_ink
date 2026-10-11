@@ -1149,6 +1149,28 @@ export async function fetchConstraints(bookId: string): Promise<ConstraintTable>
   return getJson<ConstraintTable>(`${API_BASE}/api/v1/books/${bookId}/constraints`);
 }
 
+export interface WorldStateMeta {
+  id: string;
+  book_id: string;
+  kind: string; // character | item | time | term | numeric
+  name: string;
+  key: string;
+  value: string;
+  previous_value: string;
+  scene_no: number;
+  source_event_id: string;
+  edited: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+/** S1 世界状态账本只读浏览（设定页）；kind 可选过滤。 */
+export async function fetchWorldStates(bookId: string, kind?: string): Promise<WorldStateMeta[]> {
+  const q = kind ? `?kind=${encodeURIComponent(kind)}` : '';
+  const r = await getJson<{ states: WorldStateMeta[] }>(`${API_BASE}/api/v1/books/${bookId}/world-states${q}`);
+  return r.states ?? [];
+}
+
 export async function listAgentSpecs(): Promise<{ specs: AgentSpecInfo[]; write_matrix: Array<{ target: string; owner: string; note: string; enforced: boolean }> }> {
   return getJson(`${API_BASE}/api/v1/agent/specs`);
 }
