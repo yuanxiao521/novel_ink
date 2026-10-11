@@ -71,8 +71,10 @@ export function DashboardPage() {
             <input type="text" placeholder="跨书搜索角色、伏笔、章节…" />
           </div>
           <div className="header-right">
-            {(kpi?.chapters_done ?? 0) > 0 && bookId && (
-              <a className="btn-primary" href={exportBookUrl(bookId)} title="导出全书 markdown（仅含已定稿章节）">
+            {/* 判据 = 有任意定稿正文（与后端 export 的 `final_prose` 真值判断一致）；
+                不用 chapters_done——它要求整章全定稿，会让"有正文但未全定稿"的书看不到入口 */}
+            {(kpi?.word_count ?? 0) > 0 && bookId && (
+              <a className="btn-primary" href={exportBookUrl(bookId)} title="导出全书 markdown（仅含已定稿场景）">
                 <span>导出成书</span>
               </a>
             )}
