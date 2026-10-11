@@ -602,3 +602,17 @@
   font-size: 11px; color: var(--text-secondary); border: 1px solid var(--border-light);
   border-radius: 999px; padding: 1px 8px;
 }
+
+/* 页面级可见失败反馈（B31：写操作失败原来只 console.warn，作者看不到） */
+.ws-msg {
+  display: flex; align-items: center; gap: 10px;
+  margin: 10px 0 0; padding: 8px 12px;
+  font-size: 12.5px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border-light); background: var(--bg-panel);
+  color: var(--text-primary);
+}
+.ws-msg.err { border-left: 3px solid var(--accent-red); color: var(--accent-red); }
+.ws-msg-close {
+  margin-left: auto; background: none; border: none; cursor: pointer;
+  color: inherit; font-size: 12px; line-height: 1;
+}

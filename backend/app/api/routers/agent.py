@@ -106,11 +106,21 @@ async def create_world_state(book_id: str, body: WorldStateIn,
     return await svc.create_world_state(book_id, body.model_dump())
 
 
+class WorldStatePatch(BaseModel):
+    """PUT 用的**增量**模型（B30）：只传要改的字段；未传/传 null 一律保持原值。"""
+    kind: str | None = Field(default=None, min_length=1)
+    name: str | None = Field(default=None, min_length=1)
+    value: str | None = Field(default=None, min_length=1)
+    key: str | None = None
+    attr: str | None = None
+    scene_no: int | None = None
+
+
 @router.put("/world-states/{ws_id}")
-async def update_world_state(ws_id: str, body: WorldStateIn,
+async def update_world_state(ws_id: str, body: WorldStatePatch,
                              svc: SimulationService = Depends(get_service)):
-    """作者修改世界状态（落库置 edited=True）。"""
-    return await svc.update_world_state(ws_id, body.model_dump())
+    """作者修改世界状态（增量：只传要改的字段；落库置 edited=True）。"""
+    return await svc.update_world_state(ws_id, body.model_dump(exclude_unset=True))
 
 
 @router.delete("/world-states/{ws_id}", status_code=204)

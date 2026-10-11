@@ -136,3 +136,24 @@ async def test_chief_perceive_includes_author_edited(svc):
     assert "世界状态现状" in block
     assert "元婴初期" in block and "作者手改，以此为准" in block
     assert "货币单位" in block
+
+
+async def test_update_world_state_partial_and_none_safe(svc):
+    """B30：增量更新——只传 value 时 name/key 不变；显式传 None 不得写成字符串 "None"。"""
+    r = await svc.create_world_state("book-ws", {
+        "kind": "item", "name": "青玉扳指", "attr": "持有者", "value": "在陈默手里",
+    })
+    wid = r["id"]
+    # 只改 value（等价于 HTTP PUT {"value": "..."}）
+    await svc.update_world_state(wid, {"value": "转交给李文"})
+    w = (await svc.repo.list_world_states("book-ws"))[0]
+    assert w["name"] == "青玉扳指"
+    assert w["key"] == "item:青玉扳指:持有者"
+    assert w["value"] == "转交给李文"
+    assert w["previous_value"] == "在陈默手里"
+    # 显式 None → 保持原值（旧实现会写成 "None"）
+    await svc.update_world_state(wid, {"name": None, "value": None})
+    w2 = (await svc.repo.list_world_states("book-ws"))[0]
+    assert w2["name"] == "青玉扳指"
+    assert w2["value"] == "转交给李文"
+    assert w2["name"] != "None"

@@ -49,6 +49,12 @@ export function SettingsPage() {
   const ws = useWorkspace();
   const nav = useNavigate();
   const { showConfirm } = useDialog();
+  // 页面级可见失败反馈（B31：写操作失败原来只 console.warn，作者看不到）
+  const [pageErr, setPageErr] = useState('');
+  const fail = (what: string, e: unknown) => {
+    setPageErr(`${what}失败：${e instanceof Error ? e.message : String(e)}`);
+    console.warn(`[设定] ${what}失败：`, e);
+  };
   const [params, setParams] = useSearchParams();
   const raw = params.get('tab') as TabKey | null;
   const tab: TabKey = raw && TABS.some((t) => t.key === raw) ? raw : 'direction';
@@ -120,7 +126,7 @@ export function SettingsPage() {
       setEditingId(null);
       setDraft('');
     } catch (e) {
-      console.warn('[设定] 保存失败：', e);
+      fail('保存', e);
     } finally {
       setBusy(false);
     }
@@ -133,7 +139,7 @@ export function SettingsPage() {
       await deleteMemory(m.id);
       load();
     } catch (e) {
-      console.warn('[设定] 删除失败：', e);
+      fail('删除', e);
     }
   };
 
@@ -141,7 +147,10 @@ export function SettingsPage() {
   const wsSave = async (editing: WorldStateMeta | null) => {
     if (!ws.bookId || !wsForm) return;
     const { kind, name, attr, value } = wsForm;
-    if (!name.trim() || !value.trim()) return;
+    if (!name.trim() || !value.trim()) {
+      setPageErr('世界状态：名称与值都不能为空');
+      return;
+    }
     setWsBusy(true);
     try {
       if (editing) {
@@ -151,9 +160,10 @@ export function SettingsPage() {
       }
       setWsForm(null);
       setWsEditingId(null);
+      setPageErr('');
       loadStates();
     } catch (e) {
-      console.warn('[世界状态] 保存失败：', e);
+      fail('保存世界状态', e);
     } finally {
       setWsBusy(false);
     }
@@ -166,7 +176,7 @@ export function SettingsPage() {
       await deleteWorldState(s.id);
       loadStates();
     } catch (e) {
-      console.warn('[世界状态] 删除失败：', e);
+      fail('删除世界状态', e);
     }
   };
 
@@ -262,6 +272,13 @@ export function SettingsPage() {
               <Tabs items={TABS} value={tab} onChange={(k) => setParams({ tab: k })} />
             </span>
           </div>
+
+          {pageErr && (
+            <div className="ws-msg err" role="alert">
+              <span>{pageErr}</span>
+              <button className="ws-msg-close" onClick={() => setPageErr('')} title="关闭">✕</button>
+            </div>
+          )}
 
           <div className="settings-body">
             {tab === 'direction' && (

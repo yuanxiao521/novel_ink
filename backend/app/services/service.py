@@ -224,22 +224,28 @@ class SimulationService:
         return {"id": wid}
 
     async def update_world_state(self, ws_id: str, data: dict) -> dict:
-        """作者修改世界状态（只传要改的字段；落库置 edited=True，质检不再覆盖）。"""
+        """作者修改世界状态（**增量**：只传要改的字段，缺失或 None 保持原值；落库置 edited=True）。"""
         cur = await self.repo.get_world_state(ws_id)
         if cur is None:
             raise InvalidActionError(f"世界状态不存在: {ws_id}")
-        kind = str(data.get("kind") or cur["kind"])
+        def pick(field: str, current: object) -> str:
+            """增量取值（B30）：未传 / 显式 None → 保持原值，绝不把 None 写成字符串 "None"。"""
+            got = data.get(field)
+            return str(current or "") if got is None else str(got)
+
+        kind = pick("kind", cur["kind"]).strip()
         if kind not in self._WS_KINDS:
-            raise InvalidActionError(f"非法 kind: {kind!r}")
-        name = str(data.get("name") if "name" in data else cur["name"]).strip()
-        value = str(data.get("value") if "value" in data else cur["value"]).strip()
+            raise InvalidActionError(f"非法 kind: {kind!r}（可选 {sorted(self._WS_KINDS)}）")
+        name = pick("name", cur["name"]).strip()
+        value = pick("value", cur["value"]).strip()
         if not name or not value:
             raise InvalidActionError("name / value 不能为空")
+        scene_no = data.get("scene_no")
         await self.repo.save_world_state({
             "id": ws_id, "book_id": cur["book_id"], "kind": kind, "name": name,
-            "key": str(data.get("key") or cur["key"]),
+            "key": pick("key", cur["key"]).strip() or cur["key"],
             "value": value,
-            "scene_no": int(data.get("scene_no") if "scene_no" in data else cur.get("scene_no") or 0),
+            "scene_no": int(scene_no) if scene_no is not None else int(cur.get("scene_no") or 0),
             "source_event_id": "AUTHOR", "previous_value": cur.get("value") or "",
             "edited": True, "ts": int(time.time() * 1000),
         })

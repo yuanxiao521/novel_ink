@@ -694,3 +694,22 @@ def test_ai_tone_scan_and_spot_fix_endpoints(client):
     assert r3.status_code == 200
     assert body3["accepted"] is False and body3["after"] == _CLICHE_TEXT
     assert "LLM" in (body3.get("error") or "")
+
+
+def test_world_state_put_is_patch(client):
+    """B30：PUT /world-states/{id} 是**增量**模型——只传 value 时 name/key 保持不变。"""
+    bid = client.post("/api/v1/books", json={"title": "补丁书", "genre": "玄幻"}).json()["id"]
+    created = client.post(
+        f"/api/v1/books/{bid}/world-states",
+        json={"kind": "item", "name": "青玉扳指", "attr": "持有者", "value": "在"},
+    ).json()
+    r = client.put(f"/api/v1/world-states/{created['id']}", json={"value": "遗失"})
+    assert r.status_code == 200, r.text
+    states = client.get(f"/api/v1/books/{bid}/world-states").json()["states"]
+    assert len(states) == 1
+    assert states[0]["value"] == "遗失"
+    assert states[0]["name"] == "青玉扳指"
+    assert states[0]["key"] == "item:青玉扳指:持有者"
+    # 显式 null 也不得写成字符串 "None"
+    assert client.put(f"/api/v1/world-states/{created['id']}", json={"name": None}).status_code == 200
+    assert client.get(f"/api/v1/books/{bid}/world-states").json()["states"][0]["name"] == "青玉扳指"
