@@ -18,7 +18,14 @@ const results = [];
 const step = (name, ok, detail = "") => { results.push({ name, ok, detail }); console.log((ok ? "PASS  " : "FAIL  ") + name + (detail ? "  :: " + detail : "")); };
 
 const findShell = async () => {
-  const roots = [path.join(process.env.LOCALAPPDATA || "", "ms-playwright"), "C:/Users/" + (process.env.USERNAME || "") + "/AppData/Local/ms-playwright"];
+  if (process.env.HEADLESS_SHELL) return process.env.HEADLESS_SHELL;
+  const explicit = args.find((a) => a.startsWith("--shell="));
+  if (explicit) return explicit.slice(8);
+  const roots = [
+    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, "ms-playwright") : "",
+    path.join(os.homedir(), "AppData", "Local", "ms-playwright"),
+    path.join(process.env.HOME || "", "AppData", "Local", "ms-playwright"),
+  ].filter(Boolean);
   for (const root of roots) {
     try {
       for (const d of await fs.readdir(root)) {

@@ -102,7 +102,7 @@ try {
     step("写手·初稿产出候选（>=20 字）", draft.status === 200 && text.length >= 20, text.length + " 字");
     const saved = await req("POST", "/scenes/" + sceneId + "/tools/prose.save", { args: { scene_id: sceneId, text }, confirm: true });
     const prose = await req("GET", "/scenes/" + sceneId + "/prose");
-    const kept = ((prose.json && prose.json.final_prose) || "").length;
+    const kept = ((prose.json && (prose.json.prose || prose.json.final_prose)) || "").length;
     step("走工具链保存正文并读回", saved.status === 200 && kept >= 20, "落库 " + kept + " 字");
   }
 
