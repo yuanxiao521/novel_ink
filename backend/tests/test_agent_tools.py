@@ -205,6 +205,21 @@ async def test_executor_allows_confirmed_destructive():
     assert res.ok and svc.calls == ["save_scene_prose"] and res.side_effect == "destructive"
 
 
+async def test_executor_field_gate_blocks_non_owner_even_if_whitelisted(monkeypatch):
+    """v1.30 字段级闸门接线证明：即便白名单放行（模拟），非 owner 写 final_prose 仍被拒。"""
+    import app.services.agents.executor as ex
+
+    monkeypatch.setattr(ex, "can_use", lambda a, t: True)   # 绕过白名单，单独验字段闸门
+    with pytest.raises(ToolDenied) as e:
+        await call_tool(_FakeService(), "chief", "prose.save",
+                        {"scene_id": "s", "text": "t"}, confirm=True)
+    assert "不能写 scenes:final_prose" in str(e.value)
+    # 同一条工具链，owner（editor）正常通过
+    res = await call_tool(_FakeService(), "editor", "prose.save",
+                          {"scene_id": "s", "text": "t"}, confirm=True)
+    assert res.ok
+
+
 # ---------------------------------------------------------------- 责编对话
 
 
@@ -523,7 +538,8 @@ async def test_task_create_and_transition_rules():
         await transition(repo, t["id"], "nope")
 
 
-async def test_write_matrix_is_draft_but_complete():
+async def test_write_matrix_enforced_rows_are_honest():
+    """v1.30 启用：矩阵 3 行 enforced=True（各有强制位置），其余 False 且原因可查。"""
     from app.services.agents.permissions import matrix
 
     rows = matrix()
@@ -532,7 +548,26 @@ async def test_write_matrix_is_draft_but_complete():
     assert owners["prose_notes"] == "executor"         # 审计只有 executor 写
     assert owners["scenes:final_prose"] == "editor"    # 正文归责编
     assert owners["chapters"] == "chief"               # 结构归主笔
-    assert all(r["enforced"] is False for r in rows)   # A+ 只出草案，不强制
+    enforced = {r["target"] for r in rows if r["enforced"]}
+    assert enforced == {"scenes:final_prose", "prose_annotations", "agent_tasks"}
+    # 每个 enforced 行必须写明强制位置（不假装一道闸门管全部）
+    for r in rows:
+        if r["enforced"]:
+            assert r["enforce_where"], r["target"]
+
+
+async def test_check_write_field_gate():
+    """字段级写闸门：owner 放行、作者放行、非 owner 拒绝、无归属 target 不管。"""
+    from app.services.agents.permissions import check_write
+
+    assert check_write("editor", "scenes:final_prose") is None      # owner
+    assert check_write("", "scenes:final_prose") is None            # 作者 UI 直调
+    assert check_write("author", "scenes:final_prose") is None      # 作者 agent 身份
+    assert check_write("chief", "scenes:final_prose") is not None   # 非 owner → 拒
+    assert "owner=editor" in check_write("chief", "scenes:final_prose")
+    assert check_write("chief", "") is None                         # 只读/候选不管
+    assert check_write("character", "beliefs") is None              # 本闸门不管账本（无工具写路径）
+    assert check_write("reviewer", "prose_annotations") is not None # 批注只归责编工具改状态
 
 
 async def test_specs_expose_capabilities():

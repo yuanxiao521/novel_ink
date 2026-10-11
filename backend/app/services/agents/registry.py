@@ -21,6 +21,7 @@ class ToolDecl:
     needs_confirm: bool = False
     handler: str = ""                    # service.<name> 或 repo.<name>
     group: str = "prose"                 # 前端分组：prose / annotation / outline
+    writes: str = ""                     # 写目标（permissions.FIELD_OWNERS 的键；"" = 不落库/只出候选）
 
 
 TOOLS: dict[str, ToolDecl] = {
@@ -74,11 +75,13 @@ TOOLS: dict[str, ToolDecl] = {
     "prose.save": ToolDecl(
         "prose.save", "保存正文到 scenes.final_prose（落库）", "destructive",
         params=("scene_id", "text"), needs_confirm=True, handler="save_scene_prose",
+        writes="scenes:final_prose",
     ),
     "annotation.resolve": ToolDecl(
         "annotation.resolve", "把批注标记为已处理 / 撤销", "destructive",
         params=("annotation_id",), optional=("status", "handled_by_note_id"),
         needs_confirm=True, handler="repo.update_annotation", group="annotation",
+        writes="prose_annotations",
     ),
 }
 
@@ -89,6 +92,7 @@ TOOLS.update({
         "task.rehearsal", "请求本场先彩排一次（派给场记/角色，产物回填本场）", "write",
         params=("scene_id",), optional=("goal", "kind", "to_agent", "from_agent"),
         handler="agent_task_create", group="task",
+        writes="agent_tasks",
     ),
     "task.list": ToolDecl(
         "task.list", "列出本场任务单（含状态）", "read",
@@ -98,6 +102,7 @@ TOOLS.update({
         "task.transition", "推进任务状态（working / input-required / completed / failed）", "destructive",
         params=("task_id", "status"), optional=("note",), needs_confirm=True,
         handler="agent_task_transition", group="task",
+        writes="agent_tasks",
     ),
 })
 

@@ -176,7 +176,7 @@ $py = "E:\novel_desk-agent\.venv\Scripts\python.exe"
 
 | 项 | 现状 |
 | --- | --- |
-| **写权限矩阵强制** | 只出草案（`agents/permissions.py`：12 条字段级 owner，enforced=false），未在写入路径启用 |
+| **写权限矩阵强制** | ✅ 已启用（v1.30）：`check_write` 接进 ToolExecutor（`scenes:final_prose`/`prose_annotations` 字段级闸门）；`agent_tasks` 由 tasks.py 发起者白名单强制；其余行 enforced=False（无工具写路径/走 UI 直调，**诚实标注非漏做**） |
 | **Redis** | 未引入（触发条件：多 worker / 后台长任务 / 多人实时 / 高频进度）；纪律：只做传输·缓存·锁，不放业务事实 |
 | **素材库（RAG）** | 侧栏灰态占位「RAG 后」；属 A1 上下文 + 跨书素材，等触发 |
 | **成书 / 导出** | 正文协作可「导出剧本」（场景级）；**章节正文组装成书**仍是雏形 |

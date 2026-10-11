@@ -1,6 +1,6 @@
 """ToolExecutor：工具的**唯一落地点**。
 
-顺序：未知工具 → agent 白名单 → 参数校验（0-token）→ 确认闸门 → 执行 → 审计 → 结果。
+顺序：未知工具 → agent 白名单 → **字段级写权限闸门** → 参数校验（0-token）→ 确认闸门 → 执行 → 审计 → 结果。
 审计写在**同一套 prose_notes** 里（kind="tool"，created_by 记"谁发起"），
 所以"点按钮"和"让责编做"在事后可分辨、可追溯。
 """
@@ -11,6 +11,7 @@ import time
 import uuid
 from dataclasses import dataclass
 
+from app.services.agents.permissions import check_write
 from app.services.agents.registry import get_tool
 from app.services.agents.spec import can_use, needs_confirm
 
@@ -51,6 +52,10 @@ async def call_tool(
         raise ToolDenied(f"未知工具：{tool}")
     if not can_use(agent_id, tool):
         raise ToolDenied(f"{agent_id} 无权调用 {tool}（不在其 AgentSpec.tools 白名单）")
+    # 字段级写权限（v1.30 启用）：白名单管"能不能调这个工具"，这里管"这个工具写的字段归谁"
+    denied = check_write(agent_id, decl.writes)
+    if denied:
+        raise ToolDenied(denied)
     if scene_id and "scene_id" in decl.params and not args.get("scene_id"):
         args["scene_id"] = scene_id
     # "谁发起"由 executor 提供（调用方身份），工具不必自己传

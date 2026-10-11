@@ -128,7 +128,7 @@ async def book_constraints(book_id: str, svc: SimulationService = Depends(get_se
 
 @router.get("/agent/specs")
 async def agent_specs():
-    """能力声明 + 写权限矩阵（**草案**，尚未强制）：让"谁能读/写什么"从口头约定变成可见数据。"""
+    """能力声明 + 写权限矩阵（**v1.30 已启用**：走工具链的行 enforced=True 并注明强制位置）。"""
     from app.services.agents.permissions import matrix
     from app.services.agents.spec import SPECS
 
