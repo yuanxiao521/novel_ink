@@ -1,6 +1,6 @@
-import { useRef, useState } from 'react';
-import { editorChat as callEditorChat } from '../../api/novel';
-import type { AgentExecuted, PerceptSummary } from '../../api/novel';
+import { useEffect, useRef, useState } from 'react';
+import { editorChat as callEditorChat, listAnnotations } from '../../api/novel';
+import type { AgentExecuted, PerceptSummary, ProseAnnotation } from '../../api/novel';
 
 /* ==========================================================================
    EditorChat —— 责编（场景级副驾）对话面板
@@ -28,11 +28,26 @@ interface Props {
 
 const QUICK = ['看看这段有没有 AI 味', '口吻像不像上场角色', '有没有偏离本场目标', '帮我处理待办批注'];
 
+/** 有待处理批注时，把"处理批注"置顶并带上具体条数（副驾的待办驱动）。 */
+function quickListOf(openCount: number): string[] {
+  if (openCount <= 0) return QUICK;
+  return [`帮我处理 ${openCount} 条待办批注（处理完标 handled）`, ...QUICK.slice(0, 3)];
+}
+
 export function EditorChat({ sceneId, text, onApplyText, onRefresh, seedMessage, onSeedConsumed }: Props) {
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
+  const [openAnns, setOpenAnns] = useState<ProseAnnotation[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // 本场待处理批注：副驾的"待办"——有批注时快捷指令一键直达
+  useEffect(() => {
+    if (!sceneId) { setOpenAnns([]); return; }
+    listAnnotations(sceneId, 'open')
+      .then(setOpenAnns)
+      .catch(() => setOpenAnns([]));
+  }, [sceneId, msgs.length]);
 
   // 从正文区"问责编 / 重写这段"带过来的预填消息
   if (seedMessage && input === '' && !busy) {
@@ -101,8 +116,19 @@ export function EditorChat({ sceneId, text, onApplyText, onRefresh, seedMessage,
         {busy && <div className="ec-msg editor"><div className="ec-text">（责编在想…）</div></div>}
       </div>
 
+      {openAnns.length > 0 && (
+        <div className="ec-anns">
+          <span className="ec-anns-no">☑ {openAnns.length} 条待处理批注</span>
+          {openAnns.slice(0, 3).map((a) => (
+            <span className="ec-ann" key={a.id} title={a.note}>
+              ¶{a.para_index || '?'} {a.note.slice(0, 18)}{a.note.length > 18 ? '…' : ''}
+            </span>
+          ))}
+        </div>
+      )}
+
       <div className="ec-quick">
-        {QUICK.map((q) => (
+        {quickListOf(openAnns.length).map((q) => (
           <button key={q} className="ec-quick-btn" disabled={busy} onClick={() => void send(q)}>{q}</button>
         ))}
       </div>

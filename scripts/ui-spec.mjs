@@ -140,6 +140,40 @@ try {
     })()`)) || "{}");
     step("⑥ 导演台恢复上次进度（回合时间线可读）", /共\s*[1-9]\d*\s*回合/.test(dr.meta || "") && !dr.empty, JSON.stringify(dr));
   } else { skip("⑥ 导演台恢复上次进度", "没有「演过回合」的场景作为夹具"); }
+
+  // ⑦ 副驾闭环（v1.37）：选中正文 → 「问责编」→ 先落批注 + 责编输入框预填带批注上下文
+  await goto(WEB + "/studio/" + host.sceneId + "?book=" + host.book.id, 8000);
+  const annFlow = JSON.parse((await ev(`(async () => {
+    const para = document.querySelector(".pb-para");
+    if (!para) return JSON.stringify({ err: "no .pb-para" });
+    // 用 Selection API 真选该段前 10 个字（与真人选中一致）
+    const range = document.createRange();
+    range.selectNodeContents(para);
+    const sel = window.getSelection(); sel?.removeAllRanges(); sel?.addRange(range);
+    para.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 600));
+    const bar = document.querySelector(".pb-bar");
+    if (!bar) return JSON.stringify({ err: "no .pb-bar（选中条没出现）" });
+    const ask = Array.from(bar.querySelectorAll("button")).find((b) => b.textContent.includes("问责编"));
+    if (!ask) return JSON.stringify({ err: "no 问责编 button" });
+    ask.click();
+    await new Promise((r) => setTimeout(r, 600));
+    // Dialog 的 prompt 输入框
+    const dlgInput = document.querySelector(".dialog-input");
+    if (!dlgInput) return JSON.stringify({ err: "no dialog input", dlg: !!document.querySelector(".dialog,.ws-dialog,.mk-dialog") });
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    setter.call(dlgInput, "这段留白再多一点");
+    dlgInput.dispatchEvent(new Event("input", { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 300));
+    const okBtn = document.querySelector(".dialog-btn-ok");
+    if (okBtn) okBtn.click();
+    await new Promise((r) => setTimeout(r, 1500));
+    // 责编 tab 被激活 + 输入框预填带批注上下文
+    const seed = document.querySelector(".ec-input input");
+    const anns = document.body.innerText.includes("待处理批注") || document.body.innerText.includes("待处理");
+    return JSON.stringify({ editorTab: location.search.includes("tab=editor"), seed: seed ? seed.value.slice(0, 60) : "", annsBadge: anns });
+  })()`)) || "{}");
+  step("⑦ 副驾闭环：选中 → 问责编自动落批注并预填对话", !annFlow.err && annFlow.editorTab && String(annFlow.seed).includes("批注意见"), JSON.stringify(annFlow));
 } catch (e) {
   step("UI 剧本异常", false, String(e));
 } finally {

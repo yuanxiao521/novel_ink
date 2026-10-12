@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { ProseAnnotation } from '../../api/novel';
+import { useDialog } from '../common/Dialog';
 
 /* ==========================================================================
    ProseBody —— 正文阅读/编辑 + 段落序号（¶n）+ 选中批注
@@ -27,6 +28,7 @@ export function splitParagraphs(text: string): string[] {
 }
 
 export function ProseBody({ text, annotations, editing, onChange, onAnnotate, onAskEditor, onResolve, onDeleteAnnotation }: Props) {
+  const { showPrompt } = useDialog();
   const paras = useMemo(() => splitParagraphs(text), [text]);
   const [sel, setSel] = useState<{ paraIndex: number; quote: string } | null>(null);
   const [drafting, setDrafting] = useState(false);
@@ -57,6 +59,20 @@ export function ProseBody({ text, annotations, editing, onChange, onAnnotate, on
     onAnnotate(sel.paraIndex, sel.quote, note.trim());
     setNote('');
     setDrafting(false);
+    setSel(null);
+    window.getSelection()?.removeAllRanges();
+  };
+
+  // 副驾闭环（v1.37）：「问责编 / 让写手重写这段」**先落批注**再带话——
+  // 批注是可追踪的改稿任务（架构稿 §8.1），责编感知包 100% 能读到；
+  // 之前只发半句话，责编感知包里 annotations=0，意见没留痕、处理完也没法标 handled。
+  const quickAsk = async (askMsg: (quote: string) => string) => {
+    if (!sel) return;
+    const quote = sel.quote || `第 ${sel.paraIndex} 段`;
+    const note = (await showPrompt('给责编的意见（会先落一条批注留痕）：', '')) ?? '';
+    if (!note.trim()) return;
+    onAnnotate(sel.paraIndex, sel.quote, note.trim());
+    onAskEditor(`${askMsg(quote)}\n批注意见：${note.trim()}（请处理后把批注标为 handled）`);
     setSel(null);
     window.getSelection()?.removeAllRanges();
   };
@@ -130,24 +146,10 @@ export function ProseBody({ text, annotations, editing, onChange, onAnnotate, on
                 {sel.quote ? ` · 「${sel.quote.slice(0, 24)}${sel.quote.length > 24 ? '…' : ''}」` : ' · 整段'}
               </span>
               <button className="ws-btn ws-btn-primary" onClick={() => setDrafting(true)}>批注</button>
-              <button
-                className="ws-btn"
-                onClick={() => {
-                  const q = sel.quote || `第 ${sel.paraIndex} 段`;
-                  onAskEditor(`关于 ${q}：`);
-                  setSel(null);
-                }}
-              >
+              <button className="ws-btn" onClick={() => quickAsk((q) => `关于「${q.slice(0, 24)}${q.length > 24 ? '…' : ''}」：请看看怎么改。`)}>
                 问责编
               </button>
-              <button
-                className="ws-btn"
-                onClick={() => {
-                  const q = sel.quote || `第 ${sel.paraIndex} 段`;
-                  onAskEditor(`第 ${sel.paraIndex} 段重写一下（${q}），保留事实只改写法。`);
-                  setSel(null);
-                }}
-              >
+              <button className="ws-btn" onClick={() => quickAsk((q) => `第 ${sel?.paraIndex} 段重写一下（${q.slice(0, 24)}${q.length > 24 ? '…' : ''}），保留事实只改写法。`)}>
                 让写手重写这段
               </button>
               <button className="ws-btn" onClick={() => setSel(null)}>取消</button>

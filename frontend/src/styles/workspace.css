@@ -698,3 +698,25 @@
 .sidebar .nav-dot { width: 8px; height: 8px; }
 .sidebar .nav-dot.idle { opacity: 0.45; }
 .sidebar .book-item { border-radius: var(--radius-md); transition: background 0.14s ease; }
+
+/* 副驾待办批注条（v1.37） */
+.ec-anns {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 0 2px 6px;
+}
+.ec-anns-no { font-size: 11.5px; color: var(--accent-warn); white-space: nowrap; }
+.ec-ann {
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 180px;
+}
