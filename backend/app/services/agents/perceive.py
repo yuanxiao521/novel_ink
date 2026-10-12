@@ -14,6 +14,7 @@ scope：
 from __future__ import annotations
 
 from app.services.agents import constraints as constraints_mod
+from app.services.text_metrics import prose_chars, scenes_chars   # 字数唯一口径（B39）
 
 SCENE_LIMIT = 12      # 批注/审计进包的条数上限（超出的写进 dropped）
 
@@ -60,7 +61,7 @@ async def _scene_packet(repo, scene_id: str) -> dict:
             {"kind": "scene", "visibility": "own", "items": [{
                 "title": scene.get("title", ""), "goal": scene.get("goal", ""),
                 "stage_desc": scene.get("stage_desc", ""), "content_desc": scene.get("content_desc", ""),
-                "prose_chars": len(prose),
+                "prose_chars": prose_chars(prose),
             }]},
             cblock,
             {"kind": "characters", "visibility": "book", "items": char_items},
@@ -68,7 +69,7 @@ async def _scene_packet(repo, scene_id: str) -> dict:
                 {"id": a["id"], "para_index": a.get("para_index"), "quote": a.get("quote", ""), "note": a.get("note", "")}
                 for a in annotations[:SCENE_LIMIT]
             ]},
-            {"kind": "draft", "visibility": "own", "items": [{"chars": len(prose), "text": prose[:4000]}]},
+            {"kind": "draft", "visibility": "own", "items": [{"chars": prose_chars(prose), "text": prose[:4000]}]},
             {"kind": "recent_notes", "window": f"last{SCENE_LIMIT}", "items": [
                 {"kind": n.get("kind"), "status": n.get("status"), "suggestion": (n.get("suggestion") or "")[:120]}
                 for n in notes[:SCENE_LIMIT]
@@ -85,7 +86,7 @@ async def _book_packet(repo, book_id: str) -> dict:
 
     chapters = tree.get("chapters") or []
     scenes = [s for c in chapters for s in (c.get("scenes") or [])]
-    prose_chars = sum(len(s.get("final_prose") or "") for s in scenes)
+    prose_chars_total = scenes_chars(scenes)   # 唯一字数口径（B39）
     annotations = 0
     for s in scenes:
         annotations += len(await repo.list_annotations(s.get("id", ""), status="open"))
@@ -106,7 +107,7 @@ async def _book_packet(repo, book_id: str) -> dict:
         "blocks": [
             {"kind": "book", "visibility": "book", "items": [{
                 "title": tree.get("title", ""), "genre": tree.get("genre", ""),
-                "chapters": len(chapters), "scenes": len(scenes), "prose_chars": prose_chars,
+                "chapters": len(chapters), "scenes": len(scenes), "prose_chars": prose_chars_total,
             }]},
             constraints_mod.as_block(table),
             {"kind": "outline", "visibility": "book", "items": [
@@ -120,7 +121,7 @@ async def _book_packet(repo, book_id: str) -> dict:
             ]},
             # 写作侧信号（0-token 派生 · 上行回主笔的第一个雏形）
             {"kind": "writing_signals", "visibility": "book", "items": [{
-                "prose_chars": prose_chars,
+                "prose_chars": prose_chars_total,
                 "annotation_open": annotations,
                 "scenes_total": len(scenes),
                 "scenes_written": sum(1 for s in scenes if (s.get("final_prose") or "").strip()),

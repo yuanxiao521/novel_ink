@@ -17,7 +17,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.routers import agent, simulation
+from app.api.routers import agent, search, simulation
 from app.errors import AppError
 from app.services.llm.client import client as llm_client
 
@@ -80,6 +80,7 @@ app.add_middleware(
 
 app.include_router(simulation.router)
 app.include_router(agent.router)
+app.include_router(search.router)
 
 
 @app.exception_handler(AppError)

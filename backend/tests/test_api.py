@@ -4,6 +4,7 @@
 TestClient 直接驱动 async 路由（Starlette 内部 run_sync 处理）。
 """
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -229,7 +230,8 @@ def test_chapter_prose_aggregate(client):
     assert all(s["finalized"] for s in p["scenes"])
     # 聚合正文 = 场景1 + \n\n + 场景2
     assert p["prose"] == f1["prose"] + "\n\n" + f2["prose"]
-    assert p["word_count"] == len(p["prose"])
+    # B39：word_count 走唯一口径（去掉所有空白字符后的字符数），不再是裸 len()
+    assert p["word_count"] == len(re.sub(r"\s", "", p["prose"]))
 
 
 def test_book_export_markdown(client):

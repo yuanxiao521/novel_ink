@@ -298,6 +298,75 @@
   border-color: var(--accent-primary);
 }
 
+
+/* ---------- 跨书搜索下拉（v1.34）---------- */
+.search-drop {
+  position: absolute;
+  top: 40px;
+  left: 0;
+  right: 0;
+  z-index: 40;
+  max-height: 340px;
+  overflow: auto;
+  padding: 6px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+}
+
+.search-empty {
+  padding: 10px 12px;
+  font-size: 12.5px;
+  color: var(--text-tertiary);
+}
+
+.search-item {
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  grid-template-areas: 'kind label' 'kind sub';
+  gap: 0 8px;
+  width: 100%;
+  padding: 7px 10px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.search-item:hover {
+  background: color-mix(in srgb, var(--accent-primary) 10%, transparent);
+}
+
+.search-kind {
+  grid-area: kind;
+  align-self: center;
+  padding: 2px 0;
+  font-size: 11px;
+  text-align: center;
+  color: var(--accent-primary);
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 40%, transparent);
+  border-radius: 4px;
+}
+
+.search-label {
+  grid-area: label;
+  font-size: 13px;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-sub {
+  grid-area: sub;
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .search-icon {
   position: absolute;
   left: 10px;

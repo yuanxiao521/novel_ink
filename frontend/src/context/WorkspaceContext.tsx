@@ -107,11 +107,17 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     const q = new URLSearchParams(location.search);
     const stored = readStored();
     const deep = pathScene(location.pathname);
-    // 深链（/director|studio/:sceneId）不沿用记忆里的书：场景所属书由下面的反查决定，
-    // 否则"先逛异能007 → 再打开雨夜书房的深链"会串书（上下文条与页面内容不一致）。
-    setBookId(deep ? q.get('book') || '' : q.get('book') || stored.bookId || '');
-    setChapterId(q.get('chapter') || stored.chapterId || '');
-    setSceneId(deep || q.get('scene') || stored.sceneId || '');
+    const qBook = q.get('book') || '';
+    // B37：URL 上写明的书 = 作者的显式选择，必须压过"记忆里的书"，
+    // 也要挡住下面「场景 → 书」的反查（否则从概览复盘点另一本书，
+    // 会被 localStorage 里残留的场景拽回原来那本——实测落点仍是 ?book=book-0938c02c）。
+    if (qBook) userPickedBookRef.current = true;
+    // 记忆里的章/场景只属于记忆里的那本书：URL 指定了别的书时不能恢复，
+    // 否则会先出现「书是 B、场景是 A 的」半死状态，再被反查把书拽回 A。
+    const sameAsStored = !qBook || qBook === stored.bookId;
+    setBookId(deep ? qBook : (qBook || stored.bookId || ''));
+    setChapterId(q.get('chapter') || (sameAsStored ? stored.chapterId : '') || '');
+    setSceneId(deep || q.get('scene') || (sameAsStored ? stored.sceneId : '') || '');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -129,10 +135,19 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     if (location.pathname + location.search === selfUrlRef.current) return;
     const q = new URLSearchParams(location.search);
     const deep = pathScene(location.pathname);
-    if (deep) setSceneId(deep);
-    else if (q.get('scene')) setSceneId(q.get('scene') as string);
-    if (q.get('chapter')) setChapterId(q.get('chapter') as string);
-    if (q.get('book')) setBookId(q.get('book') as string);
+    const qBook = q.get('book') || '';
+    // B37：URL 显式给书（外部链接 / 前进后退 / 搜索跳转）= 作者显式选择
+    if (qBook) userPickedBookRef.current = true;
+    if (qBook && qBook !== bookIdRef.current) {
+      // 真的换书了：旧书的章/场景不能跟过来
+      setChapterId(q.get('chapter') || '');
+      setSceneId(deep || q.get('scene') || '');
+    } else {
+      if (deep) setSceneId(deep);
+      else if (q.get('scene')) setSceneId(q.get('scene') as string);
+      if (q.get('chapter')) setChapterId(q.get('chapter') as string);
+    }
+    if (qBook) setBookId(qBook);
   }, [location.pathname, location.search]);
 
   /* ---------- 书列表 ---------- */

@@ -1240,6 +1240,75 @@ class Repo:
             raise RepoError(f"删除失败：{model.__name__}({pk}) 仍被其他数据引用 —— {e}") from e
 
     # ------------------------------------------------------------------
+    # 跨书搜索（书名 / 章节 / 场景 / 角色 / 伏笔）
+    # ------------------------------------------------------------------
+    async def search_all(self, q: str, limit: int = 8) -> dict:
+        """跨书「包含」搜索（大小写不敏感）：每类各取前 limit 条。
+
+        只做字面包含匹配——**不**做分词/语义/向量检索（那是素材库 RAG 的活）。
+        量级是"作者自己的书"，一条 ILIKE 足够且行为可解释。
+        """
+        out: dict[str, list[dict]] = {"books": [], "chapters": [], "scenes": [],
+                                      "characters": [], "foreshadows": []}
+        q = (q or "").strip()
+        if not q:
+            return out
+
+        if not self.use_db:
+            needle = q.lower()
+            for v in self._mem.values():
+                if not isinstance(v, dict):
+                    continue
+
+                def hit(*keys: str) -> bool:
+                    return any(needle in str(v.get(k) or "").lower() for k in keys)
+
+                if "spec_json" in v:
+                    if hit("name"):
+                        out["characters"].append({"id": v.get("id"), "name": v.get("name") or "",
+                                                  "book_id": v.get("book_id") or "",
+                                                  "scene_id": v.get("scene_id") or ""})
+                elif "chapter_id" in v and "title" in v:
+                    if hit("title"):
+                        out["scenes"].append({"id": v.get("id"), "title": v.get("title") or "",
+                                              "chapter_id": v.get("chapter_id") or ""})
+                elif "order_no" in v:
+                    if hit("title"):
+                        out["chapters"].append({"id": v.get("id"), "title": v.get("title") or "",
+                                                "order_no": v.get("order_no") or 0,
+                                                "book_id": v.get("book_id") or ""})
+                elif "text" in v and "status" in v:
+                    if hit("text"):
+                        out["foreshadows"].append({"id": v.get("id"), "text": v.get("text") or "",
+                                                   "status": v.get("status") or "",
+                                                   "book_id": v.get("book_id") or ""})
+                elif "title" in v and "genre" in v:
+                    if hit("title"):
+                        out["books"].append({"id": v.get("id"), "title": v.get("title") or "",
+                                             "genre": v.get("genre") or "", "book_id": v.get("id") or ""})
+            for k in out:
+                out[k] = [r for r in out[k] if r.get("id")][:limit]
+            return out
+
+        pat = f"%{q}%"
+
+        async def _q(session: AsyncSession):
+            for b in (await session.execute(select(Book).where(Book.title.ilike(pat)).limit(limit))).scalars().all():
+                out["books"].append({"id": b.id, "title": b.title, "genre": b.genre, "book_id": b.id})
+            for c in (await session.execute(select(Chapter).where(Chapter.title.ilike(pat)).limit(limit))).scalars().all():
+                out["chapters"].append({"id": c.id, "title": c.title, "order_no": c.order_no, "book_id": c.book_id})
+            for s in (await session.execute(select(Scene).where(Scene.title.ilike(pat)).limit(limit))).scalars().all():
+                out["scenes"].append({"id": s.id, "title": s.title, "chapter_id": s.chapter_id})
+            for ch in (await session.execute(select(Character).where(Character.name.ilike(pat)).limit(limit))).scalars().all():
+                out["characters"].append({"id": ch.id, "name": ch.name, "book_id": ch.book_id or "",
+                                          "scene_id": ch.scene_id or ""})
+            for fs in (await session.execute(select(Foreshadow).where(Foreshadow.text.ilike(pat)).limit(limit))).scalars().all():
+                out["foreshadows"].append({"id": fs.id, "text": fs.text, "status": fs.status, "book_id": fs.book_id})
+            return out
+
+        return await self._query_or_mem(_q, out)
+
+    # ------------------------------------------------------------------
     # inspirations（灵感卡 · Book 级主笔共创资产）
     # ------------------------------------------------------------------
     async def list_inspirations(self, book_id: str) -> list[dict]:

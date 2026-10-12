@@ -10,6 +10,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 import time
 import uuid
 from datetime import datetime
@@ -24,6 +25,7 @@ from app.errors import ConflictError, InvalidActionError, SceneNotFoundError, Si
 from app.schemas import models
 from app.services.engine.director import PlanCfg
 from app.services.engine.style_checks import voice_prior as style_voice_prior
+from app.services.text_metrics import prose_chars, scenes_chars   # 字数唯一口径（B39）
 from app.services.llm.client import client as llm_client  # 模块级引用：便于测试统一替换（conftest）
 
 logger = logging.getLogger(__name__)
@@ -302,6 +304,49 @@ class SimulationService:
         view["sims"] = len(archives_by_scene)
         return view
 
+    # ---------------------------------------------------------------- 跨书搜索（B38 后续）
+    async def search_all(self, q: str, limit: int = 8) -> dict:
+        """跨书搜索 → 统一命中列表（带前端可直接跳转的 path）。
+
+        匹配本身在 repo（字面包含）；这里只做「补书名/章节名 + 拼路由」，
+        路由与前端 ContextBar/深链约定保持一致（?book=/&chapter=/深链 /director/:sceneId）。
+        """
+        q = (q or "").strip()
+        if not q:
+            return {"q": "", "hits": [], "counts": {}}
+        raw = await self.repo.search_all(q, limit)
+        titles = {b["id"]: (b.get("title") or "") for b in await self.repo.list_books()}
+        hits: list[dict] = []
+
+        for b in raw["books"]:
+            hits.append({"kind": "book", "id": b["id"], "label": b.get("title") or "",
+                         "subtitle": b.get("genre") or "作品", "book_id": b["id"],
+                         "path": f"/dashboard?book={b['id']}"})
+        for c in raw["chapters"]:
+            bid = c.get("book_id") or ""
+            hits.append({"kind": "chapter", "id": c["id"],
+                         "label": f"第 {c.get('order_no') or '?'} 章 · {c.get('title') or ''}".strip(),
+                         "subtitle": f"{titles.get(bid, '')} · 章节", "book_id": bid,
+                         "path": f"/maestro?book={bid}&chapter={c['id']}"})
+        for s in raw["scenes"]:
+            ch = await self.repo.get_chapter(s.get("chapter_id") or "")
+            bid = (ch or {}).get("book_id") or ""
+            hits.append({"kind": "scene", "id": s["id"], "label": s.get("title") or "",
+                         "subtitle": f"{titles.get(bid, '')} · {(ch or {}).get('title') or ''} · 场景",
+                         "book_id": bid, "chapter_id": s.get("chapter_id") or "",
+                         "path": f"/director/{s['id']}?book={bid}&chapter={s.get('chapter_id') or ''}"})
+        for c in raw["characters"]:
+            bid = c.get("book_id") or ""
+            hits.append({"kind": "character", "id": c["id"], "label": c.get("name") or "",
+                         "subtitle": f"{titles.get(bid, '')} · 角色卡", "book_id": bid,
+                         "path": f"/characters?book={bid}"})
+        for f_ in raw["foreshadows"]:
+            bid = f_.get("book_id") or ""
+            hits.append({"kind": "foreshadow", "id": f_["id"], "label": (f_.get("text") or "")[:40],
+                         "subtitle": f"{titles.get(bid, '')} · 伏笔 · {f_.get('status') or ''}",
+                         "book_id": bid, "path": f"/dashboard?book={bid}"})
+        return {"q": q, "hits": hits, "counts": {k: len(v) for k, v in raw.items()}}
+
     async def get_dashboard(self, book_id: str) -> dict:
         from datetime import datetime
 
@@ -321,7 +366,7 @@ class SimulationService:
         for s in scenes_all:
             scenes_by_ch.setdefault(s["chapter_id"], []).append(s)
 
-        word_count = sum(len(s.get("final_prose") or "") for s in scenes_all)
+        word_count = scenes_chars(scenes_all)   # 唯一口径（B39）
 
         # ---- 时间线：章状态 + 章字数 ----
         timeline: list[dict] = []
@@ -344,7 +389,7 @@ class SimulationService:
                 "chapter_id": ch["id"], "title": ch.get("title") or "",
                 "order_no": ch.get("order_no") or 0, "tone": ch.get("tone") or "",
                 "status": status, "label": label, "badge": badge,
-                "word_count": sum(len(s.get("final_prose") or "") for s in ch_scenes),
+                "word_count": scenes_chars(ch_scenes),
             })
 
         # ---- 伏笔 KPI + 待办 ----
@@ -447,6 +492,11 @@ class SimulationService:
     async def create_chapter(self, book_id: str, data: dict) -> dict:
         cid = data.get("id") or f"chapter-{uuid.uuid4().hex[:8]}"
         data = {**data, "id": cid, "book_id": book_id}
+        # B38：order_no 是 1-based 显示口径（时间线渲染「第 N 章」）。此前不传就落 ORM 默认 0
+        # → 出现「第 0 章」，导出/排序的口径也跟着偏。缺省时按"现有最大章号 + 1"补齐。
+        if int(data.get("order_no") or 0) <= 0:
+            existing = await self.repo.list_chapters_by_book(book_id)
+            data["order_no"] = max((int(c.get("order_no") or 0) for c in existing), default=0) + 1
         await self.repo.save_chapter(data)
         return {"id": cid}
 
@@ -1322,11 +1372,11 @@ class SimulationService:
         scene, _ = await self._scene_and_book(scene_id)
         text = (text or "").strip()
         if str(scene.get("final_prose") or "") == text:
-            return {"scene_id": scene_id, "unchanged": True, "word_count": len(text)}
+            return {"scene_id": scene_id, "unchanged": True, "word_count": prose_chars(text)}
         await self.update_scene(scene_id, {"final_prose": text})
         # 后台记账：不阻塞保存返回；异常被 _bookkeep_after_save 捕获，不影响正文落库
         asyncio.create_task(self._bookkeep_after_save(scene_id, text))
-        return {"scene_id": scene_id, "unchanged": False, "word_count": len(text)}
+        return {"scene_id": scene_id, "unchanged": False, "word_count": prose_chars(text)}
 
     async def _bookkeep_after_save(self, scene_id: str, text: str) -> None:
         """保存正文后的自动记账（阶段⑤ 记账 Agent）：LLM 分析 final_prose ↔ 伏笔/信念账本
@@ -1494,7 +1544,7 @@ class SimulationService:
             "chapter_id": sim.chapter_id,
             "book_id": sim.book_id,
             "title": sc.get("title", ""),
-            "word_count": len(prose),
+            "word_count": prose_chars(prose),
             "prose": prose,
         }
 
@@ -1509,7 +1559,7 @@ class SimulationService:
             "chapter_id": sc.get("chapter_id", ""),
             "title": sc.get("title", ""),
             "prose": prose,
-            "word_count": len(prose),
+            "word_count": prose_chars(prose),
             "finalized": bool(prose),
         }
 
@@ -1526,7 +1576,7 @@ class SimulationService:
             "book_id": ch.get("book_id", ""),
             "title": ch.get("title", ""),
             "order_no": ch.get("order_no", 0),
-            "word_count": len(prose),
+            "word_count": prose_chars(prose),
             "scenes": [
                 {
                     "scene_id": s["id"], "title": s.get("title", ""),
@@ -1548,8 +1598,8 @@ class SimulationService:
             raise SceneNotFoundError(f"未找到书: {book_id}")
         chapters = await self.repo.list_chapters_by_book(book_id)
 
-        # 先收集（字数统计要全文，故两遍）
-        chapters_out: list[tuple[str, list[str]]] = []
+        # 先收集（目录与总字数都要，故两遍）
+        chapters_out: list[dict] = []
         total_chars = 0
         for ch in sorted(chapters, key=lambda c: c.get("order_no") or 0):
             scenes = await self.repo.list_scenes_by_chapter(ch["id"])
@@ -1557,18 +1607,36 @@ class SimulationService:
             if not finalized:
                 continue  # 未定稿章节不入书稿
             bodies = [str(s["final_prose"]).strip() for s in finalized]
-            total_chars += sum(len(t.replace(" ", "").replace("\n", "")) for t in bodies)
-            chapters_out.append((str(ch.get("title", "")), bodies))
+            chars = sum(prose_chars(t) for t in bodies)
+            total_chars += chars
+            chapters_out.append({
+                "order_no": int(ch.get("order_no") or 0),
+                "title": str(ch.get("title") or ""),
+                "bodies": bodies, "chars": chars, "scenes": len(finalized),
+            })
         if not chapters_out:
             raise InvalidActionError("本书尚无已定稿内容，先在导演台定稿再导出")
 
         lines: list[str] = [f"# {book.get('title', '无题之书')}", ""]
         if book.get("synopsis"):
             lines += [f"> {book['synopsis']}", ""]
-        lines += [f"全书约 {total_chars:,} 字", ""]
-        for title, bodies in chapters_out:
-            lines += [f"## {title}", ""]
-            lines.append("\n\n* * *\n\n".join(bodies))
+        lines += [f"全书约 {total_chars:,} 字 · 共 {len(chapters_out)} 章", ""]
+
+        # 目录（只列已入书章节；字数与概览 KPI / 章时间线同口径）
+        lines += ["## 目录", ""]
+        for i, c in enumerate(chapters_out, start=1):
+            title = c["title"].strip() or "（无题）"
+            # 章标题本身常已含「第 N 章」（主笔排的、手建的都这样）→ 别重复前缀
+            if re.match(r"^第\s*[0-9一二三四五六七八九十百零]+\s*章", title):
+                lines.append(f"{i}. {title} — {c['chars']:,} 字 / {c['scenes']} 场")
+            else:
+                label = f"第 {c['order_no']} 章" if c["order_no"] else f"第 {i} 章"
+                lines.append(f"{i}. {label} {title} — {c['chars']:,} 字 / {c['scenes']} 场")
+        lines.append("")
+
+        for c in chapters_out:
+            lines += [f"## {c['title'] or '（无题）'}", ""]
+            lines.append("\n\n* * *\n\n".join(c["bodies"]))
             lines.append("")
         return "\n".join(lines).strip() + "\n"
 

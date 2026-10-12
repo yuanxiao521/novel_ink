@@ -7,6 +7,7 @@ import { createBook, exportBookUrl, fetchDashboard, fetchGlobalView } from '../a
 import type { DashboardData, GlobalView } from '../api/novel';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { TensionPanel } from '../components/dashboard/TensionPanel';
+import { GlobalSearch } from '../components/common/GlobalSearch';
 
 const TODO_ICON: Record<string, { icon: string; char: string }> = {
   ok: { icon: 'success', char: '✓' },
@@ -66,10 +67,8 @@ export function DashboardPage() {
             <h1 className="book-title-main">{data?.book.title || '（未选书）'}</h1>
             <span className="genre-tag">{data?.book.genre || '暂无书'}</span>
           </div>
-          <div className="header-search">
-            <span className="search-icon">⌕</span>
-            <input type="text" placeholder="跨书搜索角色、伏笔、章节…" />
-          </div>
+          {/* 跨书搜索（B38 后续）：接了 GET /api/v1/search，命中项直接跳到对应页 */}
+          <GlobalSearch />
           <div className="header-right">
             {/* 判据 = 有任意定稿正文（与后端 export 的 `final_prose` 真值判断一致）；
                 不用 chapters_done——它要求整章全定稿，会让"有正文但未全定稿"的书看不到入口 */}

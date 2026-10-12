@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import re
 
+from app.services.text_metrics import prose_chars   # 字数唯一口径（B39）
+
 _PUNCT = re.compile(r"[《》「」【】\[\]()（）:：,，。.、!！?？\-—_/\s]")
 
 
@@ -43,7 +45,7 @@ async def build_usage(repo, book_id: str, archives_by_scene: dict | None = None)
             scenes_out.append({
                 "scene_id": scene.get("id", ""),
                 "scene_title": scene.get("title", ""),
-                "prose_chars": len(re.sub(r"\s", "", prose)),
+                "prose_chars": prose_chars(prose),
                 "adopted": len(adopted),
                 "referenced": referenced,
                 "items": items,

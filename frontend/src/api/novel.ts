@@ -202,6 +202,30 @@ export async function fetchChapterProse(chapterId: string): Promise<ChapterProse
   return getJson<ChapterProse>(`${API_BASE}/api/v1/chapters/${chapterId}/prose`);
 }
 
+/* ---------- 跨书搜索（v1.34） ---------- */
+
+export interface SearchHit {
+  kind: 'book' | 'chapter' | 'scene' | 'character' | 'foreshadow' | string;
+  id: string;
+  label: string;
+  subtitle: string;
+  book_id: string;
+  chapter_id?: string;
+  /** 前端可直接 nav() 的落点（已带 ?book= / &chapter=） */
+  path: string;
+}
+
+export interface SearchResult {
+  q: string;
+  hits: SearchHit[];
+  counts: Record<string, number>;
+}
+
+/** 跨书搜索：书名 / 章节 / 场景 / 角色 / 伏笔（字面包含匹配）。 */
+export async function searchEverything(q: string, limit = 8): Promise<SearchResult> {
+  return getJson<SearchResult>(`${API_BASE}/api/v1/search?q=${encodeURIComponent(q)}&limit=${limit}`);
+}
+
 /** 全书导出 markdown 下载地址（浏览器 <a href> 直开下载）。 */
 export function exportBookUrl(bookId: string): string {
   return `${API_BASE}/api/v1/books/${bookId}/export`;
