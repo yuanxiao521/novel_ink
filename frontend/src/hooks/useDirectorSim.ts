@@ -326,7 +326,16 @@ function reducer(s: SimUIState, a: Action): SimUIState {
     case 'RAISE_HIDE':
       return { ...s, raise: s.raise ? { ...s.raise, pending: false } : null };
     case 'HISTORY':
-      return { ...s, archives: a.archives };
+      // B41：恢复历史时必须**同时重建 finishedTurns**——此前只写 archives，
+      // 而时间线的判空用的是 finishedTurns（hasNoData = finishedTurns 空 && current 空）
+      // → 明明 /history 回了 19 条，界面却说「暂无回合记录」（实测 nodes=0）。
+      return {
+        ...s,
+        archives: a.archives,
+        finishedTurns: a.archives.map((arc) => ({
+          turn: arc.turn, cls: arc.cls, summary: arc.summary,
+        })),
+      };
     case 'VIEW':
       return { ...s, viewing: a.archive };
     case 'RESET_AFTER_REWIND': {

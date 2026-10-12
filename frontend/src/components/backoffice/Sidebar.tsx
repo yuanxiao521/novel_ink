@@ -17,6 +17,7 @@ const STEPS: Array<{ key: StepKey; no: string; text: string }> = [
   { key: 'director', no: '2', text: '导演台' },
   { key: 'studio', no: '3', text: '正文协作' },
   { key: 'dashboard', no: '4', text: '概览复盘' },
+  { key: 'proofread', no: '5', text: '校对成书' },
 ];
 
 export function Sidebar({ active }: { active: SidebarKey }) {
@@ -36,6 +37,7 @@ export function Sidebar({ active }: { active: SidebarKey }) {
     if (key === 'director') return ws.sceneId ? `/director/${ws.sceneId}` : '/director';
     if (key === 'studio') return ws.sceneId ? `/studio/${ws.sceneId}` : '/studio';
     if (key === 'dashboard') return ws.bookId ? `/dashboard?book=${ws.bookId}` : '/dashboard';
+    if (key === 'proofread') return ws.bookId ? `/proofread?book=${ws.bookId}` : '/proofread';
     return '/maestro';
   };
 
@@ -44,6 +46,7 @@ export function Sidebar({ active }: { active: SidebarKey }) {
     if (key === 'maestro') return outline ? 'done' : 'idle';
     if (key === 'director') return turns ? 'done' : outline ? 'run' : 'idle';
     if (key === 'studio') return prose ? 'done' : turns ? 'run' : 'idle';
+    if (key === 'proofread') return ws.status.finished ? 'done' : prose ? 'run' : 'idle';
     return (ws.globalView?.diagnostics?.length ?? 0) > 0 ? 'run' : 'idle';
   };
 

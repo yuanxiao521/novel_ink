@@ -44,6 +44,12 @@ def _ensure_cast(sim: models.SimulationState) -> None:
             "或到人物页点『✨ 让主笔生成角色』一键补齐角色卡")
 
 
+def _preview(text: str, n: int = 60) -> str:
+    """正文预览：压平空白后截前 n 字（校对视图用，不参与字数统计）。"""
+    flat = " ".join(str(text or "").split())
+    return flat[:n] + ("…" if len(flat) > n else "")
+
+
 def _scene_plan_cfg(plan_cfg_json: str, static_cfg: PlanCfg) -> PlanCfg:
     """融合 DB 场景配置（优先）与静态回退：缺哪个补哪个。"""
     db = json.loads(plan_cfg_json or "{}")
@@ -346,6 +352,59 @@ class SimulationService:
                          "subtitle": f"{titles.get(bid, '')} · 伏笔 · {f_.get('status') or ''}",
                          "book_id": bid, "path": f"/dashboard?book={bid}"})
         return {"q": q, "hits": hits, "counts": {k: len(v) for k, v in raw.items()}}
+
+    # ---------------------------------------------------------------- 逐章校对（成书收口 · C）
+    async def get_collation(self, book_id: str) -> dict:
+        """逐章校对数据（0-token 派生）：每章的场景清单 + 字数 + 定稿状态 + 全书统计。
+
+        字数与概览 KPI / 导出头部同口径（text_metrics）。校对视图据此回答作者最关心的问题：
+        「哪章还差几场没定稿、点哪一场去改、现在够不够成书」。
+        """
+        book = await self.repo.get_book(book_id)
+        if book is None:
+            raise SceneNotFoundError(f"未找到书: {book_id}")
+        chapters = sorted(await self.repo.list_chapters_by_book(book_id),
+                          key=lambda c: c.get("order_no") or 0)
+        out: list[dict] = []
+        total_chars = 0
+        done_chapters = 0
+        unfinished = 0
+        scene_total = 0
+        for ch in chapters:
+            scenes = await self.repo.list_scenes_by_chapter(ch["id"])
+            items: list[dict] = []
+            ch_chars = 0
+            for s in scenes:
+                prose = str(s.get("final_prose") or "")
+                chars = prose_chars(prose)
+                finalized = bool(prose.strip())
+                ch_chars += chars
+                scene_total += 1
+                if not finalized:
+                    unfinished += 1
+                items.append({
+                    "scene_id": s["id"], "title": s.get("title") or "",
+                    "word_count": chars, "finalized": finalized,
+                    "preview": _preview(prose), "goal": s.get("goal") or "",
+                })
+            total_chars += ch_chars
+            done = bool(items) and all(i["finalized"] for i in items)
+            if done:
+                done_chapters += 1
+            out.append({
+                "chapter_id": ch["id"], "order_no": int(ch.get("order_no") or 0),
+                "title": ch.get("title") or "", "tone": ch.get("tone") or "",
+                "summary": ch.get("summary") or "", "word_target": int(ch.get("word_target") or 0),
+                "word_count": ch_chars, "scene_count": len(items),
+                "done": done, "scenes": items,
+            })
+        return {
+            "book_id": book_id, "title": book.get("title") or "",
+            "chapters": out,
+            "kpi": {"chapters_total": len(out), "chapters_done": done_chapters,
+                    "word_count": total_chars, "unfinished_scenes": unfinished,
+                    "scene_total": scene_total},
+        }
 
     async def get_dashboard(self, book_id: str) -> dict:
         from datetime import datetime

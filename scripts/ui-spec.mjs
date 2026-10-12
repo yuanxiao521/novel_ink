@@ -110,6 +110,36 @@ try {
   await sleep(1200);
   const bannerText = await ev(`(() => { const el = document.querySelector(".ws-msg.err"); return el ? el.textContent : ""; })()`);
   step("④ 设置页失败可见（横幅出现）", typeof bannerText === "string" && bannerText.length > 0, JSON.stringify(bannerText));
+
+  // ⑤ 逐章校对（v1.35 成书收口 C）：每章每场都要能读出定稿状态与字数
+  await goto(WEB + "/proofread?book=" + host.book.id, 7000);
+  const pf = JSON.parse((await ev(`(() => {
+    const cards = document.querySelectorAll(".kpi-card").length;
+    const scenes = document.querySelectorAll(".pf-scene").length;
+    const first = document.querySelector(".kpi-card .kpi-value");
+    return JSON.stringify({ cards, scenes, words: first ? first.textContent.trim() : "" });
+  })()`)) || "{}");
+  step("⑤ 逐章校对：按章列出场景与定稿状态", pf.cards >= 4 && pf.scenes >= 1, JSON.stringify(pf));
+
+  // ⑥ 导演台恢复上次进度：有回合的场景必须把时间线画出来（B40/B41）
+  let turnScene = null;
+  for (const b of books) {
+    const t = await (await fetch(BASE + "/api/v1/books/" + b.id + "/tree")).json();
+    const gv = await (await fetch(BASE + "/api/v1/books/" + b.id + "/global-view")).json().catch(() => null);
+    const withTurns = new Set((gv?.curve || []).filter((c) => (c.turns || 0) > 0).map((c) => c.chapter_id));
+    for (const ch of t.chapters || []) {
+      if (withTurns.has(ch.id) && (ch.scenes || []).length) { turnScene = { book: b, scene: ch.scenes[0] }; break; }
+    }
+    if (turnScene) break;
+  }
+  if (turnScene) {
+    await goto(WEB + "/director/" + turnScene.scene.id + "?book=" + turnScene.book.id, 9000);
+    const dr = JSON.parse((await ev(`(() => {
+      const meta = document.querySelector(".tl-meta");
+      return JSON.stringify({ meta: meta ? meta.innerText.replace(/\\s+/g, " ").trim() : "", empty: !!document.querySelector(".timeline-empty") });
+    })()`)) || "{}");
+    step("⑥ 导演台恢复上次进度（回合时间线可读）", /共\s*[1-9]\d*\s*回合/.test(dr.meta || "") && !dr.empty, JSON.stringify(dr));
+  } else { skip("⑥ 导演台恢复上次进度", "没有「演过回合」的场景作为夹具"); }
 } catch (e) {
   step("UI 剧本异常", false, String(e));
 } finally {

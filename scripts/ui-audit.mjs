@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 /**
- * 死按钮审计（一次性诊断工具，放 logs/ 不进门禁）：
- * 打开某个页面 → 枚举可点元素（a[href] / button）→ 逐个跳转 → 用启发式判断"页面到底有没有内容"。
- * 用法：node logs/ui-audit.mjs --url=/dashboard --ls-book=<id> [--base=...] [--web=...]
- * 输出：每个目标 URL 的 正文字数 / 空状态文案 / 关键容器命中数。
+ * 死按钮 / 空页面审计（诊断工具，非门禁）：
+ *   ①路由巡检：逐条打开 --routes 里的页面，量正文字数、空状态文案、关键容器命中
+ *   ②死按钮巡检：在 --url 页面上枚举可点元素（a[href] / button）→ 逐个跳转 → 看落点有没有内容
+ * 用法：
+ *   node scripts/ui-audit.mjs --routes=/maestro,/director,/studio,/dashboard,/characters,/settings --ls-book=<id>
+ *   node scripts/ui-audit.mjs --url=/dashboard --ls-book=<id>
+ * 输出：每个落点的 正文字数 / 空状态文案 / 关键容器命中数。
  */
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
@@ -59,6 +62,26 @@ await send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 900, dev
 await goto(WEB + "/", 3000);
 if (LS_BOOK) await ev(`localStorage.setItem("mk.workspace", JSON.stringify({ bookId: "${LS_BOOK}", chapterId: "", sceneId: "" })); 1`);
 await goto(WEB + URLPATH, 6000);
+
+const ROUTES = arg("routes", "");
+if (ROUTES) {
+  const probe0 = `(() => {
+    const main = document.querySelector(".main-col") || document.body;
+    const txt = (main.innerText || "").replace(/\\s+/g, " ").trim();
+    const empties = Array.from(main.querySelectorAll(".char-empty, .empty-state, .ws-empty")).map((e) => (e.innerText || "").replace(/\\s+/g, " ").trim().slice(0, 36));
+    const marks = [".outline-tree", ".tl-node", ".char-card", ".tension-panel", ".todo-item", ".quote-item", ".reader", ".s2-prose", ".ws-entry", ".kpi-grid"].filter((s) => main.querySelector(s));
+    return JSON.stringify({ len: txt.length, empties, marks, head: txt.slice(0, 60) });
+  })()`;
+  console.log("== 路由巡检 ==");
+  for (const route of ROUTES.split(",").map((s) => s.trim()).filter(Boolean)) {
+    await goto(WEB + route, 6500);
+    const p = JSON.parse((await ev(probe0)) || "{}");
+    const url = await ev("location.pathname + location.search");
+    const flag = p.len < 320 ? "  ← 内容偏少" : "";
+    console.log(`${route}\n   落点 ${url}\n   字数 ${p.len} ｜ 容器 ${JSON.stringify(p.marks)} ｜ 空态 ${JSON.stringify(p.empties)}${flag}`);
+  }
+  process.exit(0);
+}
 
 const targets = await ev(`(() => {
   const out = [];

@@ -17,6 +17,8 @@ if str(_ROOT) not in sys.path:
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
+
+from app.config import settings  # noqa: E402
 # 注：只有最后的 repo 级用例是 async（逐个打 marker）；TestClient 用例是同步的
 
 PROSE = '第一段。\n\n  第二段 有空格。\n'   # 去掉所有空白后 = 13 字
@@ -143,3 +145,104 @@ async def test_search_matches_foreshadow_in_memory():
     raw = await repo.search_all('旧头版')
     assert [f['id'] for f in raw['foreshadows']] == ['f-1']
     assert raw['books'] == []
+
+def test_collation_reports_what_is_missing(client):
+    """逐章校对（C）：每章场景清单 + 字数 + 定稿状态 + 未定稿统计。"""
+    c, _ = client
+    bid = c._book_id
+    cid, sid = _seed_written(c, bid)
+    # 同章再加一场没定稿的 → 该章不应算"已定稿"，未定稿场景 +1
+    c.post(f'/api/v1/chapters/{cid}/scenes', json={'title': '还没写的场'})
+    c.post(f'/api/v1/books/{bid}/chapters', json={'title': '第二章 空章'})
+
+    col = c.get(f'/api/v1/books/{bid}/collation').json()
+    kpi = col['kpi']
+    assert kpi['chapters_total'] == 2 and kpi['chapters_done'] == 0
+    assert kpi['word_count'] == len(re.sub(r'\s', '', PROSE))
+    assert kpi['scene_total'] == 2 and kpi['unfinished_scenes'] == 1
+
+    ch1 = col['chapters'][0]
+    assert ch1['order_no'] == 1 and ch1['done'] is False and ch1['scene_count'] == 2
+    assert [s['finalized'] for s in ch1['scenes']] == [True, False]
+    assert ch1['scenes'][0]['preview'].startswith('第一段。')      # 预览压平空白
+    assert ch1['scenes'][1]['preview'] == ''                       # 没有正文
+    ch2 = col['chapters'][1]
+    assert ch2['order_no'] == 2 and ch2['scenes'] == [] and ch2['done'] is False
+
+    assert c.get('/api/v1/books/no-such-book/collation').status_code == 404
+
+
+def test_collation_counts_match_dashboard(client):
+    """校对页与概览页的总字数必须同一个数（B39 口径）。"""
+    c, _ = client
+    bid = c._book_id
+    _seed_written(c, bid)
+    col = c.get(f'/api/v1/books/{bid}/collation').json()
+    dash = c.get(f'/api/v1/books/{bid}/dashboard').json()
+    assert col['kpi']['word_count'] == dash['kpi']['word_count']
+
+
+@pytest.mark.asyncio
+async def test_resume_prefers_sim_with_turns():
+    """B40：恢复时必须挑"演过的"那场，不能空 sim 把有内容的挤掉。"""
+    from app.db.repo import Repo
+    from app.schemas.models import SimulationState, WorldState
+
+    repo = Repo(use_db=False)
+    await repo.save_book({'id': 'book-b40', 'title': 'B40', 'genre': '悬疑'})
+    await repo.save_chapter({'id': 'ch-b40', 'book_id': 'book-b40', 'title': '第一章', 'order_no': 1})
+    await repo.save_scene({'id': 'sc-b40', 'chapter_id': 'ch-b40', 'title': '场景', 'cursor_pos': 1})
+    rich = SimulationState(scenario='betrayal_night', book_id='book-b40', chapter_id='ch-b40',
+                           scene_id='sc-b40', world=WorldState(scene_id='sc-b40', title='场景', turn=5))
+    empty = SimulationState(scenario='betrayal_night', book_id='book-b40', chapter_id='ch-b40',
+                            scene_id='sc-b40', world=WorldState(scene_id='sc-b40', title='场景'))
+    await repo.save('sim-b40-rich', rich)
+    await repo.save('sim-b40-empty', empty)      # 后建的空的（旧逻辑会挑它）
+
+    assert await repo.resume_latest('sc-b40') == 'sim-b40-rich'
+
+
+@pytest.mark.skipif(not settings.persist, reason='persist=False，走内存态')
+@pytest.mark.asyncio
+async def test_resume_prefers_sim_with_turns_db():
+    """B40 真库版：空 sim 变新，也必须恢复到有回合的那场。"""
+    from app.db.repo import Repo
+    from app.schemas.models import SimulationState, WorldState
+
+    async def _db_ready() -> bool:
+        import asyncio
+
+        from sqlalchemy import text
+        from sqlalchemy.ext.asyncio import create_async_engine
+
+        eng = create_async_engine(settings.dsn.replace('postgresql://', 'postgresql+asyncpg://'))
+        try:
+            async with eng.connect() as conn:
+                await conn.execute(text('SELECT 1'))
+            return True
+        except Exception:  # noqa: BLE001
+            return False
+        finally:
+            await eng.dispose()
+
+    if not await _db_ready():
+        pytest.skip('DB 不可用，跳过真实库测试')
+
+    repo = Repo()
+    try:
+        await repo.delete_book('book-b40db')
+    except Exception:  # noqa: BLE001
+        pass
+    await repo.save_book({'id': 'book-b40db', 'title': 'B40DB', 'genre': '悬疑'})
+    await repo.save_chapter({'id': 'ch-b40db', 'book_id': 'book-b40db', 'title': '第一章', 'order_no': 1})
+    await repo.save_scene({'id': 'sc-b40db', 'chapter_id': 'ch-b40db', 'title': '场景', 'cursor_pos': 1})
+    await repo.save('sim-b40db-rich', SimulationState(
+        scenario='betrayal_night', book_id='book-b40db', chapter_id='ch-b40db', scene_id='sc-b40db',
+        world=WorldState(scene_id='sc-b40db', title='场景', turn=7)))
+    await repo.save('sim-b40db-empty', SimulationState(
+        scenario='betrayal_night', book_id='book-b40db', chapter_id='ch-b40db', scene_id='sc-b40db',
+        world=WorldState(scene_id='sc-b40db', title='场景')))
+
+    assert await repo.resume_latest('sc-b40db') == 'sim-b40db-rich'
+    await repo.delete_book('book-b40db')     # 顺带验证 B36：有 sim 也要删得掉
+    assert await repo.get_book('book-b40db') is None

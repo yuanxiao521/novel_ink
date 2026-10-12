@@ -10,7 +10,7 @@ import { API_BASE } from '../types/types';
    优先级：路径参数 > ?query > localStorage > 第一本书
    ========================================================================== */
 
-export type StepKey = 'maestro' | 'director' | 'studio' | 'dashboard' | 'settings';
+export type StepKey = 'maestro' | 'director' | 'studio' | 'dashboard' | 'proofread' | 'settings';
 
 export interface SceneOption {
   id: string;
@@ -43,6 +43,8 @@ export interface WorkspaceStatus {
   turns: boolean;
   prose: boolean;
   cast: boolean;
+  /** 成书条件：有章且每章都定稿（逐章校对/导出看这个点） */
+  finished: boolean;
 }
 
 interface WorkspaceValue {
@@ -339,6 +341,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       turns: curve.some((c) => (c.turns ?? 0) > 0),
       prose: curve.some((c) => (c.prose_chars ?? 0) > 0),
       cast: characterCount > 0,
+      finished: curve.length > 0 && curve.every((c) => c.status === 'done'),
     };
   }, [chapters, globalView, characterCount]);
 
@@ -409,6 +412,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         },
         dashboard: {
           prev: { label: '正文协作', to: toStudio },
+          next: { label: '逐章校对', to: `/proofread?book=${bookId}` },
+        },
+        proofread: {
+          prev: { label: '概览复盘', to: `/dashboard?book=${bookId}` },
           next: null,
         },
         settings: {

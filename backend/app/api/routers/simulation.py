@@ -489,6 +489,12 @@ async def book_script(book_id: str, thoughts: int = 1, tension: int = 0,
                                  with_tension=bool(tension))
 
 
+@router.get("/books/{book_id}/collation")
+async def book_collation(book_id: str, svc: SimulationService = Depends(get_service)):
+    """逐章校对：每章场景清单（字数/定稿状态/预览）+ 全书统计（成书收口 C）。"""
+    return await svc.get_collation(book_id)
+
+
 @router.get("/books/{book_id}/global-view")
 async def book_global_view(book_id: str, svc: SimulationService = Depends(get_service)):
     """S3 全局结构与张力视图（0-token 派生）：章级张力曲线 + 结构诊断 + 伏笔网络 + 评分。"""

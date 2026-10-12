@@ -9,6 +9,7 @@ import { CharactersPage } from './pages/CharactersPage';
 import { MaestroPage } from './pages/MaestroPage';
 import { StudioPage } from './pages/StudioPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { ProofreadPage } from './pages/ProofreadPage';
 import { DegradedBanner } from './components/common/DegradedBanner';
 import { EmptyState } from './components/common/EmptyState';
 import { ContextBar } from './components/common/ContextBar';
@@ -73,7 +74,8 @@ export function App() {
               <Route path="/maestro" element={<MaestroPage />} />
               <Route path="/studio" element={<SceneEntry kind="studio" />} />
               <Route path="/studio/:sceneId" element={<StudioPage />} />
-              <Route path="/characters" element={<CharactersPage />} />
+              <Route path="/proofread" element={<ProofreadPage />} />
+        <Route path="/characters" element={<CharactersPage />} />
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>

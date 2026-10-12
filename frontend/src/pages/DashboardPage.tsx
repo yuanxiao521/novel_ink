@@ -162,7 +162,10 @@ export function DashboardPage() {
                     <h2 className="section-title">
                       <span className="title-icon">⊙</span>章节时间线
                     </h2>
-                    <Link to="/maestro" className="section-link">管理骨架 →</Link>
+                    <div className="section-links">
+                      <Link to="/proofread" className="section-link">逐章校对 →</Link>
+                      <Link to="/maestro" className="section-link">管理骨架 →</Link>
+                    </div>
                   </div>
                   {data.timeline.length === 0 ? (
                     <div className="char-empty">尚无章节，先去「主笔共创」生成骨架</div>
@@ -286,6 +289,12 @@ export function DashboardPage() {
                   <button className="quick-btn">
                     <span className="quick-icon">☑</span>
                     <span>检查信念</span>
+                  </button>
+                </Link>
+                <Link to="/proofread">
+                  <button className="quick-btn">
+                    <span className="quick-icon">▤</span>
+                    <span>逐章校对</span>
                   </button>
                 </Link>
               </div>

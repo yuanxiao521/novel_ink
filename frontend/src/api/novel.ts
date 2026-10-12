@@ -226,6 +226,48 @@ export async function searchEverything(q: string, limit = 8): Promise<SearchResu
   return getJson<SearchResult>(`${API_BASE}/api/v1/search?q=${encodeURIComponent(q)}&limit=${limit}`);
 }
 
+/* ---------- 逐章校对（v1.35 成书收口 C） ---------- */
+
+export interface CollationScene {
+  scene_id: string;
+  title: string;
+  word_count: number;
+  finalized: boolean;
+  preview: string;
+  goal: string;
+}
+
+export interface CollationChapter {
+  chapter_id: string;
+  order_no: number;
+  title: string;
+  tone: string;
+  summary: string;
+  word_target: number;
+  word_count: number;
+  scene_count: number;
+  done: boolean;
+  scenes: CollationScene[];
+}
+
+export interface Collation {
+  book_id: string;
+  title: string;
+  chapters: CollationChapter[];
+  kpi: {
+    chapters_total: number;
+    chapters_done: number;
+    word_count: number;
+    unfinished_scenes: number;
+    scene_total: number;
+  };
+}
+
+/** 逐章校对数据：每章场景清单（字数/定稿状态/预览）+ 全书统计。 */
+export async function fetchCollation(bookId: string): Promise<Collation> {
+  return getJson<Collation>(`${API_BASE}/api/v1/books/${bookId}/collation`);
+}
+
 /** 全书导出 markdown 下载地址（浏览器 <a href> 直开下载）。 */
 export function exportBookUrl(bookId: string): string {
   return `${API_BASE}/api/v1/books/${bookId}/export`;

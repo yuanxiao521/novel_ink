@@ -299,6 +299,57 @@
 }
 
 
+
+/* ---------- 逐章校对（v1.35 · 成书收口 C） ---------- */
+.section-links { display: flex; gap: 12px; align-items: center; }
+
+.pf-go {
+  padding: 4px 12px;
+  font-size: 12px;
+  color: var(--accent-primary);
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 45%, transparent);
+  border-radius: 6px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.pf-go:hover { background: color-mix(in srgb, var(--accent-primary) 12%, transparent); }
+
+.pf-back {
+  padding: 6px 12px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  text-decoration: none;
+}
+
+.pf-back:hover { border-color: var(--accent-primary); color: var(--text-primary); }
+
+.pf-chapter-meta { display: flex; gap: 12px; align-items: center; font-size: 12px; color: var(--text-tertiary); }
+.pf-chapter-summary { margin: 0 0 10px; font-size: 12.5px; color: var(--text-secondary); }
+.pf-scenes { display: flex; flex-direction: column; gap: 8px; }
+
+.pf-scene {
+  padding: 10px 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.pf-scene-head { display: flex; gap: 10px; align-items: center; }
+.pf-scene-title { flex: 1; font-size: 13px; color: var(--text-primary); }
+.pf-scene-state { font-size: 11.5px; color: var(--text-tertiary); white-space: nowrap; }
+.pf-scene-state.done { color: var(--accent-ok, var(--accent-primary)); }
+.pf-scene-state.todo { color: var(--accent-warn); }
+
+.pf-scene-preview {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
 /* ---------- 跨书搜索下拉（v1.34）---------- */
 .search-drop {
   position: absolute;

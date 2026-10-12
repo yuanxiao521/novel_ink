@@ -210,33 +210,41 @@ class Repo:
             return 0
 
     async def resume_latest(self, scene_id: str) -> Optional[str]:
-        """该场景下「可继续推演」的最新 sim_id（恢复上次工作流）。
+        """该场景下「该恢复」的 sim_id（恢复上次工作流）。
 
-        排除：已收敛(converged) / 已完结(ended) —— 它们都是终点，不该被恢复。
+        排除：已收敛(converged) / 已完结(ended) —— 它们都是终点，不该被恢复；
         举手暂停等中间态可恢复继续推演。
-        ORM 层只取最新 id，完整判定在 service.start 里 load 后判断。
+
+        B40：**优先挑有内容的**（turn > 0）。此前只按 updated_at 取最新——而每次
+        打开导演台都会给"没有可恢复场次"的场景留一个空 sim，于是**空 sim 把真正
+        演了 19 回合的那场挤掉**，页面显示「已恢复（上次进度）· 共 0 回合 / 0 事件」
+        （实测 sim-d58495ab 有 19 条归档，却被更新的空 sim 遮蔽）。
         """
         if not self.use_db:
-            # 内存态：找该 scene 未收敛且未完结的最新 sim
-            latest = None
+            best_content, best_empty = None, None
             for sim_id, sim in self._mem.items():
-                if (getattr(sim, "scene_id", None) == scene_id
-                        and not sim.director.converged and not sim.ended):
-                    latest = sim_id
-            return latest
+                if (getattr(sim, "scene_id", None) != scene_id
+                        or sim.director.converged or sim.ended):
+                    continue
+                if sim.world.turn > 0:
+                    best_content = sim_id
+                else:
+                    best_empty = sim_id
+            return best_content or best_empty
         try:
             async with self._session_factory() as session:
-                stmt = (
-                    select(Simulation.id)
-                    .where(Simulation.scene_id == scene_id, Simulation.ended.is_(False))
-                    .order_by(Simulation.updated_at.desc())
-                    .limit(10)
-                )
-                rows = (await session.execute(stmt)).scalars().all()
-                for sid in rows:
-                    sim = await self.load(sid)
-                    if sim is not None and not sim.director.converged:
-                        return sid
+                # 先找"有回合且未收束"的最近一场；没有再退回最近一场空的
+                for with_turn in (True, False):
+                    stmt = select(Simulation.id).where(
+                        Simulation.scene_id == scene_id, Simulation.ended.is_(False)
+                    )
+                    if with_turn:
+                        stmt = stmt.where(Simulation.turn > 0)
+                    stmt = stmt.order_by(Simulation.updated_at.desc()).limit(10)
+                    for sid in (await session.execute(stmt)).scalars().all():
+                        sim = await self.load(sid)
+                        if sim is not None and not sim.director.converged:
+                            return sid
                 return None
         except Exception as e:  # noqa: BLE001
             logger.warning("[Repo] resume_latest 失败：%s", e)
