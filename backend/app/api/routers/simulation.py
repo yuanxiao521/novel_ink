@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from app.api.deps import get_service
 from app.config import settings
 from app.schemas import chief, models
+from app.services.agents.editor import chief_chat_with_tools
 from app.services.service import SimulationService
 
 logger = logging.getLogger(__name__)
@@ -639,6 +640,34 @@ async def delete_memory(memory_id: str, svc: SimulationService = Depends(get_ser
 
 
 # ------------------------------------------------------------------ 主笔共创对话（P0-2）
+@router.post("/books/{book_id}/chief/tools")
+async def chief_tools_chat(book_id: str, body: chief.ChiefChatIn,
+                           svc: SimulationService = Depends(get_service)):
+    """主笔的计划式工具对话（v1.40）：对话 → 计划 → ToolExecutor 执行 → 汇报。
+
+    与责编 /agent/chat 同一模式；最后一条 user 消息作为作者要求。
+    """
+    last_user = ""
+    for m in body.messages:
+        if m.role == "user" and m.content:
+            last_user = str(m.content)
+    return await chief_chat_with_tools(svc, book_id, last_user)
+
+
+@router.post("/books/{book_id}/chief/tools")
+async def chief_tools_chat(book_id: str, body: chief.ChiefChatIn,
+                           svc: SimulationService = Depends(get_service)):
+    """主笔的计划式工具对话（v1.40）：对话 → 计划 → ToolExecutor 执行 → 汇报。
+
+    与责编 /agent/chat 同一模式；最后一条 user 消息作为作者要求。
+    """
+    last_user = ""
+    for m in body.messages:
+        if m.role == "user" and m.content:
+            last_user = str(m.content)
+    return await chief_chat_with_tools(svc, book_id, last_user)
+
+
 @router.get("/books/{book_id}/chief/chat_history")
 async def get_chat_history(book_id: str,
                            svc: SimulationService = Depends(get_service)):

@@ -106,6 +106,35 @@ TOOLS.update({
     ),
 })
 
+TOOLS.update({
+    # ---------- 主笔（book 级 · v1.40 治理补齐）----------
+    # 此前主笔的三个写操作走"散装 API"（不经 ToolExecutor）：不过确认闸门、不落审计、
+    # AgentSpec 声明了工具名但 registry 里根本没有 → 对话无法驱动。现在补齐。
+    "outline.plan": ToolDecl(
+        "outline.plan", "主笔排一批章节骨架预览（A4 分批，batch_size 默认 3；不落库，预览后由 outline.commit 落库）", "write",
+        params=("book_id",), optional=("direction", "batch_size", "batch_from"),
+        handler="plan_book", group="chief",
+    ),
+    "outline.commit": ToolDecl(
+        "outline.commit", "把骨架预览落库（默认追加模式；替换已有正文需 allow_overwrite）", "destructive",
+        params=("book_id", "plan"), optional=("mode", "allow_overwrite"), needs_confirm=True,
+        handler="commit_book_plan", group="chief",
+        writes="chapters",
+    ),
+    "characters.generate": ToolDecl(
+        "characters.generate", "让主笔按书名/方向生成 3-5 张角色卡（腔调可辨）", "write",
+        params=("book_id",), optional=("direction",),
+        handler="generate_book_characters", group="chief",
+        writes="characters",
+    ),
+    "memory.write": ToolDecl(
+        "memory.write", "写一条书级记忆（topic=direction/setting/constraint/history/preference）", "destructive",
+        params=("book_id", "topic", "content"), needs_confirm=True,
+        handler="create_memory", group="chief",
+        writes="book_memories",
+    ),
+})
+
 
 def get_tool(name: str) -> ToolDecl | None:
     return TOOLS.get(name)

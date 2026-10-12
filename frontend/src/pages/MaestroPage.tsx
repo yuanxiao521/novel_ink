@@ -27,7 +27,6 @@ import {
   replaceChapterScenes,
   setInspirationAdopted,
   updateInspiration,
-  chiefChat,
   listChatHistory,
   listMemories,
   createMemory,
@@ -51,6 +50,8 @@ interface ChatMsg {
   text: string;
   toolCall?: string | null;
   miniOutline?: MiniChapter[] | null;
+  /** v1.40：主笔经 ToolExecutor 执行的工具结果（chip 渲染） */
+  executed?: Array<{ tool: string; ok: boolean; error?: string }>;
 }
 
 /** A4 分批交付：本批元信息（后端 plan API 返回，不落库） */
@@ -354,33 +355,33 @@ export function MaestroPage() {
     if (!text) return;
     setMessages((prev) => [...prev, { sender: 'user', text }]);
     setChatInput('');
-    // 预占一个 agent 气泡用于流式渲染
-    setMessages((prev) => [...prev, { sender: 'agent', text: '' }]);
     setAgentState('thinking');
-    const history = [...messages.filter((m) => m.text), { sender: 'user' as const, text }];
+    setChiefActivity('主笔正在安排…');
     try {
-      let acc = '';
-      await chiefChat(
-        bookId,
-        history.map((m) => ({ role: m.sender === 'user' ? 'user' as const : 'assistant' as const, content: m.text })),
-        (delta) => {
-          acc += delta;
-          setMessages((prev) => {
-            const next = [...prev];
-            next[next.length - 1] = { sender: 'agent', text: acc };
-            return next;
-          });
-        },
-      );
-    } catch {
-      // 后端不可用：降级本地回复
-      setMessages((prev) => {
-        const next = [...prev];
-        next[next.length - 1] = { sender: 'agent', text: '收到，我会根据这个方向调整骨架。如果你希望我把某个灵感卡直接落地成章节场景，点击卡片上的「采纳」即可。' };
-        return next;
+      // v1.40：主笔对话升级为"计划式工具对话"——说话 → 计划 → 经 ToolExecutor 执行 → 汇报
+      const history = messages.filter((m) => m.text).slice(-6);
+      const r = await fetch(`${API_BASE}/api/v1/books/${bookId}/chief/tools`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: [...history.map((m) => ({ role: m.sender === 'user' ? 'user' : 'assistant', content: m.text })),
+                     { role: 'user', content: text }],
+        }),
       });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = (await r.json()) as { reply?: string; executed?: Array<{ tool: string; ok: boolean; error?: string }> };
+      const executed = (data.executed ?? []).map((e) => ({ tool: e.tool, ok: e.ok, error: e.error }));
+      setMessages((prev) => [...prev, { sender: 'agent', text: data.reply || '（完成）', executed }]);
+      // 工具有实际写入（角色卡/记忆/骨架）→ 刷新树
+      if ((data.executed ?? []).some((e) => e.ok)) {
+        setChiefActivity('');
+        if (bookId) { fetchBookTree(bookId).then(setTree).catch(() => undefined); }
+      }
+    } catch (e) {
+      setMessages((prev) => [...prev, { sender: 'agent', text: '主笔暂时够不到后端（' + String(e instanceof Error ? e.message : e) + '）。如果你希望我把某个灵感卡直接落地成章节场景，点击卡片上的「采纳」即可。' }]);
     } finally {
       setAgentState('idle');
+      setChiefActivity('');
     }
   };
 
@@ -1253,6 +1254,16 @@ export function MaestroPage() {
                             {isLast && msg.sender === 'agent' && <span className="cursor"></span>}
                           </p>
                           {msg.toolCall && <div className="tool-call">{msg.toolCall}</div>}
+                          {msg.executed && msg.executed.length > 0 && (
+                            <div className="chief-exec">
+                              {msg.executed.map((e, j) => (
+                                <span className={`chief-exec-chip ${e.ok ? 'ok' : 'denied'}`} key={j}
+                                      title={e.error || ''}>
+                                  {e.ok ? '✓' : '✕'} {e.tool}{e.ok ? ' · 已执行' : ' · 被拒'}
+                                </span>
+                              ))}
+                            </div>
+                          )}
                           {msg.miniOutline && (
                             <div className="mini-outline">
                               <div className="mini-outline-title">骨架预览</div>

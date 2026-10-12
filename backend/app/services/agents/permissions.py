@@ -33,6 +33,9 @@ FIELD_OWNERS: dict[str, tuple[str, str]] = {
 _WRITE_ALLOWED: dict[str, set[str]] = {
     "scenes:final_prose": {"editor"},
     "prose_annotations": {"editor"},   # annotation.resolve 只改状态（作者创建走 UI）
+    "chapters": {"chief"},             # outline.commit（v1.40 补：此前主笔走散装 API 不过闸门）
+    "characters": {"chief"},           # characters.generate
+    "book_memories": {"chief"},        # memory.write
 }
 
 # 矩阵行 → 强制位置（"" = 未强制，原因见 note）
@@ -41,6 +44,11 @@ _ENFORCE_WHERE: dict[str, str] = {
     "prose_annotations": "ToolExecutor 字段级闸门（作者创建走 UI）",
     "agent_tasks": "tasks.py 发起者白名单 + 状态机",
 }
+
+# v1.40：主笔工具治理补齐后，这三行也由 ToolExecutor 强制
+_ENFORCE_WHERE["chapters"] = "ToolExecutor 字段级闸门（outline.commit）"
+_ENFORCE_WHERE["characters"] = "ToolExecutor 字段级闸门（characters.generate）"
+_ENFORCE_WHERE["book_memories"] = "ToolExecutor 字段级闸门（memory.write）"
 
 
 def check_write(agent_id: str, target: str) -> str | None:

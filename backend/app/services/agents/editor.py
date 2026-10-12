@@ -231,3 +231,85 @@ async def editor_chat_stream(service, scene_id: str, message: str, text: str = "
 
     yield {"event": "reply", "data": {"reply": plan.get("reply", "")}}
     yield {"event": "done", "data": {"percept": summary, "executed": executed}}
+# ---------------------------------------------------------------- 主笔（v1.40）：计划式工具对话
+_CHIEF_PLAN_SCHEMA = {
+    "reply": "str 给作者的中文说明",
+    "actions": [{"tool": "str 工具名", "args": {}, "why": "str 为什么"}],
+}
+
+def _validate_chief_plan(raw: object) -> str | None:
+    if not isinstance(raw, dict):
+        return "顶层必须是 JSON 对象"
+    if not str(raw.get("reply") or "").strip():
+        return "缺少 reply（给作者的说明）"
+    acts = raw.get("actions")
+    if not isinstance(acts, list):
+        return "actions 必须是数组（可为空数组）"
+    for i, a in enumerate(acts):
+        if not isinstance(a, dict) or not str(a.get("tool") or "").strip():
+            return f"actions[{i}] 缺 tool"
+    return None
+
+_CHIEF_TOOLS_PROMPT_HEAD = """你是小说【主笔】（总编剧），掌管这本书的结构与约束：书树、节奏、伏笔、角色弧、
+书级约束表与记忆。你**不直接改正文**（那是责编的活）。
+
+你可以调用以下工具（会经统一执行器校验与审计）："""
+
+_CHIEF_TOOLS_PROMPT_TAIL = """
+
+【作者要求】{message}
+【输出】只输出 JSON：{{"reply": "给作者的中文说明", "actions": [{{"tool": "工具名", "args": {{}}, "why": "为什么"}}]}}。
+规则：① 不需要执行工具时 actions 留空，只解释或建议；② outline.commit 是破坏性操作，
+系统会先出预览再由作者确认——你的 actions 里可以带 outline.plan（出预览），
+不要直接带 outline.commit（作者在界面上确认）；③ 一次最多 3 个动作；④ 不要编造工具名。"""
+
+async def chief_chat_with_tools(service, book_id: str, message: str, who: str = "author") -> dict:
+    """主笔的计划式工具对话（v1.40）：感知 → 计划 → 经 ToolExecutor 执行 → 汇报。
+
+    与责编 editor_chat 同一模式；工具集是主笔的四个（outline.plan/characters.generate/
+    memory.write/outline.commit），感知是 chief_perceive 的文本（书级）。
+    """
+    perceived = await service.chief_perceive(book_id)
+    tool_lines = [
+        f"- {t.name}（{t.side_effect}{'·需确认' if t.needs_confirm else ''}）：{t.desc}"
+        for t in TOOLS.values() if t.group == "chief"
+    ]
+    prompt = (
+        _CHIEF_TOOLS_PROMPT_HEAD + chr(10) + chr(10).join(tool_lines)
+        + _CHIEF_TOOLS_PROMPT_TAIL.format(message=message.strip() or "（无，按你的判断给建议）")
+        + "\n\n【当前书的感知上下文】\n" + (perceived or "（暂无）")
+    )
+    executed: list[dict] = []
+
+    if not getattr(llm_client, "available", False):
+        return {
+            "reply": "（模型未接入：排骨架/生成角色卡可以直接点界面上按钮；接入后我就能在对话里替你连起来做。）",
+            "executed": [],
+        }
+
+    try:
+        plan = await validate_and_retry(llm_client, prompt, _CHIEF_PLAN_SCHEMA, _validate_chief_plan)
+    except ValueError as e:
+        return {"reply": f"（这次没生成有效计划：{e}）", "executed": []}
+    if not isinstance(plan, dict):
+        return {"reply": "（这次没生成有效计划，可重试）", "executed": []}
+
+    for act in (plan.get("actions") or [])[:3]:
+        tool = str(act.get("tool") or "")
+        args = dict(act.get("args") or {})
+        args.setdefault("book_id", book_id)
+        # 主笔的破坏性动作一律升到作者确认（outline.commit 由界面预览流负责，这里直接拒）
+        if tool == "outline.commit":
+            executed.append({"tool": tool, "ok": False,
+                             "error": "骨架落库由作者在预览卡上确认（先 outline.plan 出预览）", "why": act.get("why", "")})
+            continue
+        try:
+            res = await call_tool(
+                service, "chief", tool, args,
+                who=f"{who}:chief" if who else "chief", confirm=True, book_id=book_id,
+            )
+            executed.append({**res.to_dict(), "why": act.get("why", "")})
+        except ToolDenied as e:
+            executed.append({"tool": tool, "ok": False, "error": str(e), "why": act.get("why", "")})
+
+    return {"reply": plan.get("reply", ""), "executed": executed}

@@ -776,3 +776,10 @@
 .ec-stage-text { color: var(--text-secondary); line-height: 1.6; }
 .ec-stage-text em { font-style: normal; color: var(--text-muted); }
 .ec-stage.running .ec-stage-text { color: var(--text-muted); }
+/* 主笔工具执行 chips（v1.40） */
+.chief-exec { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.chief-exec-chip {
+  font-size: 11px; padding: 2px 9px; border-radius: var(--radius-pill);
+  border: 1px solid var(--accent-green); color: var(--accent-green);
+}
+.chief-exec-chip.denied { border-color: var(--accent-gold); color: var(--accent-gold); }

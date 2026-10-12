@@ -549,7 +549,9 @@ async def test_write_matrix_enforced_rows_are_honest():
     assert owners["scenes:final_prose"] == "editor"    # 正文归责编
     assert owners["chapters"] == "chief"               # 结构归主笔
     enforced = {r["target"] for r in rows if r["enforced"]}
-    assert enforced == {"scenes:final_prose", "prose_annotations", "agent_tasks"}
+    # v1.40：主笔工具治理补齐 → chapters/characters/book_memories 也由 ToolExecutor 强制
+    assert enforced == {"scenes:final_prose", "prose_annotations", "agent_tasks",
+                        "chapters", "characters", "book_memories"}
     # 每个 enforced 行必须写明强制位置（不假装一道闸门管全部）
     for r in rows:
         if r["enforced"]:

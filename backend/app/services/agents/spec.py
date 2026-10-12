@@ -29,7 +29,7 @@ CHIEF = AgentSpec(
     id="chief", name="主笔", scope="book", persona="chief",
     reads=("book_tree", "memories", "inspirations", "ledgers", "writing_signals"),
     writes=("outline", "characters", "worldview", "memories", "constraints"),
-    tools=("outline.commit", "characters.generate", "memory.write"),
+    tools=("outline.plan", "outline.commit", "characters.generate", "memory.write"),
     emits=("plan.preview", "outline.committed"),
     can_initiate_tasks=True,
     needs_confirm=("outline.commit",),

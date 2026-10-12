@@ -45,6 +45,7 @@ async def call_tool(
     who: str = "author",
     confirm: bool = False,
     scene_id: str = "",
+    book_id: str = "",
 ) -> ToolResult:
     args = dict(args or {})
     decl = get_tool(tool)
@@ -58,6 +59,8 @@ async def call_tool(
         raise ToolDenied(denied)
     if scene_id and "scene_id" in decl.params and not args.get("scene_id"):
         args["scene_id"] = scene_id
+    if book_id and "book_id" in decl.params and not args.get("book_id"):
+        args["book_id"] = book_id
     # "谁发起"由 executor 提供（调用方身份），工具不必自己传
     if "from_agent" in (*decl.params, *decl.optional) and not args.get("from_agent"):
         args["from_agent"] = agent_id or "author"
