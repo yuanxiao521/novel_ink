@@ -252,7 +252,9 @@ export function MaestroPage() {
   const [sceneEdits, setSceneEdits] = useState<ScenePatchItem[]>([]);
   const [sceneSaving, setSceneSaving] = useState(false);
 
-  const statusText = agentState === 'idle' ? '主笔空闲中' : agentState === 'thinking' ? '主笔思考中' : '调用工具中';
+  // 主笔"正在干什么"的具体动作文本（v1.39）：agentState 是粗状态，activity 是细文案
+  const [chiefActivity, setChiefActivity] = useState('');
+  const statusText = chiefActivity || (agentState === 'idle' ? '主笔空闲中' : agentState === 'thinking' ? '主笔思考中' : '调用工具中');
 
   useEffect(() => {
     if (!bookId) {
@@ -391,14 +393,16 @@ export function MaestroPage() {
     if (!dir) return;
     setIdeating(true);
     setAgentState('thinking');
+    const existing = (tree?.chapters ?? []).length;
+    setChiefActivity(opts?.next ? `正在排第 ${existing + 1} 章起的下一批（每批 ${batchSize} 章）…` : '正在构思骨架与灵感…');
     setPlanPreview(null);
     setPlanBatch(null);
     setBatchHint(null);
-    const existing = (tree?.chapters ?? []).length;
 
     // 1) 生成灵感卡（仅在"从头构思"时做；续排下一批不必再洗一遍灵感池）
     if (bookId && !opts?.next) {
       try {
+        setChiefActivity('正在生成灵感卡…');
         const { cards } = await generateInspirations(bookId, dir);
         if (cards.length > 0) setInspirations((prev) => [...cards, ...prev]);
       } catch {
@@ -411,6 +415,7 @@ export function MaestroPage() {
     if (useAPI) {
       try {
         const adoptedIds = inspirations.filter((c) => c.adopted).map((c) => c.id);
+        setChiefActivity(`正在排第 ${existing + 1} 章起的本批骨架（承接已落库 ${existing} 章）…`);
         const res = await fetch(`${API_BASE}/api/v1/books/${bookId}/plan`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -482,6 +487,7 @@ export function MaestroPage() {
       if (!ok) return;
     }
     setCommitting(true);
+    setChiefActivity(mode === 'append' ? '正在把本批章节落库（不动已有章节与正文）…' : '正在全量替换骨架…');
     try {
       const res = await fetch(`${API_BASE}/api/v1/books/${tree.id}/plan/commit`, {
         method: 'POST',
@@ -502,6 +508,7 @@ export function MaestroPage() {
           const to = meta?.to ?? (from + (out.chapters ?? 1) - 1);
           const total = out.total_chapters ?? to;
           setBatchHint({ from, to, total });
+          setChiefActivity('');
           briefFlash(`第 ${from}–${to} 章已落库 · 全书 ${total} 章`);
           setMessages((prev) => [
             ...prev,

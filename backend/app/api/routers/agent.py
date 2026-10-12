@@ -10,10 +10,11 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.api.deps import get_service
-from app.services.agents.editor import editor_chat
+from app.services.agents.editor import editor_chat, editor_chat_stream
 from app.services.agents.registry import list_tools
 from app.services.service import SimulationService
 
@@ -65,6 +66,26 @@ async def agent_tools():
 async def agent_chat(scene_id: str, body: EditorChatIn, svc: SimulationService = Depends(get_service)):
     """责编对话：感知 → 计划 → 执行（同一工具链）→ 汇报。"""
     return await editor_chat(svc, scene_id, body.message, body.text, body.who or "author")
+
+
+@router.post("/scenes/{scene_id}/agent/chat/stream")
+async def agent_chat_stream(scene_id: str, body: EditorChatIn, svc: SimulationService = Depends(get_service)):
+    """责编对话（SSE 流式 · v1.39）：逐阶段上报"我在干什么"。
+
+    event 序列：percept → plan → tool_start/tool_done（逐个）→ reply → done。
+    前端把每个阶段渲染成过程卡，作者不再对着"（责编在想…）"黑等。
+    """
+    import json as _json
+
+    async def gen():
+        try:
+            async for ev in editor_chat_stream(svc, scene_id, body.message, body.text, body.who or "author"):
+                yield f"event: {ev['event']}\ndata: {_json.dumps(ev['data'], ensure_ascii=False)}\n\n"
+        except Exception as e:  # noqa: BLE001  流中异常也要让前端看到，不能静默断流
+            yield f"event: error\ndata: {_json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @router.get("/books/{book_id}/rehearsal-plan")

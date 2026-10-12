@@ -1113,6 +1113,56 @@ export async function editorChat(sceneId: string, message: string, text: string)
   return send<EditorChatResult>('POST', `/api/v1/scenes/${sceneId}/agent/chat`, { message, text, who: 'author' });
 }
 
+
+
+/* ---------- 责编对话（SSE 流式 · v1.39"知道它在干什么"） ---------- */
+
+/** 责编工作过程的阶段事件（后端 editor_chat_stream 逐阶段下发）。 */
+export type EditorStage =
+  | { event: 'percept'; data: PerceptSummary }
+  | { event: 'plan'; data: { reply: string; actions: Array<{ tool: string; args?: Record<string, unknown>; why?: string }> } }
+  | { event: 'tool_start'; data: { tool: string; why?: string } }
+  | { event: 'tool_done'; data: { tool: string; ok: boolean; summary?: string; error?: string; result?: AgentExecuted } }
+  | { event: 'reply'; data: { reply: string } }
+  | { event: 'done'; data: { percept: PerceptSummary; executed: AgentExecuted[] } }
+  | { event: 'error'; data: { error: string } };
+
+/** 流式责编对话：逐阶段回调 onStage，结束返回最终结果（供状态归档）。 */
+export async function editorChatStream(
+  sceneId: string,
+  message: string,
+  text: string,
+  onStage: (s: EditorStage) => void,
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/v1/scenes/${sceneId}/agent/chat/stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, text, who: 'author' }),
+  });
+  if (!res.ok || !res.body) {
+    let detail = `${res.status}`;
+    try { const j = (await res.json()) as { detail?: string }; if (j?.detail) detail = j.detail; } catch { /* 忽略 */ }
+    throw new Error(detail);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const parts = buf.split('\n\n');
+    buf = parts.pop() ?? '';
+    for (const part of parts) {
+      const evLine = part.split('\n').find((l) => l.startsWith('event: '));
+      const dataLine = part.split('\n').find((l) => l.startsWith('data: '));
+      if (!evLine || !dataLine) continue;
+      const event = evLine.slice(7).trim();
+      try { onStage({ event, data: JSON.parse(dataLine.slice(6)) } as EditorStage); } catch { /* 跳过坏帧 */ }
+    }
+  }
+}
+
 export async function listAnnotations(sceneId: string, status = ''): Promise<ProseAnnotation[]> {
   const q = status ? `?status=${status}` : '';
   return getJson<ProseAnnotation[]>(`${API_BASE}/api/v1/scenes/${sceneId}/annotations${q}`);

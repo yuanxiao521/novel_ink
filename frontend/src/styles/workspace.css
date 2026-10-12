@@ -758,3 +758,21 @@
 .ha-sev.high { color: var(--accent-err); border-color: var(--accent-err); }
 .ha-sev.mid, .ha-sev.warn { color: var(--accent-warn); border-color: var(--accent-warn); }
 .ha-sev.ok, .ha-sev.low { color: var(--accent-ok); border-color: var(--accent-ok); }
+
+/* ---------- 责编过程卡（v1.39：让作者看见责编在干什么） ---------- */
+.ec-proc {
+  border: 1px solid var(--border-light);
+  border-left: 3px solid var(--accent-cyan);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+  padding: 8px 11px;
+}
+.ec-proc-title { font-size: 11.5px; color: var(--accent-cyan); margin-bottom: 6px; }
+.ec-stage { display: flex; gap: 7px; align-items: baseline; padding: 3px 0; font-size: 12px; }
+.ec-stage + .ec-stage { border-top: 1px dashed var(--border-light); }
+.ec-stage-ico { flex: 0 0 16px; text-align: center; color: var(--text-muted); }
+.ec-stage.tool_done .ec-stage-ico { color: var(--accent-green); }
+.ec-stage.plan .ec-stage-ico { color: var(--accent-primary); }
+.ec-stage-text { color: var(--text-secondary); line-height: 1.6; }
+.ec-stage-text em { font-style: normal; color: var(--text-muted); }
+.ec-stage.running .ec-stage-text { color: var(--text-muted); }

@@ -160,3 +160,74 @@ async def editor_chat(service, scene_id: str, message: str, text: str = "", who:
                 "error": str(e), "why": act.get("why", ""),
             })
     return {"reply": plan.get("reply", ""), "actions": actions, "executed": executed, "percept": summary}
+
+# ---------------------------------------------------------------- 流式版（v1.39：让作者看见责编在干什么）
+async def editor_chat_stream(service, scene_id: str, message: str, text: str = "", who: str = "author"):
+    """editor_chat 的逐阶段流式版：感知 → 计划 → 逐工具执行 → 完成。
+
+    每个阶段 yield 一个 dict 事件（路由层转 SSE）——作者不再盯着
+    "（责编在想…）"干等 10-30 秒，而是看到：
+      percept → 「读到正文 N 字 · 批注 M 条」
+      plan    → 「打算：体检 → 润色」（模型计划）
+      tool_start / tool_done（逐个工具，含 ok/denied 与结果摘要）
+      reply   → 最终说明
+      done    → 收尾（含 percept 汇总）
+    非 LLM 场景（未接入/计划失败）也走同一套事件，前端无需分支。
+    """
+    packet = await perceive_scene(service.repo, scene_id)
+    summary = packet_summary(packet)
+    yield {"event": "percept", "data": summary}
+
+    if not getattr(llm_client, "available", False):
+        yield {"event": "reply", "data": {"reply": "（模型未接入：可以直接点「写手·初稿 / 体检 / 润色 / 质检」按钮，这些按钮和我说的是同一套工具。）"}}
+        yield {"event": "done", "data": {"percept": summary, "executed": []}}
+        return
+
+    try:
+        plan = await validate_and_retry(llm_client, render_editor_prompt(packet, message, text), PLAN_SCHEMA, _validate_plan)
+    except ValueError as e:
+        yield {"event": "reply", "data": {"reply": f"（这次没生成有效计划：{e}；可直接点按钮执行）"}}
+        yield {"event": "done", "data": {"percept": summary, "executed": []}}
+        return
+    if not isinstance(plan, dict):
+        yield {"event": "reply", "data": {"reply": "（这次没生成有效计划，可重试；或直接点按钮执行）"}}
+        yield {"event": "done", "data": {"percept": summary, "executed": []}}
+        return
+
+    actions = plan.get("actions") or []
+    yield {"event": "plan", "data": {"reply": plan.get("reply", ""), "actions": actions}}
+
+    executed: list[dict] = []
+    pruned = _prune_actions(actions, executed)
+    draft = (text or "").strip() or packet_draft(packet)
+    for act in pruned:
+        decl = TOOLS.get(act["tool"])
+        if decl and "text" in decl.params and not act["args"].get("text"):
+            act["args"]["text"] = draft
+        tool = act["tool"]
+        why = act.get("why", "")
+        yield {"event": "tool_start", "data": {"tool": tool, "why": why}}
+        try:
+            res = await call_tool(
+                service, EDITOR.id, tool, act.get("args") or {},
+                who=f"{who}:editor" if who else "editor", confirm=False, scene_id=scene_id,
+            )
+            executed.append({**res.to_dict(), "why": why})
+            summary_text = ""
+            cand = res.data.get("text") or res.data.get("after") or res.data.get("candidate")
+            if isinstance(cand, str) and cand.strip():
+                summary_text = f"产出候选 {len(cand)} 字"
+            elif res.data.get("report") is not None:
+                issues = ((res.data.get("report") or {}).get("issues")) or []
+                summary_text = f"发现 {len(issues)} 条问题"
+            yield {"event": "tool_done", "data": {"tool": tool, "ok": True,
+                   "summary": summary_text, "result": res.to_dict(), "why": why}}
+        except ToolDenied as e:
+            executed.append({
+                "tool": tool, "ok": False, "side_effect": TOOLS[tool].side_effect if tool in TOOLS else "?",
+                "error": str(e), "why": why,
+            })
+            yield {"event": "tool_done", "data": {"tool": tool, "ok": False, "error": str(e), "why": why}}
+
+    yield {"event": "reply", "data": {"reply": plan.get("reply", "")}}
+    yield {"event": "done", "data": {"percept": summary, "executed": executed}}
