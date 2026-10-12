@@ -155,6 +155,46 @@ $v.data.opinions | ForEach-Object { $_.name + " | " + $_.emotion + " | 句长=" 
 # 期望 status=ok 且 degraded.active=false, count=0
 ```
 
+### 3.8 A4 分批交付 + 骨架落库防误删（B33 · 真 LLM）
+
+```bash
+B=http://127.0.0.1:8001/api/v1
+jq_id() { node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).id))"; }
+
+# ① 建一本自测书
+bid=$(curl -s -X POST $B/books -H 'Content-Type: application/json' \
+  -d '{"title":"分批验收书","genre":"悬疑"}' | jq_id)
+DIR='民国上海，一份快倒闭的小报要查出三年前沈宅灭门案的真相。'
+
+# ② 首批只排 2 章（真 LLM，约 40s）——期望 batch={from:1,to:2,asked:2,got:2,trimmed:0}，
+#    且首批必须带完整 worldview（B35：rules_text 非空）
+curl -s -X POST $B/books/$bid/plan -H 'Content-Type: application/json' \
+  -d "{\"direction\":\"$DIR\",\"batch_size\":2,\"batch_from\":1}" > /tmp/p1.json
+node -e "const j=require('/tmp/p1.json');console.log('batch',JSON.stringify(j.batch));console.log('章目',j.plan.chapters.map(c=>c.seq+':'+c.title).join(' | '));console.log('rules_text 非空',!!(j.plan.worldview||{}).rules_text)"
+
+# ③ 追加落库（默认 mode=append）：旧章与正文不动，章号往后接
+curl -s -X POST $B/books/$bid/plan/commit -H 'Content-Type: application/json' \
+  -d "{\"plan\":$(cat /tmp/p1.json | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.stdout.write(JSON.stringify(JSON.parse(s).plan)))"),\"mode\":\"append\"}"
+# 期望：{mode:append, chapters:2, total_chapters:2, replaced_chapters:0, kept_prose_scenes:0}
+
+# ④ 续排第 3–4 章（承接前文）再追加 → 期望 total_chapters=4、tree 里 1..4 章标题连续
+curl -s -X POST $B/books/$bid/plan -H 'Content-Type: application/json' \
+  -d "{\"direction\":\"$DIR\",\"batch_size\":2,\"batch_from\":3}" > /tmp/p2.json
+curl -s $B/books/$bid/tree | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).chapters.map(c=>c.order_no+'.'+c.title).join(' | ')))"
+
+# ⑤ B33 防误删：给某场写正文后调 mode=replace → **必须 409 且正文完好**；加 allow_overwrite=true 才真替换
+sid=$(curl -s $B/books/$bid/tree | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).chapters[0].scenes[0].id))")
+curl -s -X PUT $B/scenes/$sid/prose -H 'Content-Type: application/json' -d '{"text":"一句话旧稿。"}'
+curl -s -o /dev/null -w "replace 未确认 http=%{http_code}\n" -X POST $B/books/$bid/plan/commit \
+  -H 'Content-Type: application/json' -d '{"plan":{"chapters":[{"title":"重排章","scenes":[]}]},"mode":"replace"}'
+curl -s $B/scenes/$sid/prose   # 期望仍能读到「一句话旧稿。」
+
+# ⑥ 清理
+curl -s -o /dev/null -w "delete http=%{http_code}\n" -X DELETE $B/books/$bid
+```
+
+**一键回归**：`cd backend && ../.venv/Scripts/python.exe -m pytest tests/test_plan_batches.py -q`（8 例：分批 prompt/截断/非分批兼容 + 追加保稿 / 未确认 409 / 已确认真替换 / 空书首批写世界观 / 空骨架 400）
+
 ---
 
 ## 4. 存量验收（S1–S4 / A2 / A3，仍在跑）
@@ -181,7 +221,7 @@ $py = "E:\novel_desk-agent\.venv\Scripts\python.exe"
 | **素材库（RAG）** | 侧栏灰态占位「RAG 后」；属 A1 上下文 + 跨书素材，等触发 |
 | **成书 / 导出** | ✅ 已补齐（v1.31）：`export_book_md` 场景间 `* * *` 分隔 + 全书字数统计；概览页头部「导出成书」入口（有定稿章才显示）；阅读台原入口保留 |
 | **世界状态浏览视图** | ✅ 已交付（v1.28 浏览 / v1.29 作者编辑）：`GET/POST/PUT/DELETE /world-states` + 设定页真列表（kind 过滤 / 前值 / 作者手改徽标 / 行内编辑与新增） |
-| **A4 分批交付** | 主笔仍一次性 commit 骨架（分批复核未做） |
+| **A4 分批交付** | ✅ 已交付（v1.33）：每批 N 章 → 预览复核 → **增量落库**（默认 `mode=append`，旧章与正文不动）→ 确认后「✦ 继续下一批」；首批给全世界观（B35），骨架全量替换需显式确认且已有正文时被 409 拦住（B33） |
 | **候选池 T1–T8** | 仍待考虑（场景快照 / 文学减法 / 主笔回溯 / 叙事选择 / 角色非理性授权 / 角色卡扩展 / 事实硬闸门 / 四类约束表） |
 | **README** | 未写（作者明确"项目还没完全做好"） |
 
