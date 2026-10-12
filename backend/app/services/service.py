@@ -1487,8 +1487,14 @@ class SimulationService:
         if str(scene.get("final_prose") or "") == text:
             return {"scene_id": scene_id, "unchanged": True, "word_count": prose_chars(text)}
         await self.update_scene(scene_id, {"final_prose": text})
-        # 后台记账：不阻塞保存返回；异常被 _bookkeep_after_save 捕获，不影响正文落库
-        asyncio.create_task(self._bookkeep_after_save(scene_id, text))
+        # 后台记账（v1.41 挪进 arq 队列）：不阻塞保存返回；失败入重试，不再"后端重启就丢"
+        try:
+            from app.services.tasks_worker import enqueue as job_enqueue
+
+            await job_enqueue("bookkeeping", {"scene_id": scene_id, "text": text})
+        except Exception as e:  # noqa: BLE001  队列不可用时退回进程内任务（T9：不静默）
+            logger.warning("[bookkeeping] arq 入队失败，退回 asyncio 任务：%s", e)
+            asyncio.create_task(self._bookkeep_after_save(scene_id, text))
         return {"scene_id": scene_id, "unchanged": False, "word_count": prose_chars(text)}
 
     async def _bookkeep_after_save(self, scene_id: str, text: str) -> None:

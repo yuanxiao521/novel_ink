@@ -28,6 +28,8 @@ import {
   setInspirationAdopted,
   updateInspiration,
   listChatHistory,
+  enqueueBookJob,
+  pollJob,
   listMemories,
   createMemory,
   updateMemory,
@@ -415,20 +417,21 @@ export function MaestroPage() {
     const useAPI = !!(tree && bookId);
     if (useAPI) {
       try {
-        const adoptedIds = inspirations.filter((c) => c.adopted).map((c) => c.id);
+        // v1.41：排骨架走任务队列（刷新/断网/重启不断链），轮询进度更新 activity
+        //（已采纳灵感卡由后端 plan_book 自行取用）
         setChiefActivity(`正在排第 ${existing + 1} 章起的本批骨架（承接已落库 ${existing} 章）…`);
-        const res = await fetch(`${API_BASE}/api/v1/books/${bookId}/plan`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            direction: dir,
-            inspiration_ids: adoptedIds,
-            batch_size: batchSize,
-            batch_from: existing + 1,
-          }),
+        const { job_id } = await enqueueBookJob(bookId, 'plan_batch', {
+          direction: dir,
+          batch_size: batchSize,
+          batch_from: existing + 1,
         });
-        if (res.ok) {
-          const data = (await res.json()) as {
+        const jobSt = await pollJob(job_id, (s) => {
+          const lastStage = (s.stages ?? []).slice(-1)[0];
+          if (lastStage) setChiefActivity(lastStage.text);
+        });
+        if (jobSt.status === 'failed') throw new Error(jobSt.error || '任务失败');
+        if (true) {
+          const data = jobSt.result as unknown as {
             plan: PlanPreview; batch?: PlanBatchMeta; existing_chapters?: number;
           };
           const meta = data.batch ?? data.plan.batch ?? null;
@@ -454,7 +457,7 @@ export function MaestroPage() {
           }, 600);
           return;
         }
-        briefFlash(`主笔排骨架失败（HTTP ${res.status}）`);
+        briefFlash('主笔排骨架失败（任务未完成或已失败）');
       } catch (e) {
         briefFlash(`主笔排骨架失败：${String(e)}`);
       }

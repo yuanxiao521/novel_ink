@@ -75,7 +75,8 @@ async def enqueue(job_kind: str, payload: dict) -> dict:
     # 2) 真正入 arq 队列（worker 领取执行）——函数名映射到 worker functions
     fn_map = {"plan_batch": "run_plan_batch",
               "review_meeting": "run_review_meeting",
-              "quality_loop": "run_quality_loop"}
+              "quality_loop": "run_quality_loop",
+              "bookkeeping": "run_bookkeeping"}
     arq_fn = fn_map.get(job_kind)
     if not arq_fn:
         raise ValueError(f"未知任务类型: {job_kind}")
@@ -151,9 +152,24 @@ async def run_quality_loop(ctx: dict, *, job_id: str = "", scene_id: str, text: 
     return out
 
 
+
+async def run_bookkeeping(ctx: dict, *, job_id: str = "", scene_id: str, text: str) -> dict:
+    """后台：保存正文后的自动记账（原 _bookkeep_after_save 挪进队列，获得重试保障）。"""
+    if not job_id:
+        job_id = 'job-unknown'
+    from app.db.repo import Repo
+    from app.services.service import SimulationService
+
+    svc = SimulationService(Repo())
+    await _stage(job_id, '记账：分析正文对伏笔/信念/世界状态的影响…')
+    await svc._bookkeep_after_save(scene_id, text)
+    await _stage(job_id, '记账完成')
+    await _set(job_id, status='done', result={'scene_id': scene_id})
+    return {'scene_id': scene_id}
+
 class WorkerSettings:
     """arq worker 配置：arq app.services.tasks_worker.WorkerSettings"""
-    functions = [run_plan_batch, run_review_meeting, run_quality_loop]
+    functions = [run_plan_batch, run_review_meeting, run_quality_loop, run_bookkeeping]
     redis_settings = None   # 在类体下方赋值（arq RedisSettings）
     max_jobs = 4
     job_timeout = 600      # LLM 长任务放宽

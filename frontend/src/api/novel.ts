@@ -1163,6 +1163,51 @@ export async function editorChatStream(
   }
 }
 
+
+/* ---------- 后台任务队列（v1.41）：长 LLM 操作与连接解耦 ---------- */
+
+export interface JobState {
+  job_id: string;
+  kind: string;
+  status: 'queued' | 'running' | 'done' | 'failed';
+  stages: Array<{ text: string; detail?: string; ts: number }>;
+  result?: Record<string, unknown>;
+  error?: string;
+  created_at?: number;
+}
+
+/** 入队长 LLM 任务：<100ms 返回 job_id（book 级）。 */
+export async function enqueueBookJob(
+  bookId: string,
+  kind: 'plan_batch' | 'review_meeting' | 'quality_loop',
+  body: { direction?: string; batch_size?: number; batch_from?: number; text?: string } = {},
+): Promise<{ job_id: string; kind: string; status: string }> {
+  return send('POST', `/api/v1/books/${bookId}/jobs/${kind}`, body);
+}
+
+/** 轮询任务进度/结果。 */
+export async function fetchJobStatus(jobId: string): Promise<JobState> {
+  return getJson<JobState>(`${API_BASE}/api/v1/jobs/${jobId}`);
+}
+
+/** 轮询直到任务完成/失败（间隔 intervalMs，上限 maxMs）。 */
+export async function pollJob(
+  jobId: string,
+  onTick?: (st: JobState) => void,
+  opts: { intervalMs?: number; maxMs?: number } = {},
+): Promise<JobState> {
+  const interval = opts.intervalMs ?? 2500;
+  const max = opts.maxMs ?? 300000;
+  const start = Date.now();
+  for (;;) {
+    const st = await fetchJobStatus(jobId);
+    onTick?.(st);
+    if (st.status === 'done' || st.status === 'failed') return st;
+    if (Date.now() - start > max) throw new Error('任务超时（' + Math.round(max / 1000) + 's 未完成）');
+    await new Promise((r) => setTimeout(r, interval));
+  }
+}
+
 export async function listAnnotations(sceneId: string, status = ''): Promise<ProseAnnotation[]> {
   const q = status ? `?status=${status}` : '';
   return getJson<ProseAnnotation[]>(`${API_BASE}/api/v1/scenes/${sceneId}/annotations${q}`);

@@ -10,8 +10,8 @@ import { TasksPanel } from '../components/studio/TasksPanel';
 import { ProseBody, splitParagraphs } from '../components/studio/ProseBody';
 import { useWorkspace } from '../context/WorkspaceContext';
 import {
-  callAgentTool, createAnnotation, deleteAnnotation, fetchSceneDetail, listAgentTasks,
-  listAgentTools, listAnnotations, listProseNotes, sceneScriptUrl,
+  callAgentTool, createAnnotation, deleteAnnotation, enqueueBookJob, fetchSceneDetail, listAgentTasks,
+  listAgentTools, listAnnotations, listProseNotes, pollJob, sceneScriptUrl,
 } from '../api/novel';
 import type { AgentTask, ProseAnnotation, ProseNote, SceneDetail } from '../api/novel';
 
@@ -38,7 +38,7 @@ const TOOL_LABEL: Record<string, string> = {
 
 export function StudioPage() {
   const { sceneId: routeSceneId } = useParams<{ sceneId: string }>();
-  const { sceneId: ctxSceneId } = useWorkspace();
+  const { sceneId: ctxSceneId, bookId } = useWorkspace();
   const sceneId = routeSceneId || ctxSceneId;
   const nav = useNavigate();
   const { showConfirm } = useDialog();
@@ -110,6 +110,28 @@ export function StudioPage() {
     },
     [sceneId, busy, load, showConfirm],
   );
+
+  /* ---------- 审稿会（v1.41 任务队列版）：后台跑，进度进按钮文案，结果进右栏 ---------- */
+  const runMeetingAsync = async () => {
+    if (!sceneId || busy) return;
+    setBusy('prose.review_meeting');
+    try {
+      const { job_id } = await enqueueBookJob(bookId ?? '', 'review_meeting', { text });
+      const st = await pollJob(job_id, (s) => {
+        const lastStage = (s.stages ?? []).slice(-1)[0];
+        if (lastStage) setBusy(`prose.review_meeting · ${lastStage.text}`);
+      });
+      if (st.status === 'failed') throw new Error(st.error || '审稿会失败');
+      const result = (st.result ?? {}) as Record<string, unknown>;
+      setLast({ tool: 'prose.review_meeting', data: result });
+      setBusy('');
+      load();
+      flash('审稿会完成（右栏可见步骤与裁决）');
+    } catch (e) {
+      setBusy('');
+      flash(`审稿会失败：${String(e instanceof Error ? e.message : e)}`);
+    }
+  };
 
   /* ---------- 批注 ---------- */
   const onAnnotate = async (paraIndex: number, quote: string, note: string) => {
@@ -254,7 +276,7 @@ export function StudioPage() {
           className="ws-btn s2-meeting"
           disabled={!!busy || !text.trim()}
           title="体检 → 润色（有问题才做）→ 质检 → 评审，一次跑完并给出裁决"
-          onClick={() => void runTool('prose.review_meeting', { text }, { label: '审稿会' })}
+          onClick={() => void runMeetingAsync()}
         >
           {busy === 'prose.review_meeting' ? '审稿中…' : '🗂 审稿会'}
         </button>
