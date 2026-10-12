@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { listBooks, fetchBookTree, type BookMeta, type BookTree } from '../api/novel';
+import { EmptyState } from '../components/common/EmptyState';
 
 export function HomePage() {
   const navigate = useNavigate();
@@ -69,9 +70,14 @@ export function HomePage() {
           </div>
 
           {loading ? (
-            <div className="home-hint">加载书架中…</div>
+            <EmptyState compact icon="▦" title="加载书架中…" />
           ) : books.length === 0 ? (
-            <div className="home-hint">书架为空（后端未 seed？运行 uv run python -m app.db.seed）</div>
+            <EmptyState
+              icon="▦"
+              title="书架还是空的"
+              desc="建第一本书：书名 + 一句话方向，主笔就能开始排骨架。"
+              primary={{ label: '＋ 新建一本书', onClick: () => navigate('/dashboard') }}
+            />
           ) : (
             <div className="book-grid">
               {books.map((book) => (

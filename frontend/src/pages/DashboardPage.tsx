@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Sidebar } from '../components/backoffice/Sidebar';
 import { ThemeToggle } from '../components/backoffice/ThemeToggle';
 import { useDialog } from '../components/common/Dialog';
@@ -8,6 +8,7 @@ import type { DashboardData, GlobalView } from '../api/novel';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { TensionPanel } from '../components/dashboard/TensionPanel';
 import { GlobalSearch } from '../components/common/GlobalSearch';
+import { EmptyState } from '../components/common/EmptyState';
 
 const TODO_ICON: Record<string, { icon: string; char: string }> = {
   ok: { icon: 'success', char: '✓' },
@@ -17,6 +18,7 @@ const TODO_ICON: Record<string, { icon: string; char: string }> = {
 };
 
 export function DashboardPage() {
+  const nav = useNavigate();
   const { showPrompt } = useDialog();
   // 书 = 全局上下文（URL ?book= 由上下文统一解析；本页不再自持一份）
   const { books, bookId, setBook, refreshBooks } = useWorkspace();
@@ -108,9 +110,12 @@ export function DashboardPage() {
         <div className="content-area">
           <main className="main-content">
             {!data ? (
-              <div className="char-empty detail">
-                {err || '暂无概览数据。先去「主笔共创」规划书骨，或进「导演台」推演定稿。'}
-              </div>
+              <EmptyState
+                icon="◔"
+                title="还没有可复盘的内容"
+                desc={err || '先去「主笔共创」按方向排一版骨架，或在「导演台」推演定稿——张力曲线、伏笔网络与体检都在这里汇总。'}
+                primary={{ label: '✦ 去主笔共创', onClick: () => nav('/maestro') }}
+              />
             ) : (
               <>
                 <section className="kpi-section">
@@ -168,7 +173,13 @@ export function DashboardPage() {
                     </div>
                   </div>
                   {data.timeline.length === 0 ? (
-                    <div className="char-empty">尚无章节，先去「主笔共创」生成骨架</div>
+                    <EmptyState
+                      compact
+                      icon="▣"
+                      title="尚无章节"
+                      desc="去「主笔共创」按一句话方向排一版骨架，时间线会按章显示定稿进度。"
+                      primary={{ label: '✦ 让主笔排骨架', onClick: () => nav('/maestro') }}
+                    />
                   ) : (
                     <div className="timeline-vertical">
                       {data.timeline.map((c) => (
@@ -197,7 +208,7 @@ export function DashboardPage() {
                     </h2>
                   </div>
                   {data.todos.length === 0 ? (
-                    <div className="char-empty">暂无待办，一切正常</div>
+                    <EmptyState compact icon="✓" title="暂无待办" desc="伏笔、信念与结构都没发现要处理的事。" />
                   ) : (
                     <div className="todo-list">
                       {data.todos.map((t, i) => {
@@ -227,7 +238,7 @@ export function DashboardPage() {
                 <span>❝</span> 金句池
               </div>
               {!data || data.quotes.length === 0 ? (
-                <div className="char-empty">暂无金句（定稿正文后自动抽取）</div>
+                <EmptyState compact icon="❝" title="暂无金句" desc="定稿正文后自动抽取。" />
               ) : (
                 <div className="quote-list">
                   {data.quotes.map((q, i) => (
@@ -245,7 +256,7 @@ export function DashboardPage() {
                 <span>✦</span> 近 4 周写作热力
               </div>
               {!data || data.heat.every((o) => o === 0) ? (
-                <div className="char-empty">暂无成文记录<br />定稿新场景后按日更新</div>
+                <EmptyState compact icon="▦" title="暂无成文记录" desc="定稿新场景后按日更新。" />
               ) : (
                 <>
                   <div className="heat-grid">

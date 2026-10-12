@@ -3,6 +3,7 @@ import type { SimUIState } from '../../hooks/useDirectorSim';
 import { CHANNEL_CLS, CHANNEL_TAG, type Belief } from '../../types/types';
 import { CastPanel } from './CastPanel';
 import { setSimCast } from '../../api/novel';
+import { EmptyState } from '../common/EmptyState';
 import { charOf, type CharSpec } from './characters';
 
 function BeliefItem({ b }: { b: Belief }) {
@@ -105,13 +106,16 @@ export function CharRail({ state, cast }: { state: SimUIState; cast?: { simId: s
     if (state.viewing) return null;
     if (!hasCast) {
       return (
-        <div className="char-empty" style={{ padding: 20, textAlign: 'center' }}>
-          暂无上场角色
-          <br />
-          <button className="view-switch" style={{ marginTop: 10 }} onClick={() => setDrawerOpen(true)} disabled={!cast?.simId}>
+        <EmptyState
+          compact
+          icon="☺"
+          title="暂无上场角色"
+          desc="从该书角色库选择本场上场的角色。"
+        >
+          <button className="ws-btn ws-btn-primary" onClick={() => setDrawerOpen(true)} disabled={!cast?.simId}>
             配置上场角色
           </button>
-        </div>
+        </EmptyState>
       );
     }
     // 有上场角色：用 charOf 查每个 ID（静态库 + 新书角色均支持）
@@ -187,7 +191,7 @@ export function CharRail({ state, cast }: { state: SimUIState; cast?: { simId: s
             <div className="global-block">
               <div className="global-label">世界事实</div>
               {state.worldFacts.length === 0 && state.envRows.length === 0 ? (
-                <div className="char-empty">暂无世界事实</div>
+                <EmptyState compact icon="☁" title="暂无世界事实" desc="推演与作者注入都会进这块黑板。" />
               ) : (
                 <div className="global-list">
                   {state.worldFacts.map((f) => (
@@ -202,7 +206,7 @@ export function CharRail({ state, cast }: { state: SimUIState; cast?: { simId: s
             <div className="global-block">
               <div className="global-label">角色信念摘要</div>
               {Object.keys(state.beliefs).length === 0 ? (
-                <div className="char-empty">暂无信念沉淀</div>
+                <EmptyState compact icon="❦" title="暂无信念沉淀" desc="角色在推演里「改变想法」时会写进这里。" />
               ) : (
                 Object.entries(state.beliefs).map(([cid, bl]) => (
                   <div className="global-char" key={cid}>
@@ -219,7 +223,7 @@ export function CharRail({ state, cast }: { state: SimUIState; cast?: { simId: s
             <div className="global-block">
               <div className="global-label">导演提示</div>
               {state.hints.length === 0 ? (
-                <div className="char-empty">暂无导演提示</div>
+                <EmptyState compact icon="✎" title="暂无导演提示" />
               ) : (
                 <div className="global-list">
                   {state.hints.map((h, i) => (

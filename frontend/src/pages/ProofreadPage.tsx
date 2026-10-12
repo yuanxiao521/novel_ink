@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Sidebar } from '../components/backoffice/Sidebar';
 import { GlobalSearch } from '../components/common/GlobalSearch';
 import { exportBookUrl, fetchCollation } from '../api/novel';
 import type { Collation } from '../api/novel';
+import { EmptyState } from '../components/common/EmptyState';
 import { useWorkspace } from '../context/WorkspaceContext';
 
 /**
@@ -23,6 +24,7 @@ function chapterLabel(ch: { order_no: number; title: string }): string {
 }
 
 export function ProofreadPage() {
+  const nav = useNavigate();
   const { bookId, tree, setChapter, setScene } = useWorkspace();
   const [data, setData] = useState<Collation | null>(null);
   const [err, setErr] = useState('');
@@ -65,7 +67,13 @@ export function ProofreadPage() {
         <div className="content-area">
           <main className="main-content">
             {err && <div className="ws-msg err" role="alert"><span>{err}</span></div>}
-            {!data && !err && <div className="char-empty detail">{loading ? '正在汇总各章…' : '选一本书开始校对'}</div>}
+            {!data && !err && (
+              <EmptyState
+                icon="▤"
+                title={loading ? '正在汇总各章…' : '选一本书开始校对'}
+                desc="这里按章列出场景、字数与定稿状态，每场都能一键跳去改写。"
+              />
+            )}
 
             {data && (
               <>
@@ -118,7 +126,13 @@ export function ProofreadPage() {
                     </div>
                     {ch.summary && <p className="pf-chapter-summary">{ch.summary}</p>}
                     {ch.scenes.length === 0 ? (
-                      <div className="char-empty">这章还没有场景 · 去「主笔创作」加场景</div>
+                      <EmptyState
+                        compact
+                        icon="▫"
+                        title="这章还没有场景"
+                        desc="章节要有场景才能落正文。"
+                        primary={{ label: '✦ 去主笔创作加场景', onClick: () => nav('/maestro') }}
+                      />
                     ) : (
                       <div className="pf-scenes">
                         {ch.scenes.map((s) => (
@@ -145,7 +159,12 @@ export function ProofreadPage() {
                 ))}
 
                 {(data.chapters ?? []).length === 0 && (
-                  <div className="char-empty detail">这本书还没有章节 · 先去「主笔创作」排一批骨架</div>
+                  <EmptyState
+                    icon="▣"
+                    title="这本书还没有章节"
+                    desc="先让主笔按一句话方向排一批骨架（A4 分批交付，每批复核后落库）。"
+                    primary={{ label: '✦ 去主笔创作', onClick: () => nav('/maestro') }}
+                  />
                 )}
               </>
             )}

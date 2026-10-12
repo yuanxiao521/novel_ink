@@ -616,3 +616,85 @@
   margin-left: auto; background: none; border: none; cursor: pointer;
   color: inherit; font-size: 12px; line-height: 1;
 }
+
+/* ==========================================================================
+   P3-4 卡片统一（v1.36）
+   统一配方：左 3px 语义条 + 1px 边 + --shadow-sm 静置 + hover 抬 1px。
+   本文件在 main.tsx 里**最后**导入 → 同优先级选择器天然胜出，不需要 !important。
+   语义条用 .mk-card-{ok|warn|err|info} 覆盖（默认中性灰）。
+   刻意**不**覆盖：.section-block（页面分段容器）、.panel（主笔页三栏布局）、
+   .char-list-item（列表行，不是卡片）。
+   ========================================================================== */
+.kpi-card,
+.rail-card,
+.tl-card,
+.pf-scene,
+.char-card,
+.maestro-workbench .inspiration-card {
+  border: 1px solid var(--card-border);
+  border-left: 3px solid var(--card-accent);
+  border-radius: var(--card-radius);
+  box-shadow: var(--card-shadow);
+  transition: transform 0.14s ease, box-shadow 0.14s ease, border-color 0.14s ease;
+}
+
+.kpi-card:hover,
+.rail-card:hover,
+.tl-card:hover,
+.pf-scene:hover,
+.char-card:hover,
+.maestro-workbench .inspiration-card:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
+/* 语义条（挂在卡片元素上即可） */
+.mk-card-ok { --card-accent: var(--accent-ok); }
+.mk-card-warn { --card-accent: var(--accent-warn); }
+.mk-card-err { --card-accent: var(--accent-err); }
+.mk-card-info { --card-accent: var(--accent-blue); }
+.mk-card-run { --card-accent: var(--accent-run); }
+.mk-card-neutral { --card-accent: color-mix(in srgb, var(--text-muted) 42%, transparent); }
+
+/* 时间线卡：状态即语义（已定稿=绿 / 导演中=青 / 规划中=中性） */
+.tl-node.done .tl-card { --card-accent: var(--accent-ok); }
+.tl-node.current .tl-card { --card-accent: var(--accent-run); }
+.tl-node.planned .tl-card { --card-accent: color-mix(in srgb, var(--text-muted) 42%, transparent); }
+
+/* 校对场景卡：未定稿用暖色条，一眼看出"这场还没写" */
+.pf-scene:has(.pf-scene-state.todo) { --card-accent: var(--accent-warn); }
+
+/* 卡片内的空态别再撑出一整块边距 */
+.ws-empty.compact { padding: 12px 10px; }
+.ws-empty.compact .ws-empty-ico { font-size: 16px; }
+.ws-empty.compact .ws-empty-title { font-size: 12.5px; }
+
+/* ==========================================================================
+   P3-4 侧栏视觉：统一行高/内边距 + 激活态左语义条 + 状态点语义
+   ========================================================================== */
+.sidebar .nav-item {
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: var(--radius-md);
+  transition: background 0.14s ease, color 0.14s ease;
+}
+
+.sidebar .nav-item.active {
+  background: var(--accent-primary-light);
+  color: var(--text-highlight);
+}
+
+.sidebar .nav-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent-primary);
+}
+
+.sidebar .nav-dot { width: 8px; height: 8px; }
+.sidebar .nav-dot.idle { opacity: 0.45; }
+.sidebar .book-item { border-radius: var(--radius-md); transition: background 0.14s ease; }

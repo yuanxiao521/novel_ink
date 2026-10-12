@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { listBookCharacters } from '../../api/novel';
 import type { CharacterCardMeta } from '../../api/novel';
+import { EmptyState } from '../common/EmptyState';
 
 /**
  * 选角面板：从该书角色库多选"上场角色"。
@@ -48,7 +50,7 @@ export function CastPanel({
   return (
     <div className="cast-panel">
       {err ? (
-        <div className="char-empty">{err}</div>
+        <EmptyState compact icon="⚠" title="角色库加载失败" desc={err} />
       ) : (
         <>
           <div className="cast-toolbar">
@@ -61,7 +63,14 @@ export function CastPanel({
           </div>
           <div className="cast-list">
             {chars.length === 0 ? (
-              <div className="char-empty">该书暂无角色<br />先去「人物」页建卡</div>
+              <EmptyState
+                compact
+                icon="☺"
+                title="该书暂无角色"
+                desc="先去「人物」页建卡，或让主笔一键补齐。"
+              >
+                <Link className="ws-btn" to={`/characters?book=${bookId}`}>去人物页 →</Link>
+              </EmptyState>
             ) : (
               chars.map((c) => (
                 <label className={`cast-item ${sel.includes(c.id) ? 'sel' : ''}`} key={c.id}>

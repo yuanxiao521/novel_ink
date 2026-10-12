@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Sidebar } from '../components/backoffice/Sidebar';
 import { ThemeToggle } from '../components/backoffice/ThemeToggle';
 import { useDialog } from '../components/common/Dialog';
+import { EmptyState } from '../components/common/EmptyState';
 import chenImg from '../assets/portrait-chenmo.png';
 import liwImg from '../assets/portrait-liwen.png';
 import zhouImg from '../assets/portrait-zhoushen.png';
@@ -343,9 +344,16 @@ export function CharactersPage() {
               </button>
             </div>
             {chars.length === 0 ? (
-              <div className="char-empty">该书暂无角色<br />点「+」新建，或点「✨ 主笔生成」一次补齐</div>
+              <EmptyState
+                compact
+                icon="☺"
+                title="该书暂无角色"
+                desc="角色卡是演绎与口吻校验的依据；可以让主笔按书名/方向一次补齐，也可手动新建。"
+                primary={{ label: busy ? '生成中…' : '✨ 主笔生成', onClick: () => void genChars() }}
+                secondary={{ label: '＋ 新建', onClick: () => void addChar() }}
+              />
             ) : visibleChars.length === 0 ? (
-              <div className="char-empty">没有匹配「{query}」的角色<br />换个词，或清空搜索框</div>
+              <EmptyState compact icon="⌕" title={`没有匹配「${query}」的角色`} desc="换个词，或清空搜索框。" />
             ) : (
               <div className="char-list">
                 {visibleChars.map((c) => {
@@ -585,7 +593,7 @@ export function CharactersPage() {
 
                       <div className="belief-list">
                         {beliefs.length === 0 ? (
-                          <div className="char-empty">该角色暂无信念<br />推演中会实时沉淀，也可点「新增信念」手写</div>
+                          <EmptyState compact icon="❦" title="该角色暂无信念" desc="推演中会实时沉淀；也可点「新增信念」手写。" />
                         ) : (
                           beliefs.map((b) => {
                             const meta = CHANNEL_META[b.channel] ?? CHANNEL_META.perceived;
@@ -774,7 +782,11 @@ export function CharactersPage() {
                 </div>
               </>
             ) : (
-              <div className="char-empty detail">选择书以加载角色库；没有角色时点「+」新建。</div>
+              <EmptyState
+                icon="☺"
+                title="先选一本书"
+                desc="角色库是书级的：选好书后这里的角色卡全场共享，改一次到处生效。"
+              />
             )}
           </main>
         </div>

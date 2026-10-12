@@ -1265,6 +1265,7 @@ a.btn-primary {
 }
 
 /* ---- 书架：书 → 章 → 场景 选择面板 ---- */
+/* 已废弃（P3-4）：home-hint 已被 <EmptyState /> 取代；保留只为兼容历史快照，别再新增使用 */
 .home-hint {
   padding: 28px 0;
   color: var(--text-muted);

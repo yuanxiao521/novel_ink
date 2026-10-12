@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { createBook, createMemory, listBooks } from '../../api/novel';
 import type { BookMeta, MemoryTopic } from '../../api/novel';
 import { useDialog } from '../common/Dialog';
+import { EmptyState } from '../common/EmptyState';
 import { useWorkspace, type StepKey } from '../../context/WorkspaceContext';
 
 /* ==========================================================================
@@ -84,11 +85,12 @@ export function Sidebar({ active }: { active: SidebarKey }) {
         <div className="sidebar-group-label">书架</div>
         <div className="book-list">
           {books.length === 0 && (
-            <div className="char-empty">
-              暂无书
-              <br />
-              点「新书」创建
-            </div>
+            <EmptyState
+              compact
+              icon="▦"
+              title="暂无书"
+              desc="点下方「新书」创建第一本。"
+            />
           )}
           {books.map((b) => {
             const cur = b.id === ws.bookId;

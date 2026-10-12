@@ -1,4 +1,5 @@
 import type { GlobalView } from '../../api/novel';
+import { EmptyState } from '../common/EmptyState';
 
 const SEV_CLASS: Record<string, string> = { high: 'danger', mid: 'warn', low: 'info' };
 
@@ -10,7 +11,7 @@ const SEV_CLASS: Record<string, string> = { high: 'danger', mid: 'warn', low: 'i
  * 无张力数据时不画假曲线，如实提示"去导演台跑一次推演"。
  */
 export function TensionPanel({ view }: { view: GlobalView | null }) {
-  if (!view) return <div className="char-empty">张力视图加载中…</div>;
+  if (!view) return <EmptyState compact icon="〽" title="张力视图加载中…" />;
   const { curve, summary, diagnostics, foreshadows, structure_score: score } = view;
 
   const W = 640;
@@ -43,10 +44,14 @@ export function TensionPanel({ view }: { view: GlobalView | null }) {
       </div>
 
       {summary.valid === 0 ? (
-        <div className="char-empty">
-          尚无推演张力数据 —— 进「导演台」跑一次推演即可生成曲线
+        <EmptyState
+          compact
+          icon="〽"
+          title="尚无推演张力数据"
+          desc="进「导演台」跑一次推演即可生成曲线。"
+        >
           {diagnostics.length > 0 && <div className="tension-hint">{diagnostics[0].detail}</div>}
-        </div>
+        </EmptyState>
       ) : (
         <>
           <div className="tension-summary">
