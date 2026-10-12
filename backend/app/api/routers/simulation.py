@@ -500,21 +500,36 @@ class PlanBody(models.BaseModel):
     direction: str = ""      # 一句话方向
     plan: dict = {}           # commit 时携带要落库的骨架
     inspiration_ids: list[str] = []   # 已采纳灵感卡 id（P1-1 灵感→骨架落地）
+    # A4 分批交付：batch_size>0 → 只排 batch_from 起的 batch_size 章（默认 = 已落库章数+1）
+    batch_size: int = 0
+    batch_from: int = 0
+    # B33：mode=append（默认）只追加不删旧章；mode=replace 全量替换，已有正文需 allow_overwrite
+    mode: str = "append"
+    allow_overwrite: bool = False
 
 
 @router.post("/books/{book_id}/plan")
 async def plan_book(book_id: str, body: PlanBody, svc: SimulationService = Depends(get_service)):
-    """主笔产出书籍骨架预览（不落库）。LLM 不可用 → 503。"""
+    """主笔产出书籍骨架预览（不落库）。LLM 不可用 → 503。
+
+    A4 分批交付：传 batch_size=N → 只排本批 N 章（承接已落库章节），返回 batch 元信息。
+    """
     try:
-        return await svc.plan_book(book_id, body.direction, body.inspiration_ids or None)
+        return await svc.plan_book(book_id, body.direction, body.inspiration_ids or None,
+                                  batch_size=body.batch_size, batch_from=body.batch_from)
     except ValueError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
 
 
 @router.post("/books/{book_id}/plan/commit")
 async def commit_book_plan(book_id: str, body: PlanBody, svc: SimulationService = Depends(get_service)):
-    """确认骨架 → 落库 chapters/scenes/worldview/rules/foreshadows。"""
-    return await svc.commit_book_plan(book_id, body.plan or {})
+    """确认骨架 → 落库 chapters/scenes/worldview/rules/foreshadows。
+
+    mode=append（默认）分批追加，不碰已有章节与正文；mode=replace 全量替换
+    （已有正文时须 allow_overwrite=true，否则 409）。
+    """
+    return await svc.commit_book_plan(book_id, body.plan or {},
+                                      mode=body.mode, allow_overwrite=body.allow_overwrite)
 
 
 @router.get("/books/{book_id}/foreshadows")

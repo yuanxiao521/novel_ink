@@ -27,6 +27,7 @@ PLAN_SCHEMA = {
         "background": "str",
     },
     "chapters": [{
+        "seq": "int 全局章号（分批交付时从本批起始章号开始；非分批可省略）",
         "title": "str",
         "tone": "str: action|suspense|warmth|serene",
         "tension_curve": "str: raise|hold|release 或简写",
@@ -131,6 +132,26 @@ _PLAN_PROMPT = """你是小说【主笔】（总编剧）。你的职责：把�
 已有信息：{context}
 请严格按给定 JSON schema 输出。"""
 
+# A4 分批交付：把「一次排全书」拆成「每批 N 章 → 汇报 → 确认 → 再下批」。
+# 痛点：生成粒度大、无分批+确认、缺过程掌控（docs/写作痛点清单与优先级.md）。
+# 首批/续批分开写：实测（v1.34 首轮真 LLM 自测）只写「worldview 已定」会让模型**首批也返回空世界观**，
+# 于是落库的 worldview_json = {}（世界观/规则全丢，约束层直接降级）→ 首批必须显式要求给全。
+_BATCH_HEAD = """
+
+—— 分批交付（本批只排第 {frm} 章 ~ 第 {to} 章）——
+- chapters 数组**只放本批 {asked} 章**，不要一次给出全书（后面的批次会另发指令）；
+- 每章带 `seq` 字段 = 全局章号，从 {frm} 开始依次 +1；
+- foreshadow_plan 只列**本批要埋**的伏笔（没有就给 []）；
+"""
+_BATCH_FIRST = """- 本批是**首批**：worldview（premise / rules_text / background）与 ending_options 必须给全，
+  后续批次不会再补（续批的世界观会返回空对象）；
+- 已落库章节：（无，本批是第一批）。
+"""
+_BATCH_NEXT = """- worldview 与 ending_options 已在首批确定：本批 worldview 返回空对象 {{}}、ending_options 返回空数组 []；
+- 已落库的前 {done} 章如下，必须承接其人物、线索与结尾状态，**不得重写或重复**：
+{locked_txt}
+"""
+
 _RULES_PROMPT = """你是世界观规则解析器。把作者/主笔写的规则文本转成结构化 WorldRule 数组。
 规则类型：
 - negation（否定）：如「筑基境修士不能动用空间挪移」→ keywords 含「筑基」「挪移」「空间跳跃」
@@ -145,13 +166,19 @@ constraint_keywords（约束表述词，如「不能」「只能」）。
 {rules_text}"""
 
 
-async def plan_skelly(direction: str, context: str = "", inspirations: list[dict] | None = None) -> dict:
+async def plan_skelly(direction: str, context: str = "", inspirations: list[dict] | None = None,
+                   *, batch_from: int = 0, batch_size: int = 0,
+                   locked: list[dict] | None = None) -> dict:
     """主笔产出书籍骨架（预览态）。LLM 不可用/产出非法 → 抛 ValueError（路由转 503）。
 
     阶段③：结构化输出经 `validate_and_retry` 校验——骨架缺章/缺标题/缺场景数组时
     带错误反馈重生成（≤ guard_retry_max 次），全部失败才抛错，**不落库**。
     上下文拼装：{context}（书 synopsis 等）+ {inspirations}（已采纳灵感卡 title/desc，
     P1-1 灵感→骨架落地，把"已在酝酿的设定"喂给主笔）。
+
+    A4 分批交付：batch_size > 0 时只排第 batch_from 章起的 batch_size 章，
+    `locked` 是已落库章节的 {order_no,title,summary}（作为"必须承接"喂给主笔）；
+    模型仍多排时**按批次契约截断**，并把实际取用情况写进 raw["batch"]（诚实反馈，不静默）。
     """
     if not llm_client.available:
         raise ValueError("主笔暂离场：模型未接入，无法规划")
@@ -162,7 +189,33 @@ async def plan_skelly(direction: str, context: str = "", inspirations: list[dict
         base += f"\n\n作者已在酝酿以下设定（规划时必须吸收/不矛盾）：\n{lines}"
     prompt = _PLAN_PROMPT.format(direction=direction or "（未提供，按经典玄幻开局生成）",
                                  context=base)
+    frm = 0
+    if batch_size and batch_size > 0:
+        frm = max(1, int(batch_from or 1))
+        locked = locked or []
+        locked_txt = "\n".join(
+            f"- 第{c.get('order_no') or i + 1}章《{c.get('title') or ''}》：{c.get('summary') or '（无摘要）'}"
+            for i, c in enumerate(locked)
+        )
+        prompt += _BATCH_HEAD.format(frm=frm, to=frm + batch_size - 1, asked=batch_size)
+        prompt += (_BATCH_NEXT.format(done=len(locked), locked_txt=locked_txt)
+                   if locked else _BATCH_FIRST)
+        logger.info("[主笔] 分批交付：本批第 %d~%d 章（已落库 %d 章）",
+                    frm, frm + batch_size - 1, len(locked))
+
     raw = await validate_and_retry(llm_client, prompt, PLAN_SCHEMA, _validate_plan)
+
+    if frm:
+        chapters = list(raw.get("chapters") or [])
+        meta = {"from": frm, "to": frm + len(chapters) - 1, "asked": batch_size,
+                "got": len(chapters), "trimmed": 0}
+        if len(chapters) > batch_size:
+            meta.update({"got": batch_size, "to": frm + batch_size - 1,
+                         "trimmed": len(chapters) - batch_size})
+            logger.warning("[主笔] 分批交付：模型多排 %d 章 → 按本批 %d 章截断（余下下一批再排）",
+                           meta["trimmed"], batch_size)
+            raw["chapters"] = chapters[:batch_size]
+        raw["batch"] = meta
     return raw
 
 

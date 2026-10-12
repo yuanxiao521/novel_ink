@@ -20,7 +20,7 @@ from langgraph.graph.state import CompiledStateGraph
 from app import scenarios
 from app.config import settings
 from app.db.repo import Repo
-from app.errors import InvalidActionError, SceneNotFoundError, SimNotFoundError
+from app.errors import ConflictError, InvalidActionError, SceneNotFoundError, SimNotFoundError
 from app.schemas import models
 from app.services.engine.director import PlanCfg
 from app.services.engine.style_checks import voice_prior as style_voice_prior
@@ -527,11 +527,15 @@ class SimulationService:
         await self.repo.delete_character(char_id)
 
     # ---------------------------------------------------------------- 主笔规划（S2）
-    async def plan_book(self, book_id: str, direction: str = "", inspiration_ids: list[str] | None = None) -> dict:
+    async def plan_book(self, book_id: str, direction: str = "", inspiration_ids: list[str] | None = None,
+                        *, batch_size: int = 0, batch_from: int = 0) -> dict:
         """主笔产出骨架预览（不落库）：POST /books/{id}/plan。
 
         inspiration_ids 非空时，把已采纳灵感卡作为"已在酝酿的设定"注入主笔（P1-1 灵感落地）。
         上下文统一走 chief_perceive（书树+记忆+灵感+伏笔），杜绝从零重排。
+
+        A4 分批交付：batch_size > 0 时只排 batch_from（默认＝已落库章数＋1）起的 batch_size 章，
+        已落库章节（title/summary）作为"必须承接"喂给主笔；返回 batch 元信息与已落库章数。
         """
         book = await self.repo.get_book(book_id)
         if book is None:
@@ -546,46 +550,91 @@ class SimulationService:
                             if c.get("id") in ids and c.get("adopted")]
 
         context = await self.chief_perceive(book_id)
+        existing = await self.list_chapters(book_id)
+        locked = [{"order_no": c.get("order_no") or i + 1,
+                   "title": c.get("title") or "", "summary": c.get("summary") or ""}
+                  for i, c in enumerate(existing)]
+        frm = int(batch_from or 0) or (len(existing) + 1)
         plan = await plan_skelly(direction, context or book.get("synopsis", ""),
-                                 inspirations=inspirations or None)
-        return {"book_id": book_id, "plan": plan}
+                                 inspirations=inspirations or None,
+                                 batch_from=frm, batch_size=max(0, int(batch_size or 0)),
+                                 locked=locked)
+        chs = plan.get("chapters") or []
+        batch = plan.get("batch") or {"from": 1, "to": len(chs), "asked": 0,
+                                      "got": len(chs), "trimmed": 0}
+        return {"book_id": book_id, "plan": plan,
+                "existing_chapters": len(existing), "batch": batch}
 
-    async def commit_book_plan(self, book_id: str, plan: dict) -> dict:
+    async def _book_prose_stats(self, book_id: str) -> dict:
+        """该书已落库正文的规模（B33 骨架替换前的防误删闸门用）。"""
+        written, chars = 0, 0
+        for ch in await self.repo.list_chapters_by_book(book_id):
+            for s in await self.repo.list_scenes_by_chapter(ch["id"]):
+                body = str(s.get("final_prose") or "").strip()
+                if body:
+                    written += 1
+                    chars += len(body)
+        return {"scenes": written, "chars": chars}
+
+    async def commit_book_plan(self, book_id: str, plan: dict, *, mode: str = "append",
+                               allow_overwrite: bool = False) -> dict:
         """确认骨架 → 落库：worldview/world_rules + chapters/scenes + foreshadows。
 
-        全量替换语义：先清理该书已有的章节/场景，再按 plan 重新创建，
-        避免多次提交 plan 时因标题差异导致重复章节/场景。
+        mode="append"（默认 · A4 分批交付）：只把本批章节接到书末，**已有章节/场景/正文一律不动**。
+        mode="replace"：原"全量替换"语义（先清空该书章节再重建）。替换会级联删除场景及其
+        正文（Chapter.scenes cascade=all,delete-orphan）——所以**书里已有正文时必须显式
+        allow_overwrite=True**，否则抛 ConflictError(409)：B33「点一下骨架重排就悄悄丢稿」。
         """
         book = await self.repo.get_book(book_id)
         if book is None:
             raise SceneNotFoundError(f"未找到书: {book_id}")
 
+        mode = "replace" if str(mode or "").lower() == "replace" else "append"
+        chapters = plan.get("chapters") or []
+        if not chapters:
+            raise InvalidActionError("骨架预览里没有章节，没什么可落库的（可先让主笔排一批）")
+
+        existing_chapters = await self.list_chapters(book_id)
+        stats = await self._book_prose_stats(book_id) if existing_chapters else {"scenes": 0, "chars": 0}
+        if mode == "replace" and stats["scenes"] and not allow_overwrite:
+            raise ConflictError(
+                f"本书已有 {stats['scenes']} 场正文（约 {stats['chars']} 字）：全量替换会连正文一起删掉。"
+                "要覆盖请显式传 allow_overwrite=true；只想续写就用默认的增量落库（mode=append）"
+            )
+
+        # 1) 世界观 + 规则解析（LLM 转结构化，检测阶段免费）。
+        #    追加批次（已有章节）不带 worldview → 不动既有设定，避免每批都把世界观重写一遍。
+        first_batch = (mode == "replace") or not existing_chapters
         worldview = plan.get("worldview") or {}
-        # 1) 世界观 + 规则解析（LLM 转结构化，检测阶段免费）
         from app.services.engine.chief_planner import parse_world_rules
 
-        rules_text = str(worldview.get("rules_text") or "")
-        world_rules = await parse_world_rules(rules_text) if rules_text.strip() else []
-        await self.repo.save_book({
-            "id": book_id,
-            "synopsis": worldview.get("premise") or book.get("synopsis") or "",
-            "worldview_json": json.dumps(worldview, ensure_ascii=False),
-            "world_rules_json": json.dumps(world_rules, ensure_ascii=False),
-        })
+        world_rules: list[dict] = []
+        if first_batch:
+            rules_text = str(worldview.get("rules_text") or "")
+            world_rules = await parse_world_rules(rules_text) if rules_text.strip() else []
+            await self.repo.save_book({
+                "id": book_id,
+                "synopsis": worldview.get("premise") or book.get("synopsis") or "",
+                "worldview_json": json.dumps(worldview, ensure_ascii=False),
+                "world_rules_json": json.dumps(world_rules, ensure_ascii=False),
+            })
 
-        # 2) 清理已有章节/场景（全量替换），再按 plan 创建
-        existing_chapters = await self.list_chapters(book_id)
-        for ch in existing_chapters:
-            await self.repo.delete_chapter(ch["id"])
+        # 2) 替换 → 清空既有章节；追加 → 保留，章号从既有章数往后接
+        replaced = 0
+        base_order = len(existing_chapters)
+        if mode == "replace":
+            for ch in existing_chapters:
+                await self.repo.delete_chapter(ch["id"])
+            replaced = len(existing_chapters)
+            base_order = 0
 
-        chapters = plan.get("chapters") or []
         scene_ids: list[str] = []
         for i, ch in enumerate(chapters):
-            ch_title = ch.get("title", f"第{i + 1}章")
+            ch_title = ch.get("title", f"第{base_order + i + 1}章")
             cid = (await self.create_chapter(book_id, {
                 "title": ch_title,
                 "summary": ch.get("summary", ""),
-                "order_no": i + 1,
+                "order_no": base_order + i + 1,
                 "tone": ch.get("tone", ""),
                 "tension_curve": ch.get("tension_curve", ""),
                 "word_target": int(ch.get("word_target") or 0),
@@ -626,10 +675,15 @@ class SimulationService:
 
         return {
             "book_id": book_id,
+            "mode": mode,
+            "first_batch": first_batch,
             "chapters": len(chapters),
             "scenes": len(scene_ids),
             "foreshadows": f_count,
             "rules": len(world_rules),
+            "replaced_chapters": replaced,
+            "total_chapters": (base_order + len(chapters)) if mode == "append" else len(chapters),
+            "kept_prose_scenes": stats["scenes"] if mode == "append" else 0,
         }
 
     # ---------------------------------------------------------------- 灵感池接口（P0-1）

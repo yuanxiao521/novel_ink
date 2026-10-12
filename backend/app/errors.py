@@ -67,6 +67,17 @@ class InvalidActionError(AppError):
     detail = "请求参数不合法"
 
 
+class ConflictError(AppError):
+    """与既有状态冲突、需要作者显式确认才能继续（映射 HTTP 409）。
+
+    首个用例：主笔骨架「全量替换」落库会级联删掉已有章节/场景/正文（B33），
+    已有稿子时必须由作者显式确认覆盖，否则拒绝执行。
+    """
+
+    status_code = 409
+    detail = "与既有内容冲突"
+
+
 class DirectorChatUnavailableError(AppError):
     """导演对话暂不可用：LLM 未配置 / 输出为空 / 对话中发生可恢复错误。"""
 

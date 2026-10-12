@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db.base import Base
+from app.errors import RepoError
 from app.db.engine import get_session_factory
 from app.db.models import AgentMessage, AgentTask, Belief, Book, BookMemory, ChatHistory, Chapter, Character, Foreshadow, InspirationCard, ProseAnnotation, ProseNote, Scene, Simulation, WorldState
 from app.schemas.models import CharacterCard, SimulationState
@@ -166,6 +167,47 @@ class Repo:
                     await session.commit()
         except Exception as e:  # noqa: BLE001
             logger.warning("[Repo] delete 失败：%s", e)
+
+    async def delete_sims_for(self, *, book_id: str = "", chapter_id: str = "",
+                              scene_id: str = "") -> int:
+        """清掉挂在"即将被删的书/章/场景"上的推演快照（B36）。
+
+        背景：`simulation.book_id/chapter_id/scene_id` 是 **NO ACTION** 外键，
+        而"四层级联"只配在 ORM relationship 上 —— 于是**只要某场景推演过**，
+        删它的书/章/场景就会被 `simulation_*_fkey` 挡下；旧代码又把 IntegrityError
+        吞成一条 WARNING（HTTP 照样 204）→ 删除假成功（实测：5 本冒烟书删不掉还留在书架）。
+        快照一旦离开它引用的书/章/场景就没有意义，所以这里按引用先清。
+        """
+        hits = 0
+        if not self.use_db:
+            for k, v in list(self._mem.items()):
+                if not isinstance(v, SimulationState):
+                    continue
+                if ((book_id and v.book_id == book_id)
+                        or (chapter_id and v.chapter_id == chapter_id)
+                        or (scene_id and v.scene_id == scene_id)):
+                    self._mem.pop(k, None)
+                    hits += 1
+            return hits
+        conds = []
+        if book_id:
+            conds.append(Simulation.book_id == book_id)
+        if chapter_id:
+            conds.append(Simulation.chapter_id == chapter_id)
+        if scene_id:
+            conds.append(Simulation.scene_id == scene_id)
+        if not conds:
+            return 0
+        try:
+            async with self._session_factory() as session:
+                rows = (await session.execute(select(Simulation).where(or_(*conds)))).scalars().all()
+                for row in rows:
+                    await session.delete(row)
+                await session.commit()
+                return len(rows)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[Repo] 清理推演快照失败（%s）：%s", conds, e)
+            return 0
 
     async def resume_latest(self, scene_id: str) -> Optional[str]:
         """该场景下「可继续推演」的最新 sim_id（恢复上次工作流）。
@@ -1111,20 +1153,72 @@ class Repo:
         return await self._query_or_mem(_q, None)
 
     # ------------------------------------------------------------------
-    # 删除（四层级联：ORM cascade 已配；sim 外键 nullable 不清）
+    # 删除（四层级联：ORM cascade 已配）
+    #
+    # B36 修正了两处旧假设：
+    #   ①"sim 外键 nullable 不清"——外键是 NO ACTION，不清就**删不掉**（IntegrityError），
+    #     所以删书/章/场景前先 delete_sims_for() 清掉挂在上面的快照；
+    #   ②"_delete_row 失败只记 WARNING 继续跑"——那会让 API 回 204 而数据还在（假成功），
+    #     现在改成抛 RepoError（HTTP 500 + 原因），把静默失败变成可见失败。
     # ------------------------------------------------------------------
+    def _cascade_book_mem(self, book_id: str) -> None:
+        """内存态补齐 Book 的级联：章 → 场景（含场景子表）→ 其余书级子表。
+
+        与 B34 同一类问题：ORM 侧 `Book.chapters/characters/beliefs/... cascade="all, delete-orphan"`
+        会整棵删掉，内存态只 `pop` 书本身 → 两态语义漂移。
+        """
+        chapter_ids = [str(v.get("id")) for v in list(self._mem.values())
+                       if isinstance(v, dict) and v.get("book_id") == book_id and "order_no" in v]
+        for cid in chapter_ids:
+            for s in list(self._mem.values()):
+                if isinstance(s, dict) and s.get("chapter_id") == cid and "title" in s:
+                    sid = str(s.get("id") or "")
+                    self._mem.pop(sid, None)
+                    self._cascade_scene_mem(sid)
+            self._mem.pop(cid, None)
+        for k, v in list(self._mem.items()):
+            if isinstance(v, dict) and v.get("book_id") == book_id:
+                self._mem.pop(k, None)
+
     async def delete_book(self, book_id: str) -> None:
+        await self.delete_sims_for(book_id=book_id)
+        if not self.use_db:
+            self._cascade_book_mem(book_id)
         await self._delete_row(Book, book_id)
+
+    # 内存态级联：ORM 里 Scene 挂着 cascade="all, delete-orphan" 的三张子表
+    # （characters / prose_notes / prose_annotations）。DB 支路由 SQLAlchemy 级联；
+    # 内存态必须显式清，否则 use_db=False 时删场景/删章会留下"孤儿正文与批注"——
+    # 实测：骨架替换（commit mode=replace）在 DB 态删得干净，内存态却还能读到旧稿，
+    # 于是同一条验收在两种存储下给出不同结论（B33 修复过程中暴露）。
+    _SCENE_CASCADE_MARKERS = ("spec_json", "para_index", "suggestion")
+
+    def _cascade_scene_mem(self, scene_id: str) -> None:
+        for k, v in list(self._mem.items()):
+            if not isinstance(v, dict) or v.get("scene_id") != scene_id:
+                continue
+            if any(m in v for m in self._SCENE_CASCADE_MARKERS):
+                self._mem.pop(k, None)
 
     async def delete_chapter(self, chapter_id: str) -> None:
         ch = await self.get_chapter(chapter_id)
         book_id = ch["book_id"] if ch else ""
+        await self.delete_sims_for(chapter_id=chapter_id)
+        if not self.use_db:
+            for s in await self.list_scenes_by_chapter(chapter_id):
+                sid = str(s.get("id") or "")
+                if sid:
+                    self._mem.pop(sid, None)
+                    self._cascade_scene_mem(sid)
         await self._delete_row(Chapter, chapter_id)
         if book_id:
             await self._sync_book_chapter_count(book_id)
 
     async def delete_scene(self, scene_id: str) -> None:
+        await self.delete_sims_for(scene_id=scene_id)
         await self._delete_row(Scene, scene_id)
+        if not self.use_db:
+            self._cascade_scene_mem(scene_id)
 
     async def delete_character(self, char_id: str) -> None:
         await self._delete_row(Character, char_id)
@@ -1140,7 +1234,10 @@ class Repo:
                     await session.delete(row)
                     await session.commit()
         except Exception as e:  # noqa: BLE001
-            logger.warning("[Repo] delete %s 失败：%s", pk, e)
+            # B36：这里原先只 warning 就 return → 外键挡住时"删除失败但 HTTP 204"。
+            # 领域约定：真删不掉必须让调用方看到（作者能看到 500 + 原因）。
+            logger.error("[Repo] delete %s(%s) 失败：%s", model.__name__, pk, e)
+            raise RepoError(f"删除失败：{model.__name__}({pk}) 仍被其他数据引用 —— {e}") from e
 
     # ------------------------------------------------------------------
     # inspirations（灵感卡 · Book 级主笔共创资产）

@@ -53,11 +53,21 @@ interface ChatMsg {
   miniOutline?: MiniChapter[] | null;
 }
 
+/** A4 分批交付：本批元信息（后端 plan API 返回，不落库） */
+interface PlanBatchMeta {
+  from: number;
+  to: number;
+  asked: number;
+  got: number;
+  trimmed: number;
+}
+
 interface PlanPreview {
   worldview?: { premise?: string; rules_text?: string; background?: string };
-  chapters?: Array<{ title?: string; tone?: string; scenes?: unknown[] }>;
+  chapters?: Array<{ seq?: number; title?: string; tone?: string; scenes?: unknown[] }>;
   foreshadow_plan?: unknown[];
   ending_options?: string[];
+  batch?: PlanBatchMeta;
 }
 
 /* 后端灵感卡 type → 前端 css class 映射（对齐 maestro.css .card-icon.xxx） */
@@ -121,6 +131,17 @@ export function MaestroPage() {
   // 主笔骨架（来自 plan API 的预览）
   const [planPreview, setPlanPreview] = useState<PlanPreview | null>(null);
   const [committing, setCommitting] = useState(false);
+  // A4 分批交付：本批元信息 + 每批章数（记忆在本地）+ 上一批落库后的续排提示
+  const [planBatch, setPlanBatch] = useState<{ meta: PlanBatchMeta; existing: number } | null>(null);
+  const [batchSize, setBatchSize] = useState<number>(() => {
+    try {
+      const v = Number(localStorage.getItem('mk.maestro.batch'));
+      return v > 0 ? v : 3;
+    } catch {
+      return 3;
+    }
+  });
+  const [batchHint, setBatchHint] = useState<{ from: number; to: number; total: number } | null>(null);
 
   const [drawerOpen, setDrawerOpen] = useState(true);
 
@@ -362,7 +383,8 @@ export function MaestroPage() {
   };
 
   // 让主笔构思：生成灵感卡 + 骨架预览（真实 API，失败降级）
-  const runIdeation = async () => {
+  // A4 分批交付：每批 batchSize 章 → 汇报 → 作者确认落库 → 再排下一批。
+  const runIdeation = async (opts?: { next?: boolean }) => {
     if (ideating) return;
     // 方向是骨架生成的输入（POST /plan 的 direction），没有就现场补
     const dir = await ensureDirection();
@@ -370,9 +392,12 @@ export function MaestroPage() {
     setIdeating(true);
     setAgentState('thinking');
     setPlanPreview(null);
+    setPlanBatch(null);
+    setBatchHint(null);
+    const existing = (tree?.chapters ?? []).length;
 
-    // 1) 生成灵感卡（后端 generate 接口，LLM/模板均可）
-    if (bookId) {
+    // 1) 生成灵感卡（仅在"从头构思"时做；续排下一批不必再洗一遍灵感池）
+    if (bookId && !opts?.next) {
       try {
         const { cards } = await generateInspirations(bookId, dir);
         if (cards.length > 0) setInspirations((prev) => [...cards, ...prev]);
@@ -389,19 +414,32 @@ export function MaestroPage() {
         const res = await fetch(`${API_BASE}/api/v1/books/${bookId}/plan`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ direction: dir, inspiration_ids: adoptedIds }),
+          body: JSON.stringify({
+            direction: dir,
+            inspiration_ids: adoptedIds,
+            batch_size: batchSize,
+            batch_from: existing + 1,
+          }),
         });
         if (res.ok) {
-          const data = (await res.json()) as { plan: PlanPreview };
+          const data = (await res.json()) as {
+            plan: PlanPreview; batch?: PlanBatchMeta; existing_chapters?: number;
+          };
+          const meta = data.batch ?? data.plan.batch ?? null;
           setPlanPreview(data.plan);
+          setPlanBatch(meta ? { meta, existing: data.existing_chapters ?? existing } : null);
           setAgentState('tool');
+          const from = meta?.from ?? existing + 1;
+          const to = meta?.to ?? existing + (data.plan.chapters?.length ?? 0);
           setMessages((prev) => [
             ...prev,
             {
               sender: 'agent',
-              text: '我用工具产出了新的骨架预览：世界观、章节与伏笔计划已经就绪，确认后即可落库。',
-              toolCall: '🔧 已生成书籍骨架',
-              miniOutline: (data.plan.chapters ?? []).map((c, i) => ({ num: `第${i + 1}章`, title: c.title ?? '' })),
+              text: `第 ${from}–${to} 章的骨架已经排好（世界观、场景与伏笔都在预览里）。确认落库我就接着排下一批。`,
+              toolCall: `🔧 已生成骨架预览（第 ${from}–${to} 章）`,
+              miniOutline: (data.plan.chapters ?? []).map((c, i) => ({
+                num: `第${c.seq ?? from + i}章`, title: c.title ?? '',
+              })),
             },
           ]);
           setTimeout(() => {
@@ -410,8 +448,9 @@ export function MaestroPage() {
           }, 600);
           return;
         }
-      } catch {
-        /* fall through 到模拟 */
+        briefFlash(`主笔排骨架失败（HTTP ${res.status}）`);
+      } catch (e) {
+        briefFlash(`主笔排骨架失败：${String(e)}`);
       }
     }
 
@@ -429,22 +468,60 @@ export function MaestroPage() {
     }, 1200);
   };
 
-  const commitPlan = async () => {
+  // A4 分批交付：默认把本批**追加**到书末（不动已有章节与正文）；
+  // 需要推翻重排时走 mode=replace，必须先经作者确认（后端已有正文还会再拦一道 409 · B33）。
+  const commitPlan = async (mode: 'append' | 'replace' = 'append') => {
     if (!tree || !planPreview || committing) return;
+    const chapterCount = (tree.chapters ?? []).length;
+    if (mode === 'replace') {
+      const ok = await showConfirm(
+        '全量替换骨架',
+        `会先删掉本书现有 ${chapterCount} 章及其场景正文，再按预览重建；写好的正文删了不可恢复。`,
+        true,
+      );
+      if (!ok) return;
+    }
     setCommitting(true);
     try {
       const res = await fetch(`${API_BASE}/api/v1/books/${tree.id}/plan/commit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ plan: planPreview }),
+        body: JSON.stringify({ plan: planPreview, mode, allow_overwrite: mode === 'replace' }),
       });
       if (res.ok) {
+        const out = (await res.json()) as {
+          mode?: string; chapters?: number; total_chapters?: number; replaced_chapters?: number;
+        };
+        const meta = planBatch?.meta ?? planPreview.batch ?? null;
         setPlanPreview(null);
+        setPlanBatch(null);
         const t = await fetchBookTree(tree.id);
         setTree(t);
+        if (mode === 'append') {
+          const from = meta?.from ?? 1;
+          const to = meta?.to ?? (from + (out.chapters ?? 1) - 1);
+          const total = out.total_chapters ?? to;
+          setBatchHint({ from, to, total });
+          briefFlash(`第 ${from}–${to} 章已落库 · 全书 ${total} 章`);
+          setMessages((prev) => [
+            ...prev,
+            {
+              sender: 'agent',
+              text: `第 ${from}–${to} 章已落库，全书现在 ${total} 章。要接着排第 ${total + 1}–${total + batchSize} 章吗？`,
+              toolCall: '🔧 骨架已增量落库',
+            },
+          ]);
+        } else {
+          briefFlash(`已全量替换：现存 ${out.chapters ?? 0} 章（原有 ${out.replaced_chapters ?? 0} 章已删）`);
+        }
+      } else if (res.status === 409) {
+        const body = (await res.json().catch(() => null)) as { detail?: string } | null;
+        briefFlash(body?.detail ?? '本书已有正文，替换被拒绝');
+      } else {
+        briefFlash(`落库失败（HTTP ${res.status}）`);
       }
-    } catch {
-      /* ignore */
+    } catch (e) {
+      briefFlash(`落库失败：${String(e)}`);
     } finally {
       setCommitting(false);
     }
@@ -760,8 +837,20 @@ export function MaestroPage() {
                   {(tree?.chapters ?? []).length > 0 && <span className="panel-count">{(tree?.chapters ?? []).length}</span>}
                 </h2>
                 <div className="outline-actions">
+                  <select
+                    className="batch-size-select"
+                    value={batchSize}
+                    title="A4 分批交付：主笔每批排几章（排完一批先复核，再排下一批）"
+                    onChange={(ev) => {
+                      const v = Number(ev.target.value) || 3;
+                      setBatchSize(v);
+                      try { localStorage.setItem('mk.maestro.batch', String(v)); } catch { /* 忽略 */ }
+                    }}
+                  >
+                    {[1, 2, 3, 5, 8].map((n) => <option key={n} value={n}>每批 {n} 章</option>)}
+                  </select>
                   <button className="btn-text" onClick={() => void runIdeation()} disabled={ideating}>
-                    {ideating ? '主笔构思中…' : '✦ 让主笔排骨架'}
+                    {ideating ? '主笔构思中…' : (tree?.chapters ?? []).length > 0 ? '✦ 排下一批' : '✦ 让主笔排骨架'}
                   </button>
                   <button
                     className="btn-text"
@@ -781,29 +870,68 @@ export function MaestroPage() {
 
               {!collapsed.outline && (
                 <>
-                  {/* 主笔骨架预览（plan API 结果）：确认后落库 */}
-                  {planPreview && (
-                    <div className="inspiration-card" style={{ margin: '12px 16px 0' }}>
-                      <div className="card-header">
-                        <div className="card-icon world">📋</div>
-                        <div className="card-title-wrap">
-                          <h4 className="card-title">主笔骨架预览</h4>
-                          <p className="card-desc">
-                            {planPreview.worldview?.premise || '世界观待确认'} · {planPreview.chapters?.length ?? 0} 章 · {planPreview.foreshadow_plan?.length ?? 0} 伏笔
-                          </p>
-                        </div>
-                      </div>
-                      <div className="card-footer">
-                        <span className="type-tag">待落库</span>
-                        <div style={{ display: 'flex', gap: 8 }}>
-                          <button className="btn-adopt" onClick={() => setPlanPreview(null)}>✗ 重排</button>
-                          <button className="btn-adopt" onClick={() => void commitPlan()} disabled={committing}>
-                            {committing ? '落库中…' : '✓ 确认落库'}
-                          </button>
-                        </div>
-                      </div>
+                  {/* 上一批已落库 → 一键续排（A4 分批交付的"汇报→确认→下批"闭环） */}
+                  {batchHint && (
+                    <div className="batch-hint">
+                      <span>
+                        第 {batchHint.from}–{batchHint.to} 章已落库 · 全书 {batchHint.total} 章
+                      </span>
+                      <button className="btn-adopt" onClick={() => void runIdeation({ next: true })} disabled={ideating}>
+                        ✦ 继续下一批（第 {batchHint.total + 1}–{batchHint.total + batchSize} 章）
+                      </button>
                     </div>
                   )}
+
+                  {/* 主笔骨架预览（plan API 结果）：本批复核 → 确认落库 */}
+                  {planPreview && (() => {
+                    const meta = planBatch?.meta ?? planPreview.batch;
+                    const from = meta?.from ?? ((planBatch?.existing ?? 0) + 1);
+                    const got = planPreview.chapters?.length ?? 0;
+                    const to = meta?.to ?? (from + got - 1);
+                    return (
+                      <div className="inspiration-card" style={{ margin: '12px 16px 0' }}>
+                        <div className="card-header">
+                          <div className="card-icon world">📋</div>
+                          <div className="card-title-wrap">
+                            <h4 className="card-title">
+                              主笔骨架预览 · 第 {from}–{to} 章
+                            </h4>
+                            <p className="card-desc">
+                              {planPreview.worldview?.premise ? `${planPreview.worldview.premise} · ` : ''}
+                              本批 {got} 章（计划 {meta?.asked ?? got} 章） · {planPreview.foreshadow_plan?.length ?? 0} 伏笔
+                              {planBatch && planBatch.existing > 0 ? ` · 已落库 ${planBatch.existing} 章` : ''}
+                            </p>
+                            {!!meta?.trimmed && (
+                              <p className="card-note">
+                                模型多排了 {meta.trimmed} 章，已按「每批 {batchSize} 章」截断（余下留到下一批再排）
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                        <ul className="batch-chapter-list">
+                          {(planPreview.chapters ?? []).map((c, i) => (
+                            <li key={`${from + i}`}>
+                              <span className="num">第 {c.seq ?? from + i} 章</span>
+                              <span className="name">{c.title ?? '（无题）'}</span>
+                            </li>
+                          ))}
+                        </ul>
+                        <div className="card-footer">
+                          <span className="type-tag">待落库</span>
+                          <div style={{ display: 'flex', gap: 8 }}>
+                            <button className="btn-adopt danger" onClick={() => void commitPlan('replace')} disabled={committing}
+                                    title="先删掉本书现有章节（含正文）再按预览重建">
+                              ⟳ 全量替换
+                            </button>
+                            <button className="btn-adopt" onClick={() => { setPlanPreview(null); setPlanBatch(null); }}>✗ 丢弃本批</button>
+                            <button className="btn-adopt primary" onClick={() => void commitPlan('append')} disabled={committing}>
+                              {committing ? '落库中…' : `✓ 确认落库本批（第 ${from}–${to} 章）`}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   {!tree || (tree.chapters ?? []).length === 0 ? (
                     <div style={{ padding: 16 }}>

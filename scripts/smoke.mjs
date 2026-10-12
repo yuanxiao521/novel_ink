@@ -47,10 +47,23 @@ const healthOk = async () => {
 
 const cleanup = async () => {
   if (!bookId) return;
+  // B36 回归：删书曾经"回 204 但数据还在"（simulation 外键挡下 + repo 吞异常）→
+  // 清理这一步必须**查得到才算成功**，否则残留会一直堆在书架上。
+  const gone = async () => {
+    const list = await (await fetch(API + "/books")).json().catch(() => null);
+    return Array.isArray(list) && !list.some((b) => b.id === bookId);
+  };
   const byApi = await fetch(API + "/books/" + bookId, { method: "DELETE" });
-  if (byApi.ok) { console.log("cleanup: API 删除测试书 ok"); return; }
+  if (byApi.ok && await gone()) {
+    step("清理：测试书真的删掉了（B36 · 删完必须查不到）", true);
+    console.log("cleanup: API 删除测试书 ok");
+    return;
+  }
   await new Promise((res) => execFile("bash", [CLEANUP, bookId], { encoding: "utf8" }, () => res(null)));
-  console.log("cleanup: psql 删除测试书 ok（API 删除返回 " + byApi.status + "，外键无 CASCADE）");
+  const ok = await gone();
+  step("清理：测试书真的删掉了（B36 · 删完必须查不到）", ok,
+    ok ? "API 删除失败（http=" + byApi.status + "）→ psql 依赖序删除兜底成功" : "API 与 psql 兜底都没删掉");
+  console.log("cleanup: psql 删除测试书 " + (ok ? "ok" : "失败") + "（API 删除返回 " + byApi.status + "）");
 };
 
 try {
@@ -133,6 +146,29 @@ try {
   const headOk = ex.status === 200 && ex.text.includes("全书约") && ex.text.includes("冒烟测试书-" + stamp);
   step("导出成书：书名 + 全书约 N 字", headOk, "http=" + ex.status);
   step("不变量 word_count>0 ⇔ export 200", (wc > 0) === (ex.status === 200), "wc=" + wc);
+  // A4 分批交付（v1.33）：每批 N 章 → 增量落库；B33 全量替换在已有正文时必须被拦住
+  if (!QUICK && llmOk) {
+    const before = (((await req("GET", "/books/" + bookId + "/tree")).json) || {}).chapters || [];
+    const plan = await req("POST", "/books/" + bookId + "/plan",
+      { direction: "民国上海，一家快倒闭的小报追查三年前旧案", batch_size: 1, batch_from: before.length + 1 });
+    const batch = (plan.json && plan.json.batch) || {};
+    const planned = ((plan.json && plan.json.plan && plan.json.plan.chapters) || []).length;
+    step("A4 分批：只排本批 1 章并回报批次元信息",
+      plan.status === 200 && batch.asked === 1 && batch.from === before.length + 1 && planned === 1,
+      "batch=" + JSON.stringify(batch));
+    const commit = await req("POST", "/books/" + bookId + "/plan/commit", { plan: plan.json.plan, mode: "append" });
+    const after = (((await req("GET", "/books/" + bookId + "/tree")).json) || {}).chapters || [];
+    step("A4 追加落库：旧章保留且章号往后接",
+      commit.status === 200 && after.length === before.length + planned && after[0].id === before[0].id,
+      "章数 " + before.length + "→" + after.length + "，replaced=" + (commit.json && commit.json.replaced_chapters));
+    const rep = await req("POST", "/books/" + bookId + "/plan/commit",
+      { plan: { chapters: [{ title: "冒烟重排章", scenes: [] }] }, mode: "replace" }, 409);
+    step("B33 全量替换：已有正文时 409 拦住", rep.status === 409 && rep.text.includes("正文"), "http=" + rep.status);
+    const kept = await req("GET", "/scenes/" + sceneId + "/prose");
+    const keptLen = (((kept.json || {}).prose) || "").length;
+    step("B33 拦住后正文逐字完好", kept.status === 200 && keptLen >= 20, "字数 " + keptLen);
+  } else if (!QUICK) { skip("A4 分批交付 + B33 防误删", "LLM 不可用（分批规划也会走回退）"); }
+
   step("结束 /health 未降级", await healthOk());
 } catch (e) {
   step("冒烟执行异常", false, String(e));
