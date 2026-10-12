@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     model_strong: str = "gpt-4o-mini"        # 角色演绎（强）
     model_cheap: str = "gpt-4o-mini"         # 导演/张力评估/成文（廉）
 
+    # ---- 任务队列（arq · v1.41）：长 LLM 操作后台化 ----
+    redis_url: str = "redis://127.0.0.1:6379/1"   # db1（与宿主上其它项目 db0 隔离）
+
     # ---- 涌现与护栏参数 ----
     max_turns: int = 60                      # 微场景回合上限（防死循环）
     guard_retry_max: int = 2                 # 护栏打回重演上限（熔断，§7）

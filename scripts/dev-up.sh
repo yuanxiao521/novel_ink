@@ -37,6 +37,16 @@ if command -v curl >/dev/null; then
   echo ""
 fi
 
+echo "== 2.5/3 任务队列 worker：arq（Redis db1，长 LLM 操作后台化）=="
+if tasklist 2>/dev/null | grep -q "arq\|tasks_worker" || netstat -ano 2>/dev/null | grep -qE ":6379.*ESTABLISHED.*python"; then
+  echo "   疑似已在运行，跳过（如需重启请手工杀 python 进程）"
+else
+  ( cd "$ROOT/backend" && nohup "$ROOT/.venv/Scripts/python.exe" -m arq app.services.tasks_worker.WorkerSettings \
+      >"$ROOT/logs/arq-worker.log" 2>&1 & )
+  sleep 3
+  echo "   已启动 -> logs/arq-worker.log"
+fi
+
 echo "== 3/3 前端：vite $WEB_PORT =="
 if listening "$WEB_PORT"; then
   echo "   已在监听，跳过"

@@ -668,6 +668,53 @@ async def chief_tools_chat(book_id: str, body: chief.ChiefChatIn,
     return await chief_chat_with_tools(svc, book_id, last_user)
 
 
+# ---------------------------------------------------------------- 任务队列（v1.41）
+class AsyncJobIn(models.BaseModel):
+    """后台任务入参（按 kind 取所需字段）。"""
+    direction: str = ""
+    batch_size: int = 3
+    batch_from: int = 0
+    inspiration_ids: list[str] = []
+    text: str = ""
+
+
+@router.post("/books/{book_id}/jobs/{kind}")
+async def enqueue_book_job(book_id: str, kind: str, body: AsyncJobIn,
+                           svc: SimulationService = Depends(get_service)):
+    """长 LLM 操作后台化：立即返回 job_id（连接与任务解耦，刷新不断链）。
+
+    kind ∈ plan_batch | review_meeting | quality_loop
+    进度与结果：GET /jobs/{job_id}
+    """
+    from app.services import tasks_worker as tw
+
+    kinds = {
+        "plan_batch": {
+            "book_id": book_id, "direction": body.direction,
+            "batch_size": max(0, body.batch_size), "batch_from": body.batch_from,
+            "inspiration_ids": body.inspiration_ids,
+        },
+        "review_meeting": {"scene_id": "", "text": body.text},
+        "quality_loop": {"scene_id": "", "text": body.text},
+    }
+    if kind not in kinds:
+        raise HTTPException(status_code=400, detail=f"未知任务类型：{kind}（可选 {sorted(kinds)}）")
+    payload = {k: v for k, v in kinds[kind].items() if v is not None}
+    job = await tw.enqueue(kind, payload)
+    return job
+
+
+@router.get("/jobs/{job_id}")
+async def job_status(job_id: str):
+    """查后台任务进度/结果（前端轮询）。"""
+    from app.services import tasks_worker as tw
+
+    st = await tw.job_status(job_id)
+    if st is None:
+        raise HTTPException(status_code=404, detail=f"任务不存在或已过期: {job_id}")
+    return st
+
+
 @router.get("/books/{book_id}/chief/chat_history")
 async def get_chat_history(book_id: str,
                            svc: SimulationService = Depends(get_service)):
