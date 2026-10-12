@@ -320,7 +320,7 @@ token 补全、卡片统一、`EmptyState` 全量替换、侧栏视觉、纸墨�
 | 切片 | 内容 | 状态 |
 | --- | --- | --- |
 | P3-1 | token 补全（`--page-grad`/`--stage-grad`/`--stage-base`/`--panel-trans`/间距阶/字号阶/状态别名）+ 正文区渐变生效 + `.workbench`/`.reader` 去硬编码 | ✅ 已落地（v1.26，Wiki B25） |
-| P3-2 | 纸墨双模式截图比对（8 页 × 2 主题基线已归档 `docs/mockups/p3/`）→ 按差异逐项修 | ◐ 基线已出；v1.34–v1.36 逐项修过程中每批都带截图归档（13–19 号），纸模式整体复比对仍待专门跑一轮 |
+| P3-2 | 纸墨双模式截图比对（8 页 × 2 主题基线已归档 `docs/mockups/p3/`）→ 按差异逐项修 | ✅ 已闭环（v1.36）：P3-4 落地后墨/纸两套全站基线各归档一轮（`19-p34-*.png`，`scripts/shot.mjs --theme=paper` 可随时复跑）；纸模式核验点——KPI 语义条 / 时间线卡 / 校对场景卡 / 侧栏激活态 / 空态卡在宣纸底色下全部正常，无需为纸模式单独调样式 |
 | P3-3 | **主笔页色板统一**：`maestro.css` 自持一整套 `--maestro-*`（34 条硬编码 hex，如 `#0d1117`/`#d4a853`）与 `tokens.css` 的 `--bg-*`/`--accent-*` 并行 → 同一屏两套色板，纸墨切换时两页观感不一致。目标：把 `--maestro-*` 映射到共享 token（或收敛为别名） | ✅ 已落地（v1.27，Wiki B26）：`--maestro-*` 全部别名到 tokens（`color-mix` 派生边框/辉光），顺带补上从未定义的 `--maestro-radius`/`--maestro-on-gold`/`--font-sans`/`--font-serif`、删 2 条死 canvas 变量；纸墨双主题截图 `docs/mockups/p3/{ink,paper}/02-maestro-new.png` |
 | P3-4 | 卡片统一（左 3px 语义条 + 1px 边 + `--shadow-sm`，hover 抬 1px）+ `EmptyState` 全量替换（各页 `char-empty`/`home-hint` 类 12px 灰字）+ 侧栏视觉 | ✅ 已落地（v1.36）：tokens 增 `--card-border/--card-accent/--card-radius/--card-shadow`；统一配方集中在 workspace.css 末尾的 P3-4 块（KPI 卡/右栏卡/时间线卡/校对场景卡/角色卡/主笔灵感卡，语义条用 `.mk-card-{ok,run,warn,err,info}`，时间线按 done/current/planned 自动着色，校对场景卡未定稿=暖色条）；**TSX 里 `char-empty`/`home-hint` 清零**（26 处 → 0，概览 5 / 校对 3 / 人物 4 / 书架 2 / 张力 2 / 选角 2 / 角色栏 4 / 信念账本 1 / 侧栏 1，全部换成 `<EmptyState>` 并给出下一步动作）；侧栏统一行高/激活态左语义条/状态点语义。截图 `docs/mockups/p3/ink/19-p34-*.png` |
 

@@ -5,6 +5,7 @@
  * 用法：
  *   node scripts/shot.mjs --url=/maestro --ls-book=<bookId> --out=docs/mockups/p3/ink/xx.png
  *   可选：--wait=6000（导航后等待毫秒）· --js='<表达式>'（截图前执行，可点按钮/改 DOM）· --w=1440 --h=900
+ *   可选：--theme=ink|paper（设 <html data-theme>，P3-2 纸墨双模式基线靠它复跑）
  *   可选：--shell=<chrome-headless-shell 路径>（或环境变量 HEADLESS_SHELL）
  */
 import { spawn } from "node:child_process";
@@ -20,6 +21,7 @@ const OUT = arg("out", "docs/mockups/p3/ink/shot.png");
 const WAIT = Number(arg("wait", "6000"));
 const JS = arg("js", "");
 const LS_BOOK = arg("ls-book", "");
+const THEME = arg("theme", "");
 const W = Number(arg("w", "1440"));
 const H = Number(arg("h", "900"));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -75,6 +77,10 @@ await sleep(3500);
 if (LS_BOOK) await ev(`localStorage.setItem("mk.workspace", JSON.stringify({ bookId: "${LS_BOOK}", chapterId: "", sceneId: "" })); 1`);
 await send("Page.navigate", { url: WEB + URLPATH });
 await sleep(WAIT);
+// 主题必须在**目标页加载后**再设：ThemeProvider 挂载时会把 data-theme 写回初始值，
+// 导航前设置会被整页加载重置（实测纸模式截出来还是墨模式）。
+if (THEME) await ev(`document.documentElement.dataset.theme = "${THEME}"; 1`);
+if (THEME) await sleep(600);   // 等一帧让 CSS 变量生效
 if (JS) { console.log("js →", await ev(JS)); await sleep(WAIT); }
 const shot = await send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
 const b64 = shot.result?.data || "";
