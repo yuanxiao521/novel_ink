@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Sidebar } from '../components/backoffice/Sidebar';
 import { GlobalSearch } from '../components/common/GlobalSearch';
-import { exportBookUrl, fetchCollation } from '../api/novel';
-import type { Collation } from '../api/novel';
+import { exportBookUrl, fetchCollation, fetchHealthReport } from '../api/novel';
+import type { Collation, HealthReport } from '../api/novel';
 import { EmptyState } from '../components/common/EmptyState';
 import { useWorkspace } from '../context/WorkspaceContext';
 
@@ -27,6 +27,7 @@ export function ProofreadPage() {
   const nav = useNavigate();
   const { bookId, tree, setChapter, setScene } = useWorkspace();
   const [data, setData] = useState<Collation | null>(null);
+  const [audit, setAudit] = useState<HealthReport | null>(null);
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -38,6 +39,9 @@ export function ProofreadPage() {
       .then(setData)
       .catch((e) => setErr('校对数据加载失败：' + (e instanceof Error ? e.message : e)))
       .finally(() => setLoading(false));
+    fetchHealthReport(bookId)
+      .then(setAudit)
+      .catch(() => setAudit(null));   // 体检失败不阻塞校对主体
   }, [bookId, tree]);
 
   const kpi = data?.kpi;
@@ -165,6 +169,69 @@ export function ProofreadPage() {
                     desc="先让主笔按一句话方向排一批骨架（A4 分批交付，每批复核后落库）。"
                     primary={{ label: '✦ 去主笔创作', onClick: () => nav('/maestro') }}
                   />
+                )}
+
+                {/* ---------- 整书体检（v1.38 · 0-token，零 LLM） ---------- */}
+                {audit && (
+                  <section className="section-block" id="book-audit">
+                    <div className="section-header">
+                      <h2 className="section-title"><span className="title-icon">⚕</span>整书体检</h2>
+                      <span className="pf-chapter-meta">0-token 派生 · 无 LLM · {new Date(audit.checked_at).toLocaleTimeString()} 检查</span>
+                    </div>
+                    <div className="ha-grid">
+                      {/* ① 结构（R1-R7） */}
+                      <div className="ha-card">
+                        <div className="ha-head"><span>结构诊断</span><b className={'ha-score ' + ((audit.structure.score ?? 100) < 70 ? 'warn' : '')}>{audit.structure.score ?? "-"}</b></div>
+                        {(audit.structure.diagnostics ?? []).length === 0 ? (
+                          <p className="ha-line ok">7 条结构规则全部通过（张力起伏 / 高潮位置 / 伏笔埋收）。</p>
+                        ) : (
+                          audit.structure.diagnostics.map((d) => (
+                            <div className="ha-issue" key={d.rule}>
+                              <span className={'ha-sev ' + d.severity}>{d.rule}</span>
+                              <span className="ha-issue-text"><b>{d.title}</b>{d.detail ? ` · ${d.detail}` : ''}</span>
+                            </div>
+                          ))
+                        )}
+                      </div>
+
+                      {/* ② 口音漂移 */}
+                      <div className="ha-card">
+                        <div className="ha-head"><span>口音漂移</span><b className={'ha-score ' + (audit.voice.flagged > 0 ? 'warn' : '')}>{audit.voice.flagged > 0 ? audit.voice.flagged + ' 处' : '通过'}</b></div>
+                        {audit.voice.characters.length === 0 ? (
+                          <p className="ha-line">还没有可分析的角色对白（角色卡要有名字，正文要有「」对白）。</p>
+                        ) : (
+                          audit.voice.characters.map((v) => (
+                            <div className="ha-issue" key={v.name}>
+                              <span className={'ha-sev ' + (v.flagged.length ? 'mid' : 'ok')}>{v.name}</span>
+                              <span className="ha-issue-text">
+                                {v.scenes_count} 场 · 基线句长 {v.baseline_len}
+                                {v.flagged.length > 0 && v.flagged.map((fl, i) => <em key={i}>· {fl.detail}</em>)}
+                              </span>
+                            </div>
+                          ))
+                        )}
+                      </div>
+
+                      {/* ③ 时间线回放 */}
+                      <div className="ha-card">
+                        <div className="ha-head"><span>时间线 / 数值</span><b className={'ha-score ' + (audit.timeline.rewinds.length ? 'warn' : '')}>{audit.timeline.rewinds.length ? audit.timeline.rewinds.length + ' 处倒流' : '通过'}</b></div>
+                        {audit.timeline.keys_checked === 0 ? (
+                          <p className="ha-line">世界状态账本里还没有 time/numeric 类的数值（时间锚、距离、数量…）。</p>
+                        ) : (
+                          audit.timeline.rewinds.length === 0 ? (
+                            <p className="ha-line ok">{audit.timeline.keys_checked} 个数值键按账本顺序推进，无倒流。</p>
+                          ) : (
+                            audit.timeline.rewinds.map((rw, i) => (
+                              <div className="ha-issue" key={i}>
+                                <span className={"ha-sev " + (rw.edited ? "mid" : "high")}>{rw.edited ? "手改" : "倒流"}</span>
+                                <span className="ha-issue-text">{rw.detail}</span>
+                              </div>
+                            ))
+                          )
+                        )}
+                      </div>
+                    </div>
+                  </section>
                 )}
               </>
             )}

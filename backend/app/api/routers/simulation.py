@@ -495,6 +495,12 @@ async def book_collation(book_id: str, svc: SimulationService = Depends(get_serv
     return await svc.get_collation(book_id)
 
 
+@router.get("/books/{book_id}/health-report")
+async def book_health_report(book_id: str, svc: SimulationService = Depends(get_service)):
+    """整书体检：结构诊断 + 口音漂移 + 时间线回放（0-token，零 LLM）。"""
+    return await svc.get_health_report(book_id)
+
+
 @router.get("/books/{book_id}/global-view")
 async def book_global_view(book_id: str, svc: SimulationService = Depends(get_service)):
     """S3 全局结构与张力视图（0-token 派生）：章级张力曲线 + 结构诊断 + 伏笔网络 + 评分。"""

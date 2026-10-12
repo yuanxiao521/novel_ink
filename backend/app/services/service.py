@@ -26,6 +26,7 @@ from app.schemas import models
 from app.services.engine.director import PlanCfg
 from app.services.engine.style_checks import voice_prior as style_voice_prior
 from app.services.text_metrics import prose_chars, scenes_chars   # 字数唯一口径（B39）
+from app.services.engine.book_audit import voice_drift_by_scene, timeline_replay   # 整书体检（v1.38）
 from app.services.llm.client import client as llm_client  # 模块级引用：便于测试统一替换（conftest）
 
 logger = logging.getLogger(__name__)
@@ -404,6 +405,59 @@ class SimulationService:
             "kpi": {"chapters_total": len(out), "chapters_done": done_chapters,
                     "word_count": total_chars, "unfinished_scenes": unfinished,
                     "scene_total": scene_total},
+        }
+
+    # ---------------------------------------------------------------- 整书体检（v1.38）
+    async def get_health_report(self, book_id: str) -> dict:
+        """整书体检：结构诊断（global_view）+ 口音漂移 + 时间线回放（0-token，零 LLM）。
+
+        这是"成书前最后一道质检"：结构分与 R1-R7 说明骨架是否有病，
+        口音漂移管"人物说话越来越不像他自己"，时间线回放管"世界状态数值倒流"。
+        与导出/概览同口径；每条结论带 evidence 与可跳转定位。
+        """
+        book = await self.repo.get_book(book_id)
+        if book is None:
+            raise SceneNotFoundError(f"未找到书: {book_id}")
+
+        gv = await self.book_global_view(book_id)
+        chapters = sorted(await self.repo.list_chapters_by_book(book_id),
+                          key=lambda c: c.get('order_no') or 0)
+        chars = await self.repo.list_characters_by_book(book_id)
+        cards = []
+        for c in chars:
+            try:
+                cards.append(models.CharacterCard.model_validate_json(c.get("spec_json") or "{}"))
+            except Exception:  # noqa: BLE001
+                continue
+
+        # 逐场正文（含章号，供前端定位）
+        scene_texts: list[dict] = []
+        for ch in chapters:
+            for s in await self.repo.list_scenes_by_chapter(ch["id"]):
+                prose = str(s.get("final_prose") or "").strip()
+                if prose:
+                    scene_texts.append({
+                        "scene_id": s["id"], "order": int(ch.get("order_no") or 0),
+                        "title": s.get("title") or "", "text": prose,
+                    })
+
+        voice = voice_drift_by_scene(scene_texts, [{'name': c.name} for c in cards])
+        timeline = timeline_replay(await self.repo.list_world_states(book_id))
+
+        voice_flagged = sum(len(v.get("flagged") or []) for v in voice)
+        return {
+            "book_id": book_id, "title": book.get("title") or "",
+            "structure": {
+                "score": gv.get("structure_score"),
+                "diagnostics": gv.get("diagnostics") or [],
+                "summary": gv.get("summary") or {},
+            },
+            "voice": {"characters": voice, "flagged": voice_flagged,
+                      "scenes_checked": len(scene_texts)},
+            "timeline": {"flows": timeline.get("flows") or [],
+                         "rewinds": timeline.get("rewinds") or [],
+                         "keys_checked": len(timeline.get("flows") or [])},
+            "checked_at": int(time.time() * 1000),
         }
 
     async def get_dashboard(self, book_id: str) -> dict:

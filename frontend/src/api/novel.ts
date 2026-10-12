@@ -268,6 +268,51 @@ export async function fetchCollation(bookId: string): Promise<Collation> {
   return getJson<Collation>(`${API_BASE}/api/v1/books/${bookId}/collation`);
 }
 
+/* ---------- 整书体检（v1.38 · 0-token，零 LLM） ---------- */
+
+export interface AuditDiag {
+  rule: string;
+  severity: string;
+  deduct: number;
+  title: string;
+  detail: string;
+  evidence: unknown[];
+}
+
+export interface VoiceDrift {
+  name: string;
+  scenes_count: number;
+  baseline_len: number;
+  baseline_particles: string[];
+  scenes: Array<{ scene_id: string; order: number; title: string; avg_len: number; particles: string[]; len_delta: number }>;
+  flagged: Array<{ kind: string; scene_id: string; order: number; title: string; detail: string }>;
+}
+
+export interface TimelineRewind {
+  key: string;
+  name: string;
+  detail: string;
+  ws_id: string;
+  scene_no: number;
+  from: number;
+  to: number;
+  edited: boolean;
+}
+
+export interface HealthReport {
+  book_id: string;
+  title: string;
+  structure: { score: number | null; diagnostics: AuditDiag[]; summary: Record<string, unknown> };
+  voice: { characters: VoiceDrift[]; flagged: number; scenes_checked: number };
+  timeline: { flows: Array<Record<string, unknown>>; rewinds: TimelineRewind[]; keys_checked: number };
+  checked_at: number;
+}
+
+/** 整书体检：结构诊断 + 口音漂移 + 时间线回放。 */
+export async function fetchHealthReport(bookId: string): Promise<HealthReport> {
+  return getJson<HealthReport>(`${API_BASE}/api/v1/books/${bookId}/health-report`);
+}
+
 /** 全书导出 markdown 下载地址（浏览器 <a href> 直开下载）。 */
 export function exportBookUrl(bookId: string): string {
   return `${API_BASE}/api/v1/books/${bookId}/export`;

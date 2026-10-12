@@ -720,3 +720,41 @@
   white-space: nowrap;
   max-width: 180px;
 }
+
+/* ---------- 整书体检（v1.38） ---------- */
+.ha-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; }
+
+.ha-card {
+  padding: 14px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--card-border);
+  border-left: 3px solid var(--card-accent);
+  border-radius: var(--card-radius);
+  box-shadow: var(--card-shadow);
+}
+
+.ha-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.ha-head span { font-size: 13px; color: var(--text-primary); }
+.ha-score { font-size: 14px; color: var(--accent-ok); }
+.ha-score.warn { color: var(--accent-warn); }
+
+.ha-line { margin: 0; font-size: 12.5px; line-height: 1.6; color: var(--text-secondary); }
+.ha-line.ok { color: var(--accent-ok); }
+
+.ha-issue { display: flex; gap: 8px; align-items: baseline; padding: 4px 0; }
+.ha-issue + .ha-issue { border-top: 1px dashed var(--border-light); }
+.ha-issue-text { font-size: 12.5px; line-height: 1.6; color: var(--text-secondary); }
+.ha-issue-text b { color: var(--text-primary); }
+.ha-issue-text em { display: block; font-style: normal; color: var(--accent-warn); }
+
+.ha-sev {
+  flex: 0 0 auto;
+  padding: 1px 7px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+}
+.ha-sev.high { color: var(--accent-err); border-color: var(--accent-err); }
+.ha-sev.mid, .ha-sev.warn { color: var(--accent-warn); border-color: var(--accent-warn); }
+.ha-sev.ok, .ha-sev.low { color: var(--accent-ok); border-color: var(--accent-ok); }
