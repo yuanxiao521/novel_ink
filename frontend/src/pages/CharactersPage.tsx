@@ -89,10 +89,24 @@ const RELATIONS = [
 
 export function CharactersPage() {
   const [tab, setTab] = useState<Tab>('basic');
+  // 搜索：把角色卡里可搜的字段摊平成一个串（名字/人设/特质/腔调/信念/底线/目标）
+  const matchChar = (c: CharacterCardMeta, q: string): boolean => {
+    const spec = parseSpec(c);
+    const hay = [
+      // 只搜"作者能看见的角色内容"（名字/人设/腔调/特质/信念/底线/目标）；
+      // 不搜 system_prompt / static_world —— 那是演绎用设定，搜"李文"却冒出陈默会让人困惑
+      c.name, spec.summary, spec.voice,
+      ...(spec.traits || []), ...(spec.core_beliefs || []), ...(spec.bottom_lines || []),
+      ...(spec.dynamic_goals || []).map((g) => g.text),
+    ].join(' ').toLowerCase();
+    return hay.includes(q.toLowerCase());
+  };
   const [beliefFilter, setBeliefFilter] = useState('all');
   // 书 = 全局上下文（与上下文条 / 导演台 / 正文协作同一真相源，避免「这页一本、那页另一本」）
   const { books, bookId, setBook } = useWorkspace();
   const [chars, setChars] = useState<CharacterCardMeta[]>([]);
+  // 搜索词：角色库本地过滤（名字 / 人设 / 特质 / 腔调 / 信念 / 目标）——此前输入框没接任何 handler
+  const [query, setQuery] = useState('');
   const [selected, setSelected] = useState('');
   const [draft, setDraft] = useState<CharacterSpec | null>(null);
   const [busy, setBusy] = useState(false);
@@ -272,6 +286,9 @@ export function CharactersPage() {
     return `${s.dynamic_goals.length} 目标 · ${s.traits.length} 特质`;
   };
 
+  const kw = query.trim();
+  const visibleChars = kw ? chars.filter((c) => matchChar(c, kw)) : chars;
+
   return (
     <div className="app-shell">
       <Sidebar active="characters" />
@@ -283,7 +300,12 @@ export function CharactersPage() {
           </div>
           <div className="header-search">
             <span className="search-icon">⌕</span>
-            <input type="text" placeholder="搜索角色名、信念、记忆…" />
+            <input
+              type="text"
+              placeholder="搜索角色名、信念、记忆…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
           </div>
           <div className="header-right">
             <Link to="/director">
@@ -322,9 +344,11 @@ export function CharactersPage() {
             </div>
             {chars.length === 0 ? (
               <div className="char-empty">该书暂无角色<br />点「+」新建，或点「✨ 主笔生成」一次补齐</div>
+            ) : visibleChars.length === 0 ? (
+              <div className="char-empty">没有匹配「{query}」的角色<br />换个词，或清空搜索框</div>
             ) : (
               <div className="char-list">
-                {chars.map((c) => {
+                {visibleChars.map((c) => {
                   const avatar = CHAR_AVATARS[c.id] || '';
                   const spec = parseSpec(c);
                   return (
