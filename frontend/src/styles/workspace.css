@@ -810,6 +810,7 @@
 .ec-tool:hover:not(:disabled) { border-color: var(--accent-cyan); color: var(--accent-cyan); }
 .ec-tool.primary { grid-column: 1 / -1; border-color: var(--accent-cyan); color: var(--accent-cyan); }
 .ec-tool:disabled { opacity: 0.5; cursor: not-allowed; }
+.ec-tools-hint { grid-column: 1 / -1; font-size: 11.5px; line-height: 1.6; color: var(--accent-warn); }
 
 .ec-stage.stage .ec-stage-text em, .ec-stage.tick .ec-stage-text em { color: var(--text-muted); }
 .ec-stage.tick .ec-stage-ico { color: var(--accent-cyan); }

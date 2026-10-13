@@ -353,6 +353,11 @@ export function EditorChat({ sceneId, text, onApplyText, onRefresh, seedMessage,
 
       {/* 工具条：复杂按钮收进责编流（v1.43） */}
       <div className="ec-tools">
+        {!text.trim() && (
+          <div className="ec-tools-hint">
+            正文为空：先点「✍ 写手 · 初稿」，或切「✎ 编辑」手写一段 —— 体检/质检/审稿会都要读正文。
+          </div>
+        )}
         {TOOLBAR.map((t, i) => (
           <button
             key={t.tool}
