@@ -17,6 +17,7 @@
 | C | 彩排**三方决策** + 素材使用率（启发式） | v1.22 |
 | D | **审稿会**一次编排 + 评审给身份 + **约束进写手 prompt** + 按钮 7→3 | v1.23 |
 | E | **角色在场感**（只读意见卡） | v1.24 |
+| F | **长任务后台化**（arq 队列，刷新/断网不断链）+ 审稿会并发提速 + **复杂按钮收进责编流**（SSE 过程卡 + 明细富卡） | v1.41 / v1.42 / v1.43 |
 
 ---
 
@@ -196,6 +197,30 @@ curl -s -o /dev/null -w "delete http=%{http_code}\n" -X DELETE $B/books/$bid
 **一键回归**：`cd backend && ../.venv/Scripts/python.exe -m pytest tests/test_plan_batches.py -q`（8 例：分批 prompt/截断/非分批兼容 + 追加保稿 / 未确认 409 / 已确认真替换 / 空书首批写世界观 / 空骨架 400）
 
 ---
+
+### 3.9 复杂按钮的过程与明细（v1.43 · 真 LLM）
+
+```bash
+# ① 按钮直调工具 = SSE 流（与对话同一套事件：tool_start → tick → tool_done → done）
+#    实测：tool_start 立刻到 · 每 2s 一个 tick（长工具不再"点了没反应"）· tool_done 带 summary + 完整 result
+curl -N -s -X POST "http://127.0.0.1:8001/api/v1/scenes/scene-85bc6bfe/agent/run/stream" \
+  -H 'Content-Type: application/json' \
+  -d '{"tool":"prose.review","args":{"text":"夜雨刚歇，霓虹在水洼里碎成一片红绿的油彩。"},"confirm":false}'
+# 期望末两帧：
+#   event: tool_done   data: {"ok":true,"summary":"体检：N 条问题（高危 h）· 口吻 v 处", "result":{...}}
+#   event: done        data: {"executed":[{...}]}
+# 实测（288 字真场景）：30.2s · summary「体检：8 条问题（高危 3）· 口吻 0 处」· result 含 report.overall/issues/voice_prior
+
+# ② 前端按钮（含队列路径「审稿会」）：一条命令出图 + 断言（过程卡 / 裁决 / 明细富卡）
+bash scripts/ui-meeting-probe.sh
+# 期望：verdict + steps(体检→润色→质检→评审) + folds(3 个明细折) + card:true + items:N
+# 实测：stages 6 段「审稿会开始 → 体检完成（问题 7 条·口吻 1 处）→ 润色完成 → 质检完成 → 评审完成（85 分）
+#        → 审稿会 · 有 2 条高危问题 → 建议润色后再保存」· items 29
+# 出图：docs/mockups/p3/ink/23-editor-meeting.png
+
+# ③ L3 ⑧⑨ 已把这条链路变成永久断言（工具条 8 个 + 顶栏不重复 + 点体检出过程卡与富卡）
+node scripts/ui-spec.mjs
+```
 
 ## 4. 存量验收（S1–S4 / A2 / A3，仍在跑）
 
