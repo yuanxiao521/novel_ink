@@ -50,12 +50,22 @@ VERIFY_SCHEMA = {
 
 # ---------------------------------------------------------------- prompts
 def _scene_block(scene: dict) -> str:
-    return (
-        f"标题：{scene.get('title') or ''}\n"
-        f"舞台：{scene.get('stage_desc') or ''}\n"
-        f"本场目标：{scene.get('goal') or ''}\n"
-        f"内容描述：{scene.get('content_desc') or ''}"
-    )
+    """场景设定块。**缺失项显式标注**（v1.44）。
+
+    动机：设定栏全空时，原实现渲染成「舞台：」这样的空标签 → 模型不知道"没设定"，
+    于是自由发挥（实测体检抓到「本场设定栏全空；主角指代与猎/被猎立场倒置，结尾跳步」）。
+    标注「（未填 · 不要自行编造…）」后，模型知道该收着写。
+    """
+    def line(label: str, value: object, hint: str = "") -> str:
+        v = str(value or "").strip()
+        return f"{label}：{v}" if v else f"{label}：（未填{hint}）"
+
+    return "\n".join([
+        line("标题", scene.get("title")),
+        line("舞台", scene.get("stage_desc"), " · 不要自行编造地点/环境"),
+        line("本场目标", scene.get("goal"), " · 不要自行设定本场要发生什么"),
+        line("内容描述", scene.get("content_desc"), " · 不要自行补剧情"),
+    ])
 
 
 def _characters_block(characters: list[dict]) -> str:
@@ -123,6 +133,8 @@ _DRAFT_PROMPT = """你是小说正文【写手】。根据场景设定、出场�
 - 多角色同场时，禁止所有人共用同一种句式/口头禅，各角色说话方式必须可区分；
 - 角色互称必须与卡内关系一致，同一关系不得在文内换称呼；
 - 角色没开口就不要替他/她说话；不要把所有角色都写成同一种"文雅"腔。
+设定缺口纪律（必须遵守）：上面任何一块标注「未填/无」时，**不要编造**——只按角色卡、账本与
+已有正文写；不要新增地点/人物/设定，也不要为了"收尾"跳步推进剧情（宁可停在动作上）。
 场景设定：
 {scene}
 
@@ -340,8 +352,25 @@ async def draft_prose(llm_client: Any, scene: dict, memory: str,
     """写手：正文初稿（自由文本，非结构化；无 LLM → 空串由调用方提示）。"""
     if not llm_client.available:
         return ""
-    existing_block = f"已有正文（可续写或改写）：\n{existing}" if existing.strip() else "（新写开场）"
-    prompt = _DRAFT_PROMPT.format(
+    prompt = draft_prompt(scene, memory, existing, characters=characters,
+                          prev_prose=prev_prose, world_states=world_states,
+                          emergence=emergence, motives=motives, constraints=constraints)
+    raw = await validate_and_retry(llm_client, prompt, None, DRAFT_VALIDATOR)
+    return str(raw).strip()
+
+
+def draft_prompt(scene: dict, memory: str, existing: str = "",
+                 characters: list[dict] | None = None, prev_prose: str = "",
+                 world_states: list[dict] | None = None,
+                 emergence: list[dict] | None = None,
+                 motives: list[dict] | None = None,
+                 constraints: str = "") -> str:
+    """装配写手 prompt（v1.44 抽出）：draft_prose 与 draft_prose_stream 共用同一份，
+    避免「流式版和非流式版的 prompt 慢慢漂移」这类双份实现迟早不一致的问题。
+    """
+    existing_block = (f"已有正文（可续写或改写）：\n{existing}"
+                      if (existing or "").strip() else "（新写开场）")
+    return _DRAFT_PROMPT.format(
         scene=_scene_block(scene),
         characters=_characters_block(characters or []),
         world_states=_world_states_block(world_states),
@@ -352,8 +381,27 @@ async def draft_prose(llm_client: Any, scene: dict, memory: str,
         motives=_motives_block(motives),
         existing_block=existing_block,
     )
-    raw = await validate_and_retry(llm_client, prompt, None, DRAFT_VALIDATOR)
-    return str(raw).strip()
+
+
+async def draft_prose_stream(llm_client: Any, scene: dict, memory: str,
+                             existing: str = "", characters: list[dict] | None = None,
+                             prev_prose: str = "",
+                             world_states: list[dict] | None = None,
+                             emergence: list[dict] | None = None,
+                             motives: list[dict] | None = None,
+                             constraints: str = ""):
+    """写手**流式**版（v1.44）：逐 token yield，让中间正文区像打字机一样长出来。
+
+    与 draft_prose 共用 draft_prompt；未接入/失败 → 空流结束（调用方负责回退与提示，
+    与 chat_stream 的约定一致）。注意：**不做**结构化校验重试——自由文本没有 schema。
+    """
+    if not llm_client.available:
+        return
+    prompt = draft_prompt(scene, memory, existing, characters=characters,
+                          prev_prose=prev_prose, world_states=world_states,
+                          emergence=emergence, motives=motives, constraints=constraints)
+    async for tok in llm_client.chat_stream(prompt, temperature=0.8):
+        yield tok
 
 
 async def review_prose(llm_client: Any, scene: dict, text: str,

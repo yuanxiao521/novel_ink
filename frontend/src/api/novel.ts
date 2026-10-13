@@ -1205,6 +1205,30 @@ export async function toolRunStream(
 }
 
 
+/* ---------- 写手流式（v1.44）：逐 token 写进中间正文区 ---------- */
+
+/**
+ * 写手初稿**流式**版：逐 token 回调，作者能看到正文一个字一个字长出来。
+ * 非流式的 POST /prose/draft 仍保留（工具链/责编对话走那条）。
+ * 收尾的 writer 审计由后端负责（含流式中断时的部分稿）。
+ */
+export async function draftProseStream(
+  sceneId: string,
+  onToken: (delta: string) => void,
+  onDone?: (text: string, chars: number) => void,
+): Promise<void> {
+  let err = '';
+  await streamPost(`${API_BASE}/api/v1/scenes/${sceneId}/prose/draft/stream`, {}, (s) => {
+    if (s.event === 'token') onToken(String((s.data as { delta?: string }).delta ?? ''));
+    else if (s.event === 'done') {
+      const d = s.data as { text?: string; chars?: number };
+      onDone?.(String(d.text ?? ''), Number(d.chars ?? 0));
+    } else if (s.event === 'error') err = String((s.data as { error?: string }).error ?? '写手流式出错');
+  });
+  if (err) throw new Error(err);
+}
+
+
 /* ---------- 后台任务队列（v1.41）：长 LLM 操作与连接解耦 ---------- */
 
 export interface JobState {

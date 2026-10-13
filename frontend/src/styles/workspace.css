@@ -786,6 +786,8 @@
 
 /* ---------- 按钮原位 + 过程与明细进责编流（v1.43） ---------- */
 .s2-moved { font-size: 11.5px; color: var(--text-muted); align-self: center; }
+/* 编辑区有未保存改动（v1.44）：写手/采纳候选会覆盖它，头上给个明示 */
+.s2-dirty { color: var(--accent-warn); font-weight: 600; }
 
 /* 正文为空时在责编面板顶部明说（此时工具按钮是禁用的，别让人以为「坏了」） */
 .ec-empty-hint {

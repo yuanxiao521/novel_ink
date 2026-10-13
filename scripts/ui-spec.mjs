@@ -234,8 +234,14 @@ try {
 
   // ⑨ 顶栏点「体检」→ 自动切到责编 tab + 过程卡（tool_start→tool_done 摘要）+ 结果富卡——用户实测痛点的回归门
   const health = await (await fetch(BASE + "/health")).json().catch(() => null);
-  if (!health || !health.llm || !health.llm.configured) {
-    skip("⑨ 顶栏体检按钮：自动切责编 + 过程卡 + 结果富卡", "LLM 未配置（/health.llm.configured=false）");
+  // LLM 不健康时**明确 SKIP**而不是让它"绿着"：回退路径也会产出 0 条问题的报告，
+  // 断言 /体检：\d+ 条问题/ 会假通过（实测上游 503 熔断时就这样骗过一次）。
+  const llmDown = !health || !health.llm || !health.llm.configured || health.llm.ok === false;
+  const llmWhy = health && health.llm
+    ? (health.llm.configured ? String(health.llm.last_error || "").slice(0, 90) : "未配置 API Key")
+    : "拿不到 /health";
+  if (llmDown) {
+    skip("⑨ 顶栏体检按钮：自动切责编 + 过程卡 + 结果富卡", "LLM 不可用：" + llmWhy);
   } else {
     const rv = JSON.parse((await ev("(async () => {"
       + "const more = document.querySelector('.s2-more');"
@@ -257,11 +263,56 @@ try {
       + "  stages: document.querySelectorAll('.ec-proc .ec-stage').length,"
       + "  detail: (document.querySelector('.ec-proc .ec-stage.tool_done .ec-stage-text') || {}).innerText || '',"
       + "  card: !!card, items: document.querySelectorAll('.ec-result .tr-item').length,"
+      + "  overall: (document.querySelector('.tr-overall') || {}).innerText || '',"
       + "  subs: Array.from(document.querySelectorAll('.ec-result .tr-sub')).map((x) => x.textContent.trim()).slice(0, 5) });"
       + "})()")) || "{}");
-    step("⑨ 顶栏体检按钮：自动切责编 tab + 过程卡 + 结果富卡（明细可见）",
-      !rv.err && rv.editorTab === true && rv.card === true && /体检：\d+ 条问题/.test(String(rv.detail)) && (rv.subs || []).some((s) => String(s).includes("问题清单")),
+    step("⑨ 顶栏体检按钮：自动切责编 tab + 过程卡 + 结果富卡（明细可见，且**非回退**）",
+      !rv.err && rv.editorTab === true && rv.card === true && /体检：\d+ 条问题/.test(String(rv.detail))
+        && !String(rv.overall).includes("模型未接入")
+        && (rv.subs || []).some((s) => String(s).includes("问题清单")),
       JSON.stringify(rv));
+  }
+
+  // ⑩ 写手流式（v1.44）：点顶栏「写手 · 初稿」→ 正文区**边收边写**（采样到中间态）+ 头部「未保存」
+  if (llmDown) {
+    skip("⑩ 写手流式（正文区边收边写）", "LLM 不可用：" + llmWhy);
+  } else {
+    const dr = JSON.parse((await ev("(async () => {"
+      + "const find = () => Array.from(document.querySelectorAll('.s2-actions button')).find((x) => x.textContent.includes('写手'));"
+      + "let b = find();"
+      + "if (!b) return JSON.stringify({ err: 'no 写手 button' });"
+      + "const readLen = () => ((document.querySelector('.s2-prose') || {}).innerText || '').replace(/\\s/g, '').length;"
+      + "const initial = readLen();"
+      + "/* 等按钮可用（上一次工具跑完才解禁；如实记录点击时的禁用态，不猜） */"
+      + "const tWait = Date.now();"
+      + "while (b.disabled && Date.now() - tWait < 8000) { await new Promise((r) => setTimeout(r, 200)); b = find(); }"
+      + "const disabledAtClick = !!b.disabled;"
+      + "b.click();"
+      + "const lens = [];"
+      + "let sawBusyLabel = false;"
+      + "const t0 = Date.now();"
+      + "for (;;) {"
+      + "  await new Promise((r) => setTimeout(r, 150));"
+      + "  const cur = find();"
+      + "  if (cur && cur.textContent.includes('写手中')) sawBusyLabel = true;"
+      + "  lens.push(readLen());"
+      + "  if (Date.now() - t0 > 120000) break;"
+      + "  const L = lens.length;"
+      + "  if (L >= 4 && lens[L-1] === lens[L-2] && lens[L-2] === lens[L-3] && lens[L-3] === lens[L-4] && lens[L-1] !== initial) break;"
+      + "}"
+      + "const final = lens[lens.length - 1] || 0;"
+      + "const mid = lens.filter((n) => n > 0 && n !== initial && n !== final).length;"
+      + "return JSON.stringify({ initial: initial, final: final, samples: lens.length, mid: mid,"
+      + "  disabledAtClick: disabledAtClick, sawBusyLabel: sawBusyLabel,"
+      + "  dirty: !!document.querySelector('.s2-dirty'),"
+      + "  saveLabel: (Array.from(document.querySelectorAll('.s2-actions button')).map((x) => x.textContent.trim()).find((x) => x.includes('保存')) || '') });"
+      + "})()")) || "{}");
+    // 断言：正文区被**流式写入**（换掉了旧稿）· 抓到过中间态或"写手中"按钮态（证明不是一次性替换）· 未落库
+    step("⑩ 写手流式：正文区边收边写 +「未保存」标记 + 保存按钮转「保存*」",
+      !dr.err && dr.disabledAtClick === false && dr.final > 50 && dr.final !== dr.initial
+        && (dr.mid >= 1 || dr.sawBusyLabel === true)
+        && dr.dirty === true && String(dr.saveLabel).includes("保存*"),
+      JSON.stringify(dr));
   }
 } catch (e) {
   step("UI 剧本异常", false, String(e));

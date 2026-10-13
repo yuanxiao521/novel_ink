@@ -10,8 +10,8 @@ import { TasksPanel } from '../components/studio/TasksPanel';
 import { ProseBody, splitParagraphs } from '../components/studio/ProseBody';
 import { useWorkspace } from '../context/WorkspaceContext';
 import {
-  callAgentTool, createAnnotation, deleteAnnotation, fetchSceneDetail, listAgentTasks,
-  listAgentTools, listAnnotations, listProseNotes, sceneScriptUrl,
+  callAgentTool, createAnnotation, deleteAnnotation, draftProseStream, fetchSceneDetail,
+  listAgentTasks, listAgentTools, listAnnotations, listProseNotes, sceneScriptUrl,
 } from '../api/novel';
 import type { AgentTask, ProseAnnotation, ProseNote, SceneDetail } from '../api/novel';
 
@@ -86,6 +86,42 @@ export function StudioPage() {
   const askEditor = (tool: string) => { switchTab('editor'); setPendingTool(tool); };
 
   const flash = (t: string) => { setToast(t); window.setTimeout(() => setToast(''), 2200); };
+
+  /** 编辑区有未保存改动（v1.44）：写手/采纳候选会覆盖它，先问一句 */
+  const savedText = scene?.final_prose ?? '';
+  const dirty = text !== savedText;
+  const guardDirty = async (what: string): Promise<boolean> => {
+    if (!dirty) return true;
+    return showConfirm('覆盖未保存的改动？',
+      `正文区有还没保存的修改，${what}会覆盖编辑区内容（数据库里已保存的版本不受影响，审计记录里也有 before 稿）。`,
+      true);
+  };
+
+  /** 写手 · 初稿（v1.44 流式）：逐 token 写进中间正文区，不再黑等 */
+  const runDraftStream = async () => {
+    if (!sceneId || anyBusy) return;
+    if (!(await guardDirty('写手初稿'))) return;
+    setBusy('prose.draft');
+    let acc = '';
+    try {
+      await draftProseStream(
+        sceneId,
+        (delta) => { acc += delta; setText(acc); },
+        (text) => { if (text) setText(text); },
+      );
+      if (!acc.trim()) {
+        flash('写手没产出内容（模型未接入或调用失败，见右上角降级提示 / /health.llm）');
+      } else {
+        flash(`写手：已流式生成 ${acc.replace(/\s/g, '').length} 字（未落库，点「保存」才写库）`);
+      }
+      // 只刷审计（**不能** load()：那会把 setText 拉回已落库版本，把刚流出来的稿子冲掉）
+      try { setNotes(await listProseNotes(sceneId)); } catch { /* 保持现状 */ }
+    } catch (e) {
+      flash(`写手失败：${String(e instanceof Error ? e.message : e)}`);
+    } finally {
+      setBusy('');
+    }
+  };
 
   const load = useCallback(() => {
     if (!sceneId) return;
@@ -200,7 +236,10 @@ export function StudioPage() {
 
       <header className="s2-head">
         <span className="s2-title">{scene?.title ?? '正文协作'}</span>
-        <span className="s2-sub">{words} 字 · {paras.length} 段 · {annotations.length} 条批注（待处理 {openAnns.length}）</span>
+        <span className="s2-sub">
+          {words} 字 · {paras.length} 段 · {annotations.length} 条批注（待处理 {openAnns.length}）
+          {dirty && <b className="s2-dirty" title="编辑区有未保存改动：写手/采纳候选会覆盖它"> · 未保存</b>}
+        </span>
         <span className="s2-src">
           当前生效：<b>{notes[0] ? `${KIND_LABEL[notes[0].kind] ?? notes[0].kind} · ${STATUS_LABEL[notes[0].status] ?? notes[0].status}` : '尚无记录'}</b>
           {pendingCount > 0 && ` · 待审 ${pendingCount} 条`}
@@ -208,8 +247,9 @@ export function StudioPage() {
       </header>
 
       <div className="s2-actions">
-        <button className="ws-btn ws-btn-primary" disabled={anyBusy} onClick={() => void runTool('prose.draft', {}, { label: '写手·初稿' })}>
-          {busy === 'prose.draft' ? '写手中…' : '✍ 写手 · 初稿'}
+        <button className="ws-btn ws-btn-primary" disabled={anyBusy} onClick={() => void runDraftStream()}
+                title="流式生成初稿：正文区会一个字一个字长出来（未落库，点「保存」才写库）">
+          {busy === 'prose.draft' ? '✍ 写手中…' : '✍ 写手 · 初稿'}
         </button>
         {/* v1.43：按钮**留在顶栏**，点了自动切到右栏「责编」——过程卡与明细富卡长在那个流里 */}
         <button
@@ -239,7 +279,11 @@ export function StudioPage() {
         <span className="s2-spacer" />
         {!text.trim() && <span className="s2-moved">正文为空：先点「✍ 写手 · 初稿」或「✎ 编辑」写一段</span>}
         <button className="ws-btn" onClick={() => setEditing((v) => !v)}>{editing ? '✓ 完成编辑' : '✎ 编辑'}</button>
-        <button className="ws-btn ws-btn-primary" disabled={anyBusy || !text.trim()} onClick={() => void runTool('prose.save', { text }, { label: '保存正文' })}>💾 保存</button>
+        <button className="ws-btn ws-btn-primary" disabled={anyBusy || !text.trim() || !dirty}
+                onClick={() => void runTool('prose.save', { text }, { label: '保存正文' })}
+                title={dirty ? '把编辑区内容写入 scenes.final_prose（需确认）' : '编辑区与已落库版本一致，无需保存'}>
+          {dirty ? '💾 保存*' : '💾 已保存'}
+        </button>
         <a className="ws-btn" href={sceneScriptUrl(sceneId, true)} target="_blank" rel="noreferrer">导出剧本</a>
       </div>
 
@@ -300,7 +344,11 @@ export function StudioPage() {
             <EditorChat
               sceneId={sceneId}
               text={text}
-              onApplyText={(t) => { setText(t); flash('候选已放入正文区（保存才落库）'); }}
+              onApplyText={async (t) => {
+                if (!(await guardDirty('采纳候选'))) return;
+                setText(t);
+                flash('候选已放入正文区（保存才落库）');
+              }}
               onRefresh={load}
               seedMessage={chatSeed}
               onSeedConsumed={() => setChatSeed('')}

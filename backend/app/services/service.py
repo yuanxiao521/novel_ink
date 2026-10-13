@@ -944,10 +944,16 @@ class SimulationService:
     async def delete_memory(self, memory_id: str) -> None:
         await self.repo.delete_memory(memory_id)
 
-    async def chief_perceive(self, book_id: str, limit: int = 20) -> str:
+    async def chief_perceive(self, book_id: str, limit: int = 20,
+                             include_world_states: bool = True) -> str:
         """主笔感知装配：书树摘要 + 书级记忆 + 已采纳灵感卡 + 伏笔现状 → 上下文文本。
 
         所有主笔入口（对话/规划/正文生成）统一走此函数，杜绝「从零重排、多书串味」。
+
+        include_world_states=False（v1.44 · B49）：**写手**侧关掉账本段——写手 prompt 里
+        已有按场景相关性筛选过的世界状态块，这里再塞一份未过滤的会导致同一信息两遍、
+        两套口径（实测记忆段 349 字里约 320 字是账本副本）。主笔/对话侧保持 True
+        （B27b：作者手改是最高权威，要全量可见）。
         """
         parts: list[str] = []
         tree = await self.repo.get_book_tree(book_id)
@@ -989,7 +995,8 @@ class SimulationService:
 
         try:
             # 世界状态现状（S1：作者手改 = 最高权威设定，全部注入并标注，不得过滤——B27b）
-            world_states = await self.repo.list_world_states(book_id)
+            # 例外：写手侧显式关闭（include_world_states=False），避免与写手自己的账本块重复
+            world_states = await self.repo.list_world_states(book_id) if include_world_states else []
             if world_states:
                 lines = "\n".join(
                     f"- [{w.get('kind')}] {w.get('name')}：{w.get('value')}"
@@ -1076,41 +1083,38 @@ class SimulationService:
 
         return await run_meeting(self, scene_id, text)
 
-    async def prose_draft(self, scene_id: str) -> dict:
-        """写手：生成正文初稿（注入角色卡 + 前文摘要），并留 writer 追溯记录。"""
-        from app.services.engine.prose import draft_prose
+    async def _draft_context(self, scene_id: str) -> dict:
+        """装配写手上下文（v1.44 抽出）：prose_draft 与 prose_draft_stream 共用同一份。
 
-        scene, book_id = await self._scene_and_book(scene_id)
-        memory = await self.chief_perceive(book_id, limit=8) if book_id else ""
-        existing = str(scene.get("final_prose") or "")
-
-        # B/D 批：把**书级约束表**（全员读的那一份）真正注入写手 prompt
+        三处修正（Wiki B48/B49/B50）：
+          - B48：世界状态改用 scene_context.select_world_states —— item/term 改为「本场设定或
+            正文里出现过就注入」，此前拿物品名去比角色名集合，导致这两类**永远进不来**；
+          - B49：chief_perceive(include_world_states=False)，账本只由本函数注入一次（口径唯一）；
+          - B50：代词脏行（name=「他」）被闸门拦住，且**不静默**——被裁项写进日志。
+        """
         from app.services.agents.constraints import build_constraints
         from app.services.agents.constraints import render as render_constraints
+        from app.services.engine.scene_context import drop_note, select_world_states
 
-        constraints_text = render_constraints(await build_constraints(self.repo, book_id)) if book_id else ""
-
-        # 获取出场角色卡
+        scene, book_id = await self._scene_and_book(scene_id)
+        memory = (await self.chief_perceive(book_id, limit=8, include_world_states=False)
+                  if book_id else "")
+        constraints_text = (render_constraints(await build_constraints(self.repo, book_id))
+                            if book_id else "")
         characters = await self.repo.list_characters_for_scene(scene_id) if scene_id else []
 
-        # 感知注入：相关世界状态（只喂"与本场相关的状态"，不灌全书）
-        #   - character/item/term：仅当 name 匹配出场角色 → 精确相关
-        #   - time/numeric：全书级，直接注入（时间锚/关键数字是全局骨架）
-        world_states = []
-        if book_id:
-            try:
-                all_ws = await self.repo.list_world_states(book_id)
-                cast_names = {c.get("name") or "" for c in characters if c.get("name")}
-                world_states = [
-                    s for s in all_ws
-                    if (s.get("kind") in {"character", "item", "term"}
-                        and (s.get("name") or "") in cast_names)
-                    or s.get("kind") in {"time", "numeric"}
-                ]
-            except Exception:
-                world_states = []
+        all_ws = (await self.repo.list_world_states(book_id)) if book_id else []
+        existing = str(scene.get("final_prose") or "")
+        scene_text = " ".join(str(scene.get(k) or "") for k in
+                             ("title", "stage_desc", "goal", "content_desc"))
+        cast_names = {c.get("name") or "" for c in characters if c.get("name")}
+        world_states, dropped = select_world_states(
+            all_ws, cast_names, scene_text=scene_text, prose_text=existing)
+        if dropped:
+            logger.info("[draft] 世界状态注入 %d/%d；裁掉：%s",
+                        len(world_states), len(all_ws), drop_note(dropped))
 
-        # 获取前一场景正文摘要（同章节内 cursor_pos 更小的最后一个场景）
+        # 前一场景正文摘要（同章节内 cursor_pos 更小的最后一个已定稿场景）
         prev_prose = ""
         chapter_id = scene.get("chapter_id") or ""
         if chapter_id:
@@ -1124,25 +1128,70 @@ class SimulationService:
                     prev_scenes.sort(key=lambda s: s.get("cursor_pos") or 0, reverse=True)
                     prev_text = prev_scenes[0].get("final_prose", "")
                     prev_prose = prev_text[:200] + ("……" if len(prev_text) > 200 else "")
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         # S4 桥接：已采纳的涌现高光（灵感池 source=emergence 且 adopted=True）+ 角色动机依据
         emergence = await self._emergence_materials(book_id) if book_id else []
         motives = await self._scene_motives(scene_id, book_id) if book_id else []
+        return {"scene": scene, "book_id": book_id, "memory": memory,
+                "constraints": constraints_text, "characters": characters,
+                "world_states": world_states, "dropped": dropped, "existing": existing,
+                "prev_prose": prev_prose, "emergence": emergence, "motives": motives}
 
-        text = await draft_prose(llm_client, scene, memory, existing,
-                                 characters=characters, prev_prose=prev_prose,
-                                 emergence=emergence, motives=motives,
-                                 world_states=world_states, constraints=constraints_text)
+    async def _save_writer_note(self, scene_id: str, before: str, after: str,
+                                note: str = "") -> None:
+        """落一条 writer 追溯记录（流式与非流式共用）。"""
         await self.repo.save_prose_note({
             "id": f"note-{uuid.uuid4().hex[:10]}",
             "scene_id": scene_id, "kind": "writer", "status": "approved",
-            "suggestion": "写手生成正文初稿" if text else "（模型未接入，初审稿为空由前端提示）",
-            "before": existing, "after": text, "created_by": "writer",
+            "suggestion": (note or "写手生成正文初稿") if after else "（模型未接入，初审稿为空由前端提示）",
+            "before": before, "after": after, "created_by": "writer",
             "ts": int(time.time() * 1000),
         })
+
+    async def prose_draft(self, scene_id: str) -> dict:
+        """写手：生成正文初稿（注入角色卡 + 前文摘要 + 场景相关账本），并留 writer 追溯记录。"""
+        from app.services.engine.prose import draft_prose
+
+        ctx = await self._draft_context(scene_id)
+        text = await draft_prose(llm_client, ctx["scene"], ctx["memory"], ctx["existing"],
+                                 characters=ctx["characters"], prev_prose=ctx["prev_prose"],
+                                 emergence=ctx["emergence"], motives=ctx["motives"],
+                                 world_states=ctx["world_states"], constraints=ctx["constraints"])
+        await self._save_writer_note(scene_id, ctx["existing"], text)
         return {"text": text}
+
+    async def prose_draft_stream(self, scene_id: str):
+        """写手**流式**版（v1.44）：逐 token yield，中间正文区像打字机一样长出来。
+
+        收尾必落 writer 审计：正常结束记「写手生成正文初稿（流式）」，**流式中断**也把已生成
+        部分存下来并如实标注——LLM 已经花掉的钱不能白花，部分成果也不能静默丢。
+        """
+        from app.services.engine.prose import draft_prose_stream
+
+        ctx = await self._draft_context(scene_id)
+        acc: list[str] = []
+        finished = False
+        try:
+            async for tok in draft_prose_stream(
+                llm_client, ctx["scene"], ctx["memory"], ctx["existing"],
+                characters=ctx["characters"], prev_prose=ctx["prev_prose"],
+                emergence=ctx["emergence"], motives=ctx["motives"],
+                world_states=ctx["world_states"], constraints=ctx["constraints"],
+            ):
+                acc.append(tok)
+                yield tok
+            finished = True
+        finally:
+            text = "".join(acc).strip()
+            if text:
+                try:
+                    await self._save_writer_note(
+                        scene_id, ctx["existing"], text,
+                        "" if finished else "（流式中断：仅保存已生成部分）")
+                except Exception:  # noqa: BLE001  收尾失败不能盖掉主流程
+                    logger.warning("[draft] 流式收尾落审计失败", exc_info=True)
 
     async def prose_review(self, scene_id: str, text: str) -> dict:
         """体检员：结构化体检报告 → editor note（pending）。"""

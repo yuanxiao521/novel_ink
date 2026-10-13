@@ -18,6 +18,7 @@
 | D | **审稿会**一次编排 + 评审给身份 + **约束进写手 prompt** + 按钮 7→3 | v1.23 |
 | E | **角色在场感**（只读意见卡） | v1.24 |
 | F | **长任务后台化**（arq 队列，刷新/断网不断链）+ 审稿会并发提速 + **按钮原位、过程与明细进责编流**（SSE 过程卡 + 明细富卡 + 审计可收起） | v1.41 / v1.42 / v1.43 |
+| G | **写手素材治理**（账本筛选/去重/脏名字闸门 + 场景缺口显式标注）+ **正文 token 流式** + 脏缓冲保护 | v1.44 |
 
 ---
 
@@ -225,6 +226,33 @@ bash scripts/ui-meeting-probe.sh
 node scripts/ui-spec.mjs
 ```
 
+### 3.10 写手素材与流式（v1.44 · 真 LLM）
+
+```bash
+# ① 看写手**实际**拿到什么（诊断工具，走真实装配路径 service._draft_context）
+cd backend && PYTHONPATH=. ../.venv/Scripts/python.exe ../scripts/dump-writer-materials.py scene-85bc6bfe ../logs/writer_materials.md
+# 期望：[3] 世界状态里能看到 [item] 金属徽章 / [term] 异常者（B48 修前恒被裁）；
+#       被裁项**带原因**列出（代词脏行）；[5] 记忆块**不含**账本副本（B49）；
+#       [1] 场景设定缺失项标注「（未填 · 不要自行编造…）」；
+#       [10] 体量：prompt ≈ 2325 字符（修前 2456，且信息更准）
+
+# ② 写手 token 流式（SSE）：逐 token 下发，前端边收边写
+curl -N -s -X POST "http://127.0.0.1:8001/api/v1/scenes/scene-85bc6bfe/prose/draft/stream" \
+  -H "Content-Type: application/json" -d "{}"
+# 期望：大量 event: token（实测 161 个）→ event: done {"text":...,"chars":228}
+# 实测节奏：首 token 10.8s（模型思考期），随后 0.7s 内吐完 228 字
+
+# ③ 流式中断也要落审计（已生成部分不丢）——pytest 已覆盖
+.venv/Scripts/python.exe -m pytest backend/tests/test_scene_context.py -q
+# 期望：14 passed（含 select_world_states 规则 / 缺口标注 / 流式逐 token / 中断保存部分稿）
+```
+
+```bash
+# ④ L3 ⑩ 已把"边收边写"变成永久断言（11/11）
+node scripts/ui-spec.mjs
+# 期望 ⑩：{"mid": >=1, "sawBusyLabel": true, "dirty": true, "saveLabel": "💾 保存*"}
+# 注意：⑨/⑩ 在 LLM 不健康时**明确 SKIP**（不再让回退路径的"0 条问题"假通过）
+```
 ## 4. 存量验收（S1–S4 / A2 / A3，仍在跑）
 
 ```powershell

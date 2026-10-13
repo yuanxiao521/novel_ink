@@ -307,6 +307,28 @@ async def prose_draft(scene_id: str, svc: SimulationService = Depends(get_servic
     return await svc.prose_draft(scene_id)
 
 
+@router.post("/scenes/{scene_id}/prose/draft/stream")
+async def prose_draft_stream(scene_id: str, svc: SimulationService = Depends(get_service)):
+    """写手**流式**（v1.44 · SSE）：逐 token 下发，前端边收边写进中间正文区。
+
+    event 序列：token（{delta}）→ done（{text, chars}）；异常走 error（不静默断流）。
+    收尾的 writer 审计由 service 层负责（含**流式中断**时已生成的部分稿）。
+    """
+    async def gen():
+        acc: list[str] = []
+        try:
+            async for tok in svc.prose_draft_stream(scene_id):
+                acc.append(tok)
+                yield _sse("token", {"delta": tok})
+            text = "".join(acc).strip()
+            yield _sse("done", {"text": text, "chars": len(text)})
+        except Exception as e:  # noqa: BLE001  流中异常也要让前端看到
+            yield _sse("error", {"error": f"{type(e).__name__}: {e}"})
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
 @router.post("/scenes/{scene_id}/prose/review")
 async def prose_review(scene_id: str, body: ProseTextIn,
                        svc: SimulationService = Depends(get_service)):
