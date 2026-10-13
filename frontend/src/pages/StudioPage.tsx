@@ -31,6 +31,17 @@ const KIND_LABEL: Record<string, string> = {
   tool: '🔧 工具', bookkeeping: '📒 记账',
 };
 const STATUS_LABEL: Record<string, string> = { pending: '待审阅', approved: '已批准', rejected: '已驳回' };
+
+/** 精修工具（v1.43）：按钮留在顶栏原位；点了自动切到「责编」tab —— 过程与明细在那个流里。 */
+const REFINE_TOOLS: Array<{ tool: string; label: string; hint: string }> = [
+  { tool: 'prose.review', label: '🩺 体检', hint: '问题清单 + 逐角色口吻比对' },
+  { tool: 'prose.verify', label: '🔍 质检', hint: '伏笔/信念/因果/状态对照账本' },
+  { tool: 'prose.polish', label: '🎨 润色', hint: '只改写法不改事实' },
+  { tool: 'prose.quality_score', label: '📊 评审', hint: '五维自评 + 硬信号合分（只读）' },
+  { tool: 'prose.scan_tone', label: '🧪 AI 味', hint: '0-token 规则扫描，不花模型' },
+  { tool: 'prose.spot_fix', label: '🔧 定点修复', hint: '只修命中句，双闸复检' },
+  { tool: 'prose.quality_loop', label: '♻ 质量回环', hint: '自评 → 按需重写 → 复检；后台跑' },
+];
 export function StudioPage() {
   const { sceneId: routeSceneId } = useParams<{ sceneId: string }>();
   const { sceneId: ctxSceneId } = useWorkspace();
@@ -57,6 +68,22 @@ export function StudioPage() {
   const [auditFilter, setAuditFilter] = useState<AuditFilter>('all');
   const [auditAll, setAuditAll] = useState(false);
   const [chatSeed, setChatSeed] = useState('');
+  /** 顶栏按钮 → 责编流（v1.43）：按钮位置不变，过程与明细进流 */
+  const [pendingTool, setPendingTool] = useState('');
+  /** 责编面板正在跑什么（顶栏按钮据此显示进度并禁用） */
+  const [editorBusy, setEditorBusy] = useState('');
+  const anyBusy = !!busy || !!editorBusy;
+  /** 审计记录可收起（v1.43）：正文区拿回高度，偏好记本地 */
+  const [auditOpen, setAuditOpen] = useState(() => {
+    try { return localStorage.getItem('mk.auditOpen') !== '0'; } catch { return true; }
+  });
+  const toggleAudit = () => setAuditOpen((v) => {
+    const next = !v;
+    try { localStorage.setItem('mk.auditOpen', next ? '1' : '0'); } catch { /* 忽略 */ }
+    return next;
+  });
+  /** 点顶栏工具：先切到「责编」tab（保证看得见），再把活派给那个面板 */
+  const askEditor = (tool: string) => { switchTab('editor'); setPendingTool(tool); };
 
   const flash = (t: string) => { setToast(t); window.setTimeout(() => setToast(''), 2200); };
 
@@ -181,15 +208,38 @@ export function StudioPage() {
       </header>
 
       <div className="s2-actions">
-        <button className="ws-btn ws-btn-primary" disabled={!!busy} onClick={() => void runTool('prose.draft', {}, { label: '写手·初稿' })}>
+        <button className="ws-btn ws-btn-primary" disabled={anyBusy} onClick={() => void runTool('prose.draft', {}, { label: '写手·初稿' })}>
           {busy === 'prose.draft' ? '写手中…' : '✍ 写手 · 初稿'}
         </button>
-        {/* v1.43：审稿会 / 体检 / 质检 / 润色 / 评审 / AI 味 / 定点修复 / 质量回环
-            已收进右栏「责编」的工具条——那里的过程卡与明细富卡才是作者要看的东西。 */}
-        <span className="s2-moved">→ 审稿会与体检/质检/润色在右栏「责编」里，点了就能看到过程与明细</span>
+        {/* v1.43：按钮**留在顶栏**，点了自动切到右栏「责编」——过程卡与明细富卡长在那个流里 */}
+        <button
+          className="ws-btn s2-meeting"
+          disabled={anyBusy || !text.trim()}
+          title="体检与质检并发 → 润色（有问题才做）→ 评审，后台跑完给出裁决（刷新不中断）；过程与明细在右栏「责编」里"
+          onClick={() => askEditor('prose.review_meeting')}
+        >
+          {editorBusy === 'prose.review_meeting' ? '审稿中…' : '🗂 审稿会'}
+        </button>
+        <details className="s2-more">
+          <summary>精修工具 ▾</summary>
+          <div className="s2-more-body">
+            {REFINE_TOOLS.map((t) => (
+              <button
+                key={t.tool}
+                className="ws-btn"
+                title={t.hint}
+                disabled={anyBusy || !text.trim()}
+                onClick={() => askEditor(t.tool)}
+              >
+                {editorBusy === t.tool ? `${t.label} · 跑着…` : t.label}
+              </button>
+            ))}
+          </div>
+        </details>
         <span className="s2-spacer" />
+        {!text.trim() && <span className="s2-moved">正文为空：先点「✍ 写手 · 初稿」或「✎ 编辑」写一段</span>}
         <button className="ws-btn" onClick={() => setEditing((v) => !v)}>{editing ? '✓ 完成编辑' : '✎ 编辑'}</button>
-        <button className="ws-btn ws-btn-primary" disabled={!!busy || !text.trim()} onClick={() => void runTool('prose.save', { text }, { label: '保存正文' })}>💾 保存</button>
+        <button className="ws-btn ws-btn-primary" disabled={anyBusy || !text.trim()} onClick={() => void runTool('prose.save', { text }, { label: '保存正文' })}>💾 保存</button>
         <a className="ws-btn" href={sceneScriptUrl(sceneId, true)} target="_blank" rel="noreferrer">导出剧本</a>
       </div>
 
@@ -224,8 +274,13 @@ export function StudioPage() {
           <div className="s2-side-head">
             <Tabs
               items={[
-                { key: 'editor', label: '责编', badge: openAnns.length },
-                { key: 'tasks', label: '任务', badge: tasks.filter((t) => t.status !== 'completed' && t.status !== 'failed').length },
+                // badge 为 0 时不传（否则标题会显示「责编 0 任务 0」，很吵）
+                { key: 'editor', label: '责编', ...(openAnns.length > 0 ? { badge: openAnns.length } : {}) },
+                {
+                  key: 'tasks', label: '任务',
+                  ...(tasks.filter((t) => t.status !== 'completed' && t.status !== 'failed').length > 0
+                    ? { badge: tasks.filter((t) => t.status !== 'completed' && t.status !== 'failed').length } : {}),
+                },
                 { key: 'voices', label: '角色' },
               ]}
               value={sideTab}
@@ -249,29 +304,43 @@ export function StudioPage() {
               onRefresh={load}
               seedMessage={chatSeed}
               onSeedConsumed={() => setChatSeed('')}
+              pendingTool={pendingTool}
+              onPendingConsumed={() => setPendingTool('')}
+              onBusyChange={setEditorBusy}
             />
           )}
         </aside>
       </div>
 
-      <div className="s2-audit">
+      <div className={`s2-audit${auditOpen ? '' : ' collapsed'}`}>
         <div className="s2-audit-head">
-          <span className="s2-audit-title">审计记录</span>
-          <Tabs
-            items={[
-              { key: 'all', label: '全部' },
-              { key: 'pending', label: '待审', badge: pendingCount },
-              { key: 'approved', label: '已批准' },
-              { key: 'rejected', label: '已驳回' },
-            ]}
-            value={auditFilter}
-            onChange={(k) => setAuditFilter(k as AuditFilter)}
-          />
+          <button className="s2-audit-toggle" onClick={toggleAudit} title="收起/展开审计记录（正文区会拿回高度）">
+            <span className="s2-audit-caret">{auditOpen ? '▾' : '▸'}</span>
+            <span className="s2-audit-title">审计记录</span>
+            <span className="s2-audit-count">{notes.length} 条</span>
+          </button>
+          {auditOpen && (
+            <Tabs
+              items={[
+                { key: 'all', label: '全部' },
+                { key: 'pending', label: '待审', badge: pendingCount },
+                { key: 'approved', label: '已批准' },
+                { key: 'rejected', label: '已驳回' },
+              ]}
+              value={auditFilter}
+              onChange={(k) => setAuditFilter(k as AuditFilter)}
+            />
+          )}
           <span className="s2-spacer" />
-          <span className="s2-hint">{auditAll ? `显示全部 ${notes.length} 条` : `默认只看最新 + 待审（${auditRows.hidden} 条已折叠）`}</span>
-          <button className="ws-btn" onClick={() => setAuditAll((v) => !v)}>{auditAll ? '只看最新+待审' : '展开全部'}</button>
+          {auditOpen && (
+            <>
+              <span className="s2-hint">{auditAll ? `显示全部 ${notes.length} 条` : `默认只看最新 + 待审（${auditRows.hidden} 条已折叠）`}</span>
+              <button className="ws-btn" onClick={() => setAuditAll((v) => !v)}>{auditAll ? '只看最新+待审' : '展开全部'}</button>
+            </>
+          )}
+          <button className="ws-btn" onClick={toggleAudit}>{auditOpen ? '收起' : '展开'}</button>
         </div>
-        <div className="s2-audit-list">
+        {auditOpen && <div className="s2-audit-list">
           {auditRows.rows.length === 0 && <div className="s2-hint">暂无记录。</div>}
           {auditRows.rows.map(({ note: n, count }) => (
             <div className={`s2-note ${n.status}`} key={n.id}>
@@ -282,7 +351,7 @@ export function StudioPage() {
               <span className="s2-note-ts">{new Date(n.ts).toLocaleString()}</span>
             </div>
           ))}
-        </div>
+        </div>}
       </div>
     </div>,
   );

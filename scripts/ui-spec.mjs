@@ -199,44 +199,68 @@ try {
     return JSON.stringify({ editorTab: location.search.includes("tab=editor"), seed: seed ? seed.value.slice(0, 60) : "", annsBadge: anns });
   })()`)) || "{}");
   step("⑦ 副驾闭环：选中 → 问责编自动落批注并预填对话", !annFlow.err && annFlow.editorTab && String(annFlow.seed).includes("批注意见"), JSON.stringify(annFlow));
-
-  // ⑧ 责编工具条（v1.43）：复杂按钮收进责编流，顶栏不再重复，"质检" tab 已并入
+  // ⑧ 信息架构（v1.43）：按钮**留在顶栏原位**，只有过程与明细进责编流；审计记录可收起
   await goto(WEB + "/studio/" + proseScene + "?book=" + proseBook + "&tab=editor", 8000);
   const bar = JSON.parse((await ev("(() => {"
-    + "const tools = Array.from(document.querySelectorAll('.ec-tool'));"
-    + "const moved = document.querySelector('.s2-moved');"
-    + "const oldBtn = Array.from(document.querySelectorAll('.s2-actions button')).some((b) => b.textContent.includes('审稿会'));"
+    + "const topBtn = Array.from(document.querySelectorAll('.s2-actions button')).map((b) => b.textContent.trim());"
+    + "const more = document.querySelector('.s2-more');"
+    + "const moreBtns = more ? Array.from(more.querySelectorAll('.s2-more-body button')).map((b) => b.textContent.trim()) : [];"
     + "const sideHead = document.querySelector('.s2-side-head');"
-    + "return JSON.stringify({ n: tools.length, first: tools[0] ? tools[0].textContent.trim() : '', moved: !!moved, oldBtn: oldBtn, tabs: sideHead ? sideHead.innerText.replace(/\\s+/g, ' ') : '' });"
+    + "return JSON.stringify({ topBtn: topBtn, more: !!more, moreBtns: moreBtns, ecTool: document.querySelectorAll('.ec-tool').length, tabs: sideHead ? sideHead.innerText.replace(/\\s+/g, ' ') : '', auditToggle: !!document.querySelector('.s2-audit-toggle') });"
     + "})()")) || "{}");
-  step("⑧ 责编工具条：复杂按钮收进责编流（顶栏不重复 / 质检 tab 已并入）",
-    bar.n === 8 && String(bar.first).includes("审稿会") && bar.moved === true && bar.oldBtn === false && !String(bar.tabs).includes("质检"),
+  step("⑧ 按钮留在顶栏（审稿会 + 精修工具 7 个），右栏不再堆按钮，审计可收起",
+    bar.topBtn.includes("🗂 审稿会") && bar.more === true && (bar.moreBtns || []).length === 7 && bar.ecTool === 0
+      && !String(bar.tabs).includes("质检") && bar.auditToggle === true,
     JSON.stringify(bar));
 
-  // ⑨ 点「体检」→ 过程卡（tool_start→tool_done 摘要）+ 结果富卡（明细可见）——用户实测痛点的回归门
+  // ⑧b 审计记录可收起：点一下 → 列表消失、正文区拿回高度
+  const aud = JSON.parse((await ev("(() => {"
+    + "const t = document.querySelector('.s2-audit-toggle');"
+    + "if (!t) return JSON.stringify({ err: 'no toggle' });"
+    + "const before = document.querySelectorAll('.s2-audit-list').length;"
+    + "t.click();"
+    + "return JSON.stringify({ before: before });"
+    + "})()")) || "{}");
+  await sleep(500);
+  const audAfter = JSON.parse((await ev("(() => {"
+    + "const box = document.querySelector('.s2-audit');"
+    + "const collapsed = !!(box && box.className.includes('collapsed'));"
+    + "const list = document.querySelectorAll('.s2-audit-list').length;"
+    + "const t = document.querySelector('.s2-audit-toggle'); if (t) t.click();"
+    + "return JSON.stringify({ collapsed: collapsed, list: list });"
+    + "})()")) || "{}");
+  step("⑧b 审计记录可收起（收起后列表消失，再点展开）",
+    aud.before === 1 && audAfter.collapsed === true && audAfter.list === 0, JSON.stringify({ ...aud, ...audAfter }));
+
+  // ⑨ 顶栏点「体检」→ 自动切到责编 tab + 过程卡（tool_start→tool_done 摘要）+ 结果富卡——用户实测痛点的回归门
   const health = await (await fetch(BASE + "/health")).json().catch(() => null);
   if (!health || !health.llm || !health.llm.configured) {
-    skip("⑨ 体检按钮：过程卡 + 结果富卡", "LLM 未配置（/health.llm.configured=false）");
+    skip("⑨ 顶栏体检按钮：自动切责编 + 过程卡 + 结果富卡", "LLM 未配置（/health.llm.configured=false）");
   } else {
     const rv = JSON.parse((await ev("(async () => {"
-      + "const b = Array.from(document.querySelectorAll('.ec-tool')).find((x) => x.textContent.includes('体检'));"
-      + "if (!b) return JSON.stringify({ err: 'no 体检 button' });"
+      + "const more = document.querySelector('.s2-more');"
+      + "if (more && !more.open) more.querySelector('summary').click();"
+      + "await new Promise((r) => setTimeout(r, 400));"
+      + "const b = Array.from(document.querySelectorAll('.s2-more-body button')).find((x) => x.textContent.includes('体检'));"
+      + "if (!b) return JSON.stringify({ err: 'no 体检 button in 精修工具' });"
+      + "if (b.disabled) return JSON.stringify({ err: 'button disabled（正文为空？）' });"
       + "b.click();"
       + "const t0 = Date.now();"
       + "for (;;) {"
-      + "  if (Date.now() - t0 > 120000) return JSON.stringify({ err: 'timeout', seen: (document.querySelector('.ec-proc') ? document.querySelector('.ec-proc').innerText : '').slice(0, 200) });"
+      + "  if (Date.now() - t0 > 120000) return JSON.stringify({ err: 'timeout', tab: location.search, seen: (document.querySelector('.ec-proc') ? document.querySelector('.ec-proc').innerText : '').slice(0, 200) });"
       + "  if (document.querySelector('.ec-proc .ec-stage.tool_done')) break;"
       + "  await new Promise((r) => setTimeout(r, 1000));"
       + "}"
       + "await new Promise((r) => setTimeout(r, 800));"
       + "const card = document.querySelector('.ec-result .tr-card');"
-      + "return JSON.stringify({ stages: document.querySelectorAll('.ec-proc .ec-stage').length,"
+      + "return JSON.stringify({ tab: location.search, editorTab: location.search.includes('tab=editor'),"
+      + "  stages: document.querySelectorAll('.ec-proc .ec-stage').length,"
       + "  detail: (document.querySelector('.ec-proc .ec-stage.tool_done .ec-stage-text') || {}).innerText || '',"
       + "  card: !!card, items: document.querySelectorAll('.ec-result .tr-item').length,"
       + "  subs: Array.from(document.querySelectorAll('.ec-result .tr-sub')).map((x) => x.textContent.trim()).slice(0, 5) });"
       + "})()")) || "{}");
-    step("⑨ 体检按钮：过程卡 + 结果富卡（明细可见）",
-      !rv.err && rv.card === true && /体检：\d+ 条问题/.test(String(rv.detail)) && (rv.subs || []).some((s) => String(s).includes("问题清单")),
+    step("⑨ 顶栏体检按钮：自动切责编 tab + 过程卡 + 结果富卡（明细可见）",
+      !rv.err && rv.editorTab === true && rv.card === true && /体检：\d+ 条问题/.test(String(rv.detail)) && (rv.subs || []).some((s) => String(s).includes("问题清单")),
       JSON.stringify(rv));
   }
 } catch (e) {

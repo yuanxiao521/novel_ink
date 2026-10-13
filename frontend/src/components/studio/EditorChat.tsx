@@ -10,10 +10,12 @@ import { ToolResult } from './ToolResult';
 
    与按钮走**同一条工具链**（后端 ToolExecutor）。
    v1.39：走 SSE 流式——感知/计划/逐工具执行/完成，每个阶段渲染成过程卡。
-   v1.43：**复杂按钮收进责编流**。作者反馈"点了体检/质检没有输出，也不知道怎么体检的"——
-          根因是按钮走同步 POST、结果只落右侧「质检」tab，作者停在「责编」时什么都看不到。
-          现在：① 工具条就在责编流下面；② 按钮走 /agent/run/stream，与对话同一张过程卡
-          （含耗时心跳）；③ 结果用 ToolResult 富卡摊开明细（问题清单/账本对照/五维分/裁决）。
+   v1.43：**按钮位置不动，过程与明细进责编流**。作者反馈"点了体检/质检没有输出，也不知道
+          怎么体检的"——根因是按钮走同步 POST、结果只落右侧「质检」tab，作者停在「责编」时
+          什么都看不到。现在：① 顶栏按钮照旧（审稿会 / 精修工具▾），点了**自动切到责编 tab**；
+          ② 按钮走 /agent/run/stream，与对话共用同一张过程卡（含耗时心跳）；
+          ③ 结果用 ToolResult 富卡摊开明细（问题清单/账本对照/五维分/裁决）。
+          注意：**不是**把按钮搬进右栏——右栏只负责"看得见"。
    ========================================================================== */
 
 interface Msg {
@@ -49,6 +51,11 @@ interface Props {
   onRefresh: () => void;
   seedMessage?: string;
   onSeedConsumed?: () => void;
+  /** 顶栏按钮派活（v1.43）：按钮在顶栏，过程与结果长在这个流里。 */
+  pendingTool?: string;
+  onPendingConsumed?: () => void;
+  /** 把"正在跑哪个工具"报给顶栏，让顶栏按钮也能显示进度/禁用（v1.43）。 */
+  onBusyChange?: (v: string) => void;
 }
 
 /** 工具名 → 中文显示名（与前端按钮文案对齐，未知工具原样显示）。 */
@@ -66,18 +73,6 @@ const QUEUED: Record<string, 'review_meeting' | 'quality_loop'> = {
   'prose.review_meeting': 'review_meeting',
   'prose.quality_loop': 'quality_loop',
 };
-
-/** 责编工具条（v1.43）：原来散在顶栏的复杂按钮，收进责编流——点了就能看到过程与明细。 */
-const TOOLBAR: Array<{ tool: string; label: string; hint: string }> = [
-  { tool: 'prose.review_meeting', label: '🗂 审稿会', hint: '体检 ∥ 质检 → 润色（按需）→ 评审 + 裁决；后台跑，刷新不断链' },
-  { tool: 'prose.review', label: '🩺 体检', hint: '问题清单 + 逐角色口吻比对' },
-  { tool: 'prose.verify', label: '🔍 质检', hint: '伏笔/信念/因果/状态对照账本' },
-  { tool: 'prose.polish', label: '🎨 润色', hint: '只改写法不改事实' },
-  { tool: 'prose.quality_score', label: '📊 评审', hint: '五维自评 + 硬信号合分（只读）' },
-  { tool: 'prose.scan_tone', label: '🧪 AI 味', hint: '0-token 规则扫描，不花模型' },
-  { tool: 'prose.spot_fix', label: '🔧 定点修复', hint: '只修命中句，双闸复检' },
-  { tool: 'prose.quality_loop', label: '♻ 质量回环', hint: '自评 → 按需重写 → 复检；后台跑' },
-];
 
 const QUICK = ['看看这段有没有 AI 味', '口吻像不像上场角色', '有没有偏离本场目标', '帮我处理待办批注'];
 
@@ -98,12 +93,16 @@ function queuedSummary(tool: string, d: Record<string, unknown>): string {
   return '质量回环：未采纳';
 }
 
-export function EditorChat({ sceneId, text, onApplyText, onRefresh, seedMessage, onSeedConsumed }: Props) {
+export function EditorChat({ sceneId, text, onApplyText, onRefresh, seedMessage, onSeedConsumed,
+                             pendingTool, onPendingConsumed, onBusyChange }: Props) {
   const { bookId } = useWorkspace();
   const { showConfirm } = useDialog();
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState('');
+
+  /** busy 同时报给顶栏：按钮能显示"体检中…"并禁用（v1.43）。 */
+  const markBusy = (v: string) => { setBusy(v); onBusyChange?.(v); };
   const [openAnns, setOpenAnns] = useState<ProseAnnotation[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -151,7 +150,7 @@ export function EditorChat({ sceneId, text, onApplyText, onRefresh, seedMessage,
     if (!message || busy) return;
     setMsgs((m) => [...m, { role: 'user', text: message }]);
     setInput('');
-    setBusy('chat');
+    markBusy('chat');
     executedRef.current = [];
     finalRef.current = '';
 
@@ -192,7 +191,7 @@ export function EditorChat({ sceneId, text, onApplyText, onRefresh, seedMessage,
       setMsgs((m) => [...m.map((x) => (x.id === procId ? { ...x, done: true } : x)),
         { role: 'editor', text: '对话失败（后端不可达或超时）。', error: String(e) }]);
     } finally {
-      setBusy('');
+      markBusy('');
       inputRef.current?.focus();
     }
   };
@@ -250,10 +249,9 @@ export function EditorChat({ sceneId, text, onApplyText, onRefresh, seedMessage,
 
   const runTool = async (tool: string) => {
     if (!sceneId || busy) return;
-    const item = TOOLBAR.find((t) => t.tool === tool);
     const procId = 'proc-' + Date.now();
-    setBusy(tool);
-    setMsgs((m) => [...m, { role: 'process', id: procId, title: item?.label ?? (TOOL_LABEL[tool] ?? tool), stages: [] }]);
+    markBusy(tool);
+    setMsgs((m) => [...m, { role: 'process', id: procId, title: TOOL_LABEL[tool] ?? tool, stages: [] }]);
     try {
       if (QUEUED[tool]) {
         await runQueuedTool(procId, tool);
@@ -261,7 +259,7 @@ export function EditorChat({ sceneId, text, onApplyText, onRefresh, seedMessage,
         const denied = await runStreamTool(procId, tool);
         if (denied) {
           // 破坏性/需确认：不静默，弹确认后带 confirm 重试（与顶栏按钮同一套语义）
-          const ok = await showConfirm('确认执行', `${item?.label ?? tool}：${denied}`, false);
+          const ok = await showConfirm('确认执行', `${TOOL_LABEL[tool] ?? tool}：${denied}`, false);
           if (ok) await runStreamTool(procId, tool, true);
           else patchStages(procId, (st) => [...st, { kind: 'tool_done', text: tool, ok: false, done: true, detail: '已取消' }]);
         }
@@ -272,9 +270,18 @@ export function EditorChat({ sceneId, text, onApplyText, onRefresh, seedMessage,
         { kind: 'tool_done', text: tool, ok: false, done: true, detail: String(e instanceof Error ? e.message : e) }]);
     } finally {
       finishProc(procId);
-      setBusy('');
+      markBusy('');
     }
   };
+
+  // 顶栏按钮派活（v1.43）：切到责编 tab 后由这里接住并跑起来（tab 切换会让本组件重新挂载）
+  useEffect(() => {
+    if (!pendingTool || busy) return;
+    onPendingConsumed?.();
+    void runTool(pendingTool);
+    // runTool 每次渲染都是新函数，故意不放进依赖：只在 pendingTool 变化时触发一次
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingTool, busy]);
 
   return (
     <div className="ec-wrap">
@@ -282,6 +289,11 @@ export function EditorChat({ sceneId, text, onApplyText, onRefresh, seedMessage,
         <span className="ec-title">责编 · 本场</span>
         <span className="ec-sub">读：本场正文 · 角色卡 · 批注 · 审计</span>
       </div>
+      {!text.trim() && (
+        <div className="ec-empty-hint">
+          正文为空：先点顶栏「✍ 写手 · 初稿」，或切「✎ 编辑」手写一段 —— 体检/质检/审稿会都要读正文。
+        </div>
+      )}
 
       <div className="ec-msgs" ref={scrollRef}>
         {msgs.length === 0 && (
@@ -348,26 +360,6 @@ export function EditorChat({ sceneId, text, onApplyText, onRefresh, seedMessage,
             ))}
             {m.error && <div className="ec-err">{m.error}</div>}
           </div>
-        ))}
-      </div>
-
-      {/* 工具条：复杂按钮收进责编流（v1.43） */}
-      <div className="ec-tools">
-        {!text.trim() && (
-          <div className="ec-tools-hint">
-            正文为空：先点「✍ 写手 · 初稿」，或切「✎ 编辑」手写一段 —— 体检/质检/审稿会都要读正文。
-          </div>
-        )}
-        {TOOLBAR.map((t, i) => (
-          <button
-            key={t.tool}
-            className={`ec-tool${i === 0 ? ' primary' : ''}`}
-            title={t.hint}
-            disabled={!!busy || !text.trim()}
-            onClick={() => void runTool(t.tool)}
-          >
-            {busy === t.tool ? `${t.label} · 跑着…` : t.label}
-          </button>
         ))}
       </div>
 
