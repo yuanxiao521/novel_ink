@@ -5,7 +5,7 @@
  * 依赖：本机 playwright 下载的 chrome-headless-shell（自动探测）；后端 8001、前端 5173。
  * 用法：node scripts/ui-spec.mjs [--web=http://127.0.0.1:5173] [--base=http://127.0.0.1:8001]
  */
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -72,10 +72,20 @@ for (const b of books) {
 console.log("夹具：正文最长的场景 " + proseScene + "（" + proseLen + " 字，书 " + proseBook + "）");
 
 const port = 9377;
+// v1.43 修（B47）：**不要 detached**。Node 文档明说 Windows 上 detached 子进程"会有自己的控制台窗口"，
+// 而 chrome-headless-shell 是控制台程序 → 每次跑截图/剧本都弹一个 Windows Terminal 窗口；
+// 且 proc.kill() 只杀父进程，chrome 的 GPU/渲染子进程会残留（实测攒了 15 个 + 一摞窗口）。
+// 改为：不分离 + windowsHide + 退出时按**进程树** taskkill；任何 exit 路径都会清干净。
 const proc = spawn(shell, ["--no-sandbox", "--remote-debugging-port=" + port, "--no-first-run", "--disable-gpu",
-  "--user-data-dir=" + path.join(os.tmpdir(), "dsh-ui-spec"), "about:blank"], { detached: true, stdio: "ignore" });
+  "--user-data-dir=" + path.join(os.tmpdir(), "dsh-ui-spec"), "about:blank"], { windowsHide: true, stdio: "ignore" });
 proc.on("error", () => {});
-proc.unref();
+const killTree = () => {
+  try {
+    if (process.platform === "win32") spawnSync("taskkill", ["/PID", String(proc.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+    else proc.kill("SIGKILL");
+  } catch { /* 忽略 */ }
+};
+process.on("exit", killTree);
 
 let page = null;
 for (let i = 0; i < 40 && !page; i++) {
@@ -232,7 +242,7 @@ try {
 } catch (e) {
   step("UI 剧本异常", false, String(e));
 } finally {
-  ws.close(); try { proc.kill(); } catch {}
+  ws.close(); killTree();
 }
 
 const bad = results.filter((r) => !r.ok);
