@@ -7,8 +7,11 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import re
+import time
 
 from app.services.agents.context import render
 from app.services.agents.executor import ToolDenied, call_tool
@@ -20,6 +23,8 @@ from app.services.engine.schema_retry import validate_and_retry
 from app.services.llm.client import client as llm_client  # 模块级引用：便于测试统一替换
 
 MAX_ACTIONS = 4
+
+logger = logging.getLogger(__name__)
 
 PLAN_SCHEMA = {
     "type": "object",
@@ -161,6 +166,60 @@ async def editor_chat(service, scene_id: str, message: str, text: str = "", who:
             })
     return {"reply": plan.get("reply", ""), "actions": actions, "executed": executed, "percept": summary}
 
+def _summarize(tool: str, data: dict) -> str:
+    """把工具产出压成一句「干了什么、结论是什么」（v1.43）。
+
+    动机：作者反馈"点了体检/质检，只看到一句完成，不知道到底查了什么、结论是什么"。
+    按钮路径与对话路径共用这一份口径，避免两处各写一套摘要、迟早不一致。
+    """
+    d = data or {}
+    if tool == "prose.review":
+        rep = d.get("report") or {}
+        issues = rep.get("issues") or []
+        voice = rep.get("voice_findings") or []
+        high = len([i for i in issues if str((i or {}).get("severity")) == "high"])
+        return f"体检：{len(issues)} 条问题（高危 {high}）· 口吻 {len(voice)} 处"
+    if tool == "prose.verify":
+        op = d.get("opinion") or {}
+        return ("质检：伏笔推进 %d · 信念变化 %d · 因果 %d · 状态变化 %d · 风险 %d"
+                % (len(op.get("foreshadow_updates") or []), len(op.get("belief_deltas") or []),
+                   len(op.get("causal") or []), len(op.get("state_deltas") or []),
+                   len(op.get("risks") or [])))
+    if tool == "prose.polish":
+        return "润色：产出 %d 字候选 · %s" % (len(str(d.get("after") or "")), str(d.get("summary") or "")[:60])
+    if tool == "prose.quality_score":
+        total = d.get("total")
+        if total is None:
+            return "评审：正文为空，未评分"
+        return f"评审：{total} 分 · 弱项 {len(d.get('weak_points') or [])} 条"
+    if tool == "prose.scan_tone":
+        rules = ((d.get("report") or {}).get("rules")) or []
+        return f"AI 味扫描：命中 {len(rules)} 条（0-token 规则）"
+    if tool == "prose.spot_fix":
+        applied = [c for c in (d.get("changes") or []) if (c or {}).get("applied")]
+        if d.get("accepted") and applied:
+            return "定点修复：改 %d 句（命中 %s→%s）" % (len(applied), d.get("hits_before"), d.get("hits_after"))
+        return "定点修复：未采纳（%s）" % (d.get("reason") or d.get("skipped") or "双闸未通过")
+    if tool == "prose.quality_loop":
+        if d.get("accepted"):
+            return "质量回环：%s → %s 分（%s 路由，改 %d 处）" % (
+                (d.get("before") or {}).get("total"), (d.get("after_score") or {}).get("total"),
+                d.get("route"), len([c for c in (d.get("changes") or []) if (c or {}).get("applied")]))
+        return "质量回环：未采纳（%s）" % (d.get("reason") or d.get("skipped") or "评分达标或未改动")
+    if tool == "prose.draft":
+        return f"写手：产出初稿 {len(str(d.get('text') or ''))} 字"
+    if tool == "prose.review_meeting":
+        return "审稿会：" + str(d.get("verdict") or "")[:80]
+    if tool == "prose.save":
+        return f"保存：{len(str(d.get('text') or ''))} 字已落库"
+    cand = d.get("text") or d.get("after") or d.get("candidate")
+    if isinstance(cand, str) and cand.strip():
+        return f"产出候选 {len(cand)} 字"
+    if d.get("report") is not None:
+        return f"发现 {len((d.get('report') or {}).get('issues') or [])} 条问题"
+    return ""
+
+
 # ---------------------------------------------------------------- 流式版（v1.39：让作者看见责编在干什么）
 async def editor_chat_stream(service, scene_id: str, message: str, text: str = "", who: str = "author"):
     """editor_chat 的逐阶段流式版：感知 → 计划 → 逐工具执行 → 完成。
@@ -213,24 +272,84 @@ async def editor_chat_stream(service, scene_id: str, message: str, text: str = "
                 who=f"{who}:editor" if who else "editor", confirm=False, scene_id=scene_id,
             )
             executed.append({**res.to_dict(), "why": why})
-            summary_text = ""
-            cand = res.data.get("text") or res.data.get("after") or res.data.get("candidate")
-            if isinstance(cand, str) and cand.strip():
-                summary_text = f"产出候选 {len(cand)} 字"
-            elif res.data.get("report") is not None:
-                issues = ((res.data.get("report") or {}).get("issues")) or []
-                summary_text = f"发现 {len(issues)} 条问题"
+            # v1.43：摘要按工具类型给「查了什么、结论是什么」，与按钮路径共用 _summarize
             yield {"event": "tool_done", "data": {"tool": tool, "ok": True,
-                   "summary": summary_text, "result": res.to_dict(), "why": why}}
+                   "summary": _summarize(tool, res.data), "result": res.to_dict(), "why": why}}
         except ToolDenied as e:
             executed.append({
                 "tool": tool, "ok": False, "side_effect": TOOLS[tool].side_effect if tool in TOOLS else "?",
                 "error": str(e), "why": why,
             })
-            yield {"event": "tool_done", "data": {"tool": tool, "ok": False, "error": str(e), "why": why}}
+            yield {"event": "tool_done", "data": {"tool": tool, "ok": False, "denied": True,
+                   "error": str(e), "why": why}}
+        except Exception as e:  # noqa: BLE001  单个工具炸了不能让整条流静默断掉
+            logger.exception("[editor] 工具执行异常 tool=%s", tool)
+            executed.append({"tool": tool, "ok": False,
+                             "error": f"{type(e).__name__}: {e}", "why": why})
+            yield {"event": "tool_done", "data": {"tool": tool, "ok": False,
+                   "error": f"{type(e).__name__}: {e}", "why": why}}
 
     yield {"event": "reply", "data": {"reply": plan.get("reply", "")}}
     yield {"event": "done", "data": {"percept": summary, "executed": executed}}
+
+
+# ---------------------------------------------------------------- 按钮直调（v1.43：复杂按钮也看得见过程）
+_TICK_SEC = 2.0     # 心跳间隔：长工具（体检 ~50s / 质检 ~40s）也要让作者看到"还在跑、跑了多久"
+
+
+async def tool_run_stream(service, scene_id: str, tool: str, args: dict | None = None,
+                          who: str = "author", confirm: bool = False):
+    """**按钮**直调工具的流式版（v1.43）：与责编对话同一套事件词汇。
+
+    动机（用户实测反馈）："审稿会/体检/质检这些复杂按钮点了没有输出，也不知道怎么体检的"。
+    根因：按钮走同步 POST，结果只落到右侧「质检」tab——作者停在「责编」tab 时什么都看不到；
+    且结果卡只显示摘要，看不到明细。
+
+    事件序列（前端与对话路径共用同一张过程卡）：
+      tool_start → tick（每 2s 一次耗时心跳）→ tool_done（含 summary + 完整 result）→ done
+    被拒（ToolDenied）不静默：tool_done ok=false + denied=true，前端弹确认后带 confirm 重试。
+
+    连接断开**不取消**工具：LLM 已经花掉的钱要变成审计记录，不能白花。
+    """
+    decl = TOOLS.get(tool)
+    if decl is None:
+        yield {"event": "tool_done", "data": {"tool": tool, "ok": False, "error": f"未知工具：{tool}"}}
+        yield {"event": "done", "data": {"executed": []}}
+        return
+
+    yield {"event": "tool_start", "data": {"tool": tool, "why": decl.desc}}
+    t0 = time.time()
+    task = asyncio.ensure_future(call_tool(
+        service, EDITOR.id, tool, args or {},
+        who=f"{who}:editor" if who else "editor", confirm=confirm, scene_id=scene_id,
+    ))
+    try:
+        while True:
+            done, _pending = await asyncio.wait({task}, timeout=_TICK_SEC)
+            if done:
+                break
+            yield {"event": "tick", "data": {"tool": tool, "elapsed": round(time.time() - t0, 1)}}
+        res = task.result()
+    except ToolDenied as e:
+        yield {"event": "tool_done", "data": {"tool": tool, "ok": False, "denied": True,
+               "error": str(e), "elapsed": round(time.time() - t0, 1)}}
+        yield {"event": "done", "data": {"executed": []}}
+        return
+    except Exception as e:  # noqa: BLE001  异常必须下发，前端不能停在"处理中"
+        logger.exception("[editor] 按钮工具异常 tool=%s", tool)
+        yield {"event": "tool_done", "data": {"tool": tool, "ok": False,
+               "error": f"{type(e).__name__}: {e}", "elapsed": round(time.time() - t0, 1)}}
+        yield {"event": "done", "data": {"executed": []}}
+        return
+
+    payload = res.to_dict()
+    yield {"event": "tool_done", "data": {
+        "tool": tool, "ok": True, "summary": _summarize(tool, res.data),
+        "result": payload, "elapsed": round(time.time() - t0, 1),
+    }}
+    yield {"event": "done", "data": {"executed": [payload]}}
+
+
 # ---------------------------------------------------------------- 主笔（v1.40）：计划式工具对话
 _CHIEF_PLAN_SCHEMA = {
     "reply": "str 给作者的中文说明",

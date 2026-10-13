@@ -36,3 +36,5 @@ frontend/vite.config.js
 backups/
 .git-commit-msg.tmp
 logs/
+# 宿主工具误写的字面量路径（%SystemDrive% 未被展开，非本项目产物）
+%SystemDrive%/

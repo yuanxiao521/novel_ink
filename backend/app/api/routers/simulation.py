@@ -654,20 +654,6 @@ async def chief_tools_chat(book_id: str, body: chief.ChiefChatIn,
     return await chief_chat_with_tools(svc, book_id, last_user)
 
 
-@router.post("/books/{book_id}/chief/tools")
-async def chief_tools_chat(book_id: str, body: chief.ChiefChatIn,
-                           svc: SimulationService = Depends(get_service)):
-    """主笔的计划式工具对话（v1.40）：对话 → 计划 → ToolExecutor 执行 → 汇报。
-
-    与责编 /agent/chat 同一模式；最后一条 user 消息作为作者要求。
-    """
-    last_user = ""
-    for m in body.messages:
-        if m.role == "user" and m.content:
-            last_user = str(m.content)
-    return await chief_chat_with_tools(svc, book_id, last_user)
-
-
 # ---------------------------------------------------------------- 任务队列（v1.41）
 class AsyncJobIn(models.BaseModel):
     """后台任务入参（按 kind 取所需字段）。"""

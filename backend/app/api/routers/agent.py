@@ -50,6 +50,13 @@ class ToolCallIn(BaseModel):
     confirm: bool = False
 
 
+class ToolRunIn(BaseModel):
+    """按钮直调（SSE 版 · v1.43）：工具名 + 参数 + 是否已确认。"""
+    tool: str = Field(min_length=1)
+    args: dict = {}
+    confirm: bool = False
+
+
 class AnnotationPatch(BaseModel):
     status: str | None = None
     note: str | None = None
@@ -80,6 +87,30 @@ async def agent_chat_stream(scene_id: str, body: EditorChatIn, svc: SimulationSe
     async def gen():
         try:
             async for ev in editor_chat_stream(svc, scene_id, body.message, body.text, body.who or "author"):
+                yield f"event: {ev['event']}\ndata: {_json.dumps(ev['data'], ensure_ascii=False)}\n\n"
+        except Exception as e:  # noqa: BLE001  流中异常也要让前端看到，不能静默断流
+            yield f"event: error\ndata: {_json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@router.post("/scenes/{scene_id}/agent/run/stream")
+async def agent_run_stream(scene_id: str, body: ToolRunIn, svc: SimulationService = Depends(get_service)):
+    """**按钮**直调工具（SSE · v1.43）：复杂按钮的执行过程也变成可见的阶段流。
+
+    与 /agent/chat/stream 同一事件词汇（tool_start / tick / tool_done / done），
+    前端因此能用同一张过程卡渲染"按钮"与"对话"两条路径——作者点「体检」也能看到
+    它在读什么、跑了多久、查出几条、明细是什么，而不是只等一句"完成"。
+    """
+    import json as _json
+
+    from app.services.agents.editor import tool_run_stream
+
+    async def gen():
+        try:
+            async for ev in tool_run_stream(svc, scene_id, body.tool, body.args,
+                                            who="author", confirm=body.confirm):
                 yield f"event: {ev['event']}\ndata: {_json.dumps(ev['data'], ensure_ascii=False)}\n\n"
         except Exception as e:  # noqa: BLE001  流中异常也要让前端看到，不能静默断流
             yield f"event: error\ndata: {_json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"

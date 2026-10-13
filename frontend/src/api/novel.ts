@@ -1127,17 +1127,16 @@ export type EditorStage =
   | { event: 'done'; data: { percept: PerceptSummary; executed: AgentExecuted[] } }
   | { event: 'error'; data: { error: string } };
 
-/** 流式责编对话：逐阶段回调 onStage，结束返回最终结果（供状态归档）。 */
-export async function editorChatStream(
-  sceneId: string,
-  message: string,
-  text: string,
-  onStage: (s: EditorStage) => void,
+/** SSE 读取器（v1.43 抽出）：POST → 逐帧回调 {event,data}；非 2xx 抛错（带后端 detail）。 */
+async function streamPost(
+  url: string,
+  body: Record<string, unknown>,
+  onStage: (s: { event: string; data: unknown }) => void,
 ): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/v1/scenes/${sceneId}/agent/chat/stream`, {
+  const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, text, who: 'author' }),
+    body: JSON.stringify(body),
   });
   if (!res.ok || !res.body) {
     let detail = `${res.status}`;
@@ -1158,9 +1157,51 @@ export async function editorChatStream(
       const dataLine = part.split('\n').find((l) => l.startsWith('data: '));
       if (!evLine || !dataLine) continue;
       const event = evLine.slice(7).trim();
-      try { onStage({ event, data: JSON.parse(dataLine.slice(6)) } as EditorStage); } catch { /* 跳过坏帧 */ }
+      try { onStage({ event, data: JSON.parse(dataLine.slice(6)) }); } catch { /* 跳过坏帧 */ }
     }
   }
+}
+
+/** 流式责编对话：逐阶段回调 onStage，结束返回最终结果（供状态归档）。 */
+export async function editorChatStream(
+  sceneId: string,
+  message: string,
+  text: string,
+  onStage: (s: EditorStage) => void,
+): Promise<void> {
+  await streamPost(
+    `${API_BASE}/api/v1/scenes/${sceneId}/agent/chat/stream`,
+    { message, text, who: 'author' },
+    (s) => onStage(s as EditorStage),
+  );
+}
+
+/* ---------- 按钮直调工具（SSE · v1.43"复杂按钮也看得见过程"） ---------- */
+
+/** 按钮工具的阶段事件：与对话同一词汇，外加 tick（长工具的耗时心跳）。 */
+export type ToolRunStage =
+  | { event: 'tool_start'; data: { tool: string; why?: string } }
+  | { event: 'tick'; data: { tool: string; elapsed: number } }
+  | { event: 'tool_done'; data: { tool: string; ok: boolean; denied?: boolean; summary?: string; error?: string; elapsed?: number; result?: AgentExecuted } }
+  | { event: 'done'; data: { executed: AgentExecuted[] } }
+  | { event: 'error'; data: { error: string } };
+
+/**
+ * 按钮直调工具的流式版：作者点「体检 / 质检 / 审稿会」等，也能看到
+ * 开始 → 跑了多久 → 查出几条 → 明细。denied=true 时前端弹确认后带 confirm 重试。
+ */
+export async function toolRunStream(
+  sceneId: string,
+  tool: string,
+  args: Record<string, unknown>,
+  onStage: (s: ToolRunStage) => void,
+  confirm = false,
+): Promise<void> {
+  await streamPost(
+    `${API_BASE}/api/v1/scenes/${sceneId}/agent/run/stream`,
+    { tool, args, confirm },
+    (s) => onStage(s as ToolRunStage),
+  );
 }
 
 

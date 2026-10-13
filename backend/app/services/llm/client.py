@@ -1,6 +1,8 @@
 """OpenAI 兼容 chat/completions 客户端（async）。
 
-封装强/廉两层模型路由（config.model_strong / model_cheap），供角色思考层/导演调用。
+封装模型分档路由（config.model_strong / model_cheap），供角色思考层/导演调用。
+v1.43：两档默认同模型（deepseek-v4.1-flash），不再按强弱分流；接口保持不变，
+需要时改 .env 一行即可恢复分档。
 任何失败（无 key / 网络 / JSON 解析）一律返回 None，调用方走确定性回退脚本，
 绝不向引擎抛异常 —— 保证无 API Key 也能跑通「涌现 + 护栏」闭环。
 
@@ -52,6 +54,8 @@ def llm_status() -> dict[str, Any]:
         "base_url": settings.openai_base_url,
         "model": settings.model_cheap,
         "model_strong": settings.model_strong,
+        # v1.43：是否同档（true = 不分强弱，全链路同一个模型）
+        "unified": settings.model_strong == settings.model_cheap,
         **_LLM_STATE,
     }
 

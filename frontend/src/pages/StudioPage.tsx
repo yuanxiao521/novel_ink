@@ -10,8 +10,8 @@ import { TasksPanel } from '../components/studio/TasksPanel';
 import { ProseBody, splitParagraphs } from '../components/studio/ProseBody';
 import { useWorkspace } from '../context/WorkspaceContext';
 import {
-  callAgentTool, createAnnotation, deleteAnnotation, enqueueBookJob, fetchSceneDetail, listAgentTasks,
-  listAgentTools, listAnnotations, listProseNotes, pollJob, sceneScriptUrl,
+  callAgentTool, createAnnotation, deleteAnnotation, fetchSceneDetail, listAgentTasks,
+  listAgentTools, listAnnotations, listProseNotes, sceneScriptUrl,
 } from '../api/novel';
 import type { AgentTask, ProseAnnotation, ProseNote, SceneDetail } from '../api/novel';
 
@@ -22,7 +22,8 @@ import type { AgentTask, ProseAnnotation, ProseNote, SceneDetail } from '../api/
      write 只出候选 → 采纳才改正文；destructive（保存/批注状态）先弹确认再带 confirm 重试。
    ========================================================================== */
 
-type SideTab = 'editor' | 'quality' | 'tasks' | 'voices';
+// v1.43：「质检」tab 已取消——复杂工具的**过程与明细**都内联在「责编」流里（ToolResult 富卡）
+type SideTab = 'editor' | 'tasks' | 'voices';
 type AuditFilter = 'all' | 'pending' | 'approved' | 'rejected';
 
 const KIND_LABEL: Record<string, string> = {
@@ -30,15 +31,9 @@ const KIND_LABEL: Record<string, string> = {
   tool: '🔧 工具', bookkeeping: '📒 记账',
 };
 const STATUS_LABEL: Record<string, string> = { pending: '待审阅', approved: '已批准', rejected: '已驳回' };
-const TOOL_LABEL: Record<string, string> = {
-  'prose.review_meeting': '审稿会', 'prose.quality_score': '评审',
-  'prose.review': '体检', 'prose.polish': '润色', 'prose.verify': '质检',
-  'prose.scan_tone': 'AI 味扫描', 'prose.spot_fix': '定点修复', 'prose.quality_loop': '质量回环',
-};
-
 export function StudioPage() {
   const { sceneId: routeSceneId } = useParams<{ sceneId: string }>();
-  const { sceneId: ctxSceneId, bookId } = useWorkspace();
+  const { sceneId: ctxSceneId } = useWorkspace();
   const sceneId = routeSceneId || ctxSceneId;
   const nav = useNavigate();
   const { showConfirm } = useDialog();
@@ -52,12 +47,11 @@ export function StudioPage() {
   const [tasks, setTasks] = useState<AgentTask[]>([]);
   const [busy, setBusy] = useState('');
   const [toast, setToast] = useState('');
-  const [last, setLast] = useState<{ tool: string; data: Record<string, unknown> } | null>(null);
   // 侧栏 tab 支持深链：?tab=editor|quality|tasks（便于分享与截图核对）
   const [params, setParams] = useSearchParams();
   const tabParam = params.get('tab') as SideTab | null;
   const [sideTab, setSideTab] = useState<SideTab>(
-    tabParam && ['editor', 'quality', 'tasks', 'voices'].includes(tabParam) ? tabParam : 'editor',
+    tabParam && ['editor', 'tasks', 'voices'].includes(tabParam) ? tabParam : 'editor',
   );
   const switchTab = (k: SideTab) => { setSideTab(k); setParams({ tab: k }); };
   const [auditFilter, setAuditFilter] = useState<AuditFilter>('all');
@@ -86,7 +80,6 @@ export function StudioPage() {
       setBusy(tool);
       try {
         const res = await callAgentTool(sceneId, tool, args, opts?.confirm ?? false);
-        setLast({ tool, data: res.data ?? {} });
         const t = (res.data?.text ?? res.data?.after) as string | undefined;
         if (typeof t === 'string' && t.trim()) {
           setText(t);
@@ -110,28 +103,6 @@ export function StudioPage() {
     },
     [sceneId, busy, load, showConfirm],
   );
-
-  /* ---------- 审稿会（v1.41 任务队列版）：后台跑，进度进按钮文案，结果进右栏 ---------- */
-  const runMeetingAsync = async () => {
-    if (!sceneId || busy) return;
-    setBusy('prose.review_meeting');
-    try {
-      const { job_id } = await enqueueBookJob(bookId ?? '', 'review_meeting', { text, scene_id: sceneId });
-      const st = await pollJob(job_id, (s) => {
-        const lastStage = (s.stages ?? []).slice(-1)[0];
-        if (lastStage) setBusy(`prose.review_meeting · ${lastStage.text}`);
-      });
-      if (st.status === 'failed') throw new Error(st.error || '审稿会失败');
-      const result = (st.result ?? {}) as Record<string, unknown>;
-      setLast({ tool: 'prose.review_meeting', data: result });
-      setBusy('');
-      load();
-      flash('审稿会完成（右栏可见步骤与裁决）');
-    } catch (e) {
-      setBusy('');
-      flash(`审稿会失败：${String(e instanceof Error ? e.message : e)}`);
-    }
-  };
 
   /* ---------- 批注 ---------- */
   const onAnnotate = async (paraIndex: number, quote: string, note: string) => {
@@ -174,64 +145,6 @@ export function StudioPage() {
     return { rows: merged, hidden: Math.max(0, filtered.length - keep.length) };
   }, [notes, auditFilter, auditAll]);
 
-  const resultCard = (r: { tool: string; data: Record<string, unknown> }) => {
-    const d = r.data;
-    const t = (d.text ?? d.after ?? d.candidate) as string | undefined;
-    const verdict = typeof d.verdict === 'string' ? d.verdict : '';
-    const steps = Array.isArray(d.steps) ? (d.steps as Array<Record<string, unknown>>) : [];
-    const report = d.report as { overall?: string; issues?: Array<{ severity: string; text: string; suggestion?: string }> } | undefined;
-    const opinion = d.opinion as { risks?: string[]; foreshadow_updates?: unknown[]; belief_deltas?: unknown[] } | undefined;
-    const score = d.total ?? d.score;
-    return (
-      <div className="s2-result">
-        <div className="s2-result-head">最近一次：<b>{TOOL_LABEL[r.tool] ?? r.tool}</b></div>
-        {verdict && <div className="s2-verdict">裁决：{verdict}</div>}
-        {steps.length > 0 && (
-          <div className="s2-steps">
-            {steps.map((s, i) => (
-              <span className="s2-step" key={i}>
-                {String(s.step)}
-                {typeof s.total === 'number' ? ` ${s.total}` : ''}
-                {typeof s.issues === 'number' ? ` ${s.issues} 条` : ''}
-                {typeof s.risks === 'number' ? ` 风险 ${s.risks}` : ''}
-              </span>
-            ))}
-          </div>
-        )}
-        {typeof score === 'number' && <div className="s2-score">质量分 <b>{Math.round(score as number)}</b></div>}
-        {report && (
-          <>
-            {report.overall && <div className="s2-result-line">{report.overall}</div>}
-            {(report.issues ?? []).slice(0, 6).map((it, i) => (
-              <div className="s2-issue" key={i}>
-                <span className={`s2-sev ${it.severity}`}>{it.severity}</span>
-                <span>{it.text}</span>
-                {it.suggestion && <em>→ {it.suggestion}</em>}
-              </div>
-            ))}
-          </>
-        )}
-        {opinion && (
-          <>
-            <div className="s2-result-line">
-              伏笔推进 {(opinion.foreshadow_updates ?? []).length} · 信念变化 {(opinion.belief_deltas ?? []).length} · 风险 {(opinion.risks ?? []).length}
-            </div>
-            {(opinion.risks ?? []).slice(0, 4).map((x, i) => (
-              <div className="s2-issue" key={i}><span className="s2-sev high">risk</span><span>{x}</span></div>
-            ))}
-          </>
-        )}
-        {typeof t === 'string' && t.trim() && (
-          <div className="s2-preview">
-            <div className="s2-preview-text">{t.slice(0, 160)}{t.length > 160 ? '……' : ''}</div>
-            <button className="ws-btn ws-btn-primary" onClick={() => { setText(t); flash('候选已放入正文区（保存才落库）'); }}>采纳到正文</button>
-          </div>
-        )}
-        {!report && !opinion && typeof score !== 'number' && !t && <div className="s2-result-line">（明细见下方审计记录）</div>}
-      </div>
-    );
-  };
-
   const shell = (children: React.ReactNode) => (
     <div className="app-shell">
       <Sidebar active="studio" />
@@ -271,27 +184,9 @@ export function StudioPage() {
         <button className="ws-btn ws-btn-primary" disabled={!!busy} onClick={() => void runTool('prose.draft', {}, { label: '写手·初稿' })}>
           {busy === 'prose.draft' ? '写手中…' : '✍ 写手 · 初稿'}
         </button>
-        {/* D 批：三个按钮收敛成一次"审稿会"（体检 → 润色 → 质检 → 评审 + 裁决） */}
-        <button
-          className="ws-btn s2-meeting"
-          disabled={!!busy || !text.trim()}
-          title="体检与质检并发 → 润色（有问题才做）→ 评审，后台跑完给出裁决（刷新不中断）"
-          onClick={() => void runMeetingAsync()}
-        >
-          {busy.startsWith('prose.review_meeting')
-            ? '审稿中…' + (busy.includes(' · ') ? busy.split(' · ')[1].slice(0, 14) : '')
-            : '🗂 审稿会'}
-        </button>
-        <details className="s2-more">
-          <summary>精修工具 ▾</summary>
-          <div className="s2-more-body">
-            {(['prose.review', 'prose.polish', 'prose.verify', 'prose.quality_score', 'prose.scan_tone', 'prose.spot_fix', 'prose.quality_loop'] as const).map((tool) => (
-              <button key={tool} className="ws-btn" disabled={!!busy || !text.trim()} onClick={() => void runTool(tool, { text }, { label: TOOL_LABEL[tool] })}>
-                {TOOL_LABEL[tool]}
-              </button>
-            ))}
-          </div>
-        </details>
+        {/* v1.43：审稿会 / 体检 / 质检 / 润色 / 评审 / AI 味 / 定点修复 / 质量回环
+            已收进右栏「责编」的工具条——那里的过程卡与明细富卡才是作者要看的东西。 */}
+        <span className="s2-moved">→ 审稿会与体检/质检/润色在右栏「责编」里，点了就能看到过程与明细</span>
         <span className="s2-spacer" />
         <button className="ws-btn" onClick={() => setEditing((v) => !v)}>{editing ? '✓ 完成编辑' : '✎ 编辑'}</button>
         <button className="ws-btn ws-btn-primary" disabled={!!busy || !text.trim()} onClick={() => void runTool('prose.save', { text }, { label: '保存正文' })}>💾 保存</button>
@@ -329,8 +224,7 @@ export function StudioPage() {
           <div className="s2-side-head">
             <Tabs
               items={[
-                { key: 'editor', label: '责编' },
-                { key: 'quality', label: '质检', badge: openAnns.length },
+                { key: 'editor', label: '责编', badge: openAnns.length },
                 { key: 'tasks', label: '任务', badge: tasks.filter((t) => t.status !== 'completed' && t.status !== 'failed').length },
                 { key: 'voices', label: '角色' },
               ]}
@@ -347,7 +241,7 @@ export function StudioPage() {
             <div className="s2-quality">
               <TasksPanel sceneId={sceneId} tasks={tasks} onRefresh={load} onFlash={flash} />
             </div>
-          ) : sideTab === 'editor' ? (
+          ) : (
             <EditorChat
               sceneId={sceneId}
               text={text}
@@ -356,10 +250,6 @@ export function StudioPage() {
               seedMessage={chatSeed}
               onSeedConsumed={() => setChatSeed('')}
             />
-          ) : (
-            <div className="s2-quality">
-              {last ? resultCard(last) : <div className="s2-hint">还没跑过质检类工具。点上面的「质检」或「质量回环」，结果会显示在这里；明细永远能在下方审计记录里查到。</div>}
-            </div>
           )}
         </aside>
       </div>

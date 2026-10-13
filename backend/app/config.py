@@ -1,8 +1,13 @@
-"""运行配置：DB（PostgreSQL+pgvector）、LLM 路由、模型分工（强/廉）。
+"""运行配置：DB（PostgreSQL+pgvector）、LLM 路由、模型分档。
 
-用环境变量覆盖默认值（对齐 MVP §5.1「强模型=角色演绎，廉价模型=导演/成文/评估器」）。
-默认关闭 LLM：未配 `NOVEL_OPENAI_BASE_URL` + key 时，LLM 路由自动落到**确定性回退**，
-保证「涌现+护栏」闭环没有 API Key 也能端到端跑通、便于前端打通。
+模型分档（v1.43 起**暂不分强弱**）：`model_strong`/`model_cheap` 两个旋钮保留，
+但默认值与 .env 都指向同一个 `deepseek-v4.1-flash`——实测强弱档混用带来的收益
+（角色演绎略好）远小于代价（两套模型都要压测/调 prompt、限流与配额翻倍、
+出问题先要判断是哪个档）。要再分档：只改 `NOVEL_MODEL_STRONG` 一行即可，
+代码侧无需任何改动（`/health.llm.unified` 会显示当前是否同档）。
+
+用环境变量覆盖默认值。默认关闭 LLM：未配 `NOVEL_OPENAI_BASE_URL` + key 时，
+LLM 路由自动落到**确定性回退**，保证「涌现+护栏」闭环没有 API Key 也能端到端跑通。
 """
 from __future__ import annotations
 
@@ -23,8 +28,9 @@ class Settings(BaseSettings):
     # ---- LLM（OpenAI 兼容协议） ----
     openai_base_url: str = ""                # 例：https://api.openai.com/v1
     openai_api_key: str = ""                 # 例：sk-xxx
-    model_strong: str = "gpt-4o-mini"        # 角色演绎（强）
-    model_cheap: str = "gpt-4o-mini"         # 导演/张力评估/成文（廉）
+    # v1.43：默认同档（都是 deepseek-v4.1-flash）。保留两个字段 = 保留"随时再分档"的能力。
+    model_strong: str = "deepseek-v4.1-flash"   # 角色演绎（原强档）
+    model_cheap: str = "deepseek-v4.1-flash"    # 导演/张力评估/成文（原廉档）
 
     # ---- 任务队列（arq · v1.41）：长 LLM 操作后台化 ----
     redis_url: str = "redis://127.0.0.1:6379/1"   # db1（与宿主上其它项目 db0 隔离）

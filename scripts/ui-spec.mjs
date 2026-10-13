@@ -16,6 +16,7 @@ const BASE = (args.find((a) => a.startsWith("--base=")) || "--base=http://127.0.
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const results = [];
 const step = (name, ok, detail = "") => { results.push({ name, ok, detail }); console.log((ok ? "PASS  " : "FAIL  ") + name + (detail ? "  :: " + detail : "")); };
+const skip = (name, why = "") => { results.push({ name, ok: true, detail: "SKIP " + why }); console.log("SKIP  " + name + (why ? "  :: " + why : "")); };
 
 const findShell = async () => {
   if (process.env.HEADLESS_SHELL) return process.env.HEADLESS_SHELL;
@@ -55,6 +56,20 @@ for (const b of books) {
 }
 const other = books.find((b) => !host || b.id !== host.book.id);
 if (!host || !other) { console.log("SKIP：夹具不足（需要一本有场景的书 + 另一本书）"); process.exit(0); }
+
+// v1.43：⑧⑨ 需要一个**有正文**的场景（责编工具条在正文为空时是禁用的，避免误判成"按钮没输出"）
+let proseScene = host.sceneId, proseBook = host.book.id, proseLen = 0;
+for (const b of books) {
+  const t = await (await fetch(BASE + "/api/v1/books/" + b.id + "/tree")).json().catch(() => null);
+  for (const ch of (t && t.chapters) || []) {
+    for (const s of ch.scenes || []) {
+      const d = await (await fetch(BASE + "/api/v1/scenes/" + s.id)).json().catch(() => null);
+      const n = d && d.final_prose ? d.final_prose.trim().length : 0;
+      if (n > proseLen) { proseLen = n; proseScene = s.id; proseBook = b.id; }
+    }
+  }
+}
+console.log("夹具：正文最长的场景 " + proseScene + "（" + proseLen + " 字，书 " + proseBook + "）");
 
 const port = 9377;
 const proc = spawn(shell, ["--no-sandbox", "--remote-debugging-port=" + port, "--no-first-run", "--disable-gpu",
@@ -174,6 +189,46 @@ try {
     return JSON.stringify({ editorTab: location.search.includes("tab=editor"), seed: seed ? seed.value.slice(0, 60) : "", annsBadge: anns });
   })()`)) || "{}");
   step("⑦ 副驾闭环：选中 → 问责编自动落批注并预填对话", !annFlow.err && annFlow.editorTab && String(annFlow.seed).includes("批注意见"), JSON.stringify(annFlow));
+
+  // ⑧ 责编工具条（v1.43）：复杂按钮收进责编流，顶栏不再重复，"质检" tab 已并入
+  await goto(WEB + "/studio/" + proseScene + "?book=" + proseBook + "&tab=editor", 8000);
+  const bar = JSON.parse((await ev("(() => {"
+    + "const tools = Array.from(document.querySelectorAll('.ec-tool'));"
+    + "const moved = document.querySelector('.s2-moved');"
+    + "const oldBtn = Array.from(document.querySelectorAll('.s2-actions button')).some((b) => b.textContent.includes('审稿会'));"
+    + "const sideHead = document.querySelector('.s2-side-head');"
+    + "return JSON.stringify({ n: tools.length, first: tools[0] ? tools[0].textContent.trim() : '', moved: !!moved, oldBtn: oldBtn, tabs: sideHead ? sideHead.innerText.replace(/\\s+/g, ' ') : '' });"
+    + "})()")) || "{}");
+  step("⑧ 责编工具条：复杂按钮收进责编流（顶栏不重复 / 质检 tab 已并入）",
+    bar.n === 8 && String(bar.first).includes("审稿会") && bar.moved === true && bar.oldBtn === false && !String(bar.tabs).includes("质检"),
+    JSON.stringify(bar));
+
+  // ⑨ 点「体检」→ 过程卡（tool_start→tool_done 摘要）+ 结果富卡（明细可见）——用户实测痛点的回归门
+  const health = await (await fetch(BASE + "/health")).json().catch(() => null);
+  if (!health || !health.llm || !health.llm.configured) {
+    skip("⑨ 体检按钮：过程卡 + 结果富卡", "LLM 未配置（/health.llm.configured=false）");
+  } else {
+    const rv = JSON.parse((await ev("(async () => {"
+      + "const b = Array.from(document.querySelectorAll('.ec-tool')).find((x) => x.textContent.includes('体检'));"
+      + "if (!b) return JSON.stringify({ err: 'no 体检 button' });"
+      + "b.click();"
+      + "const t0 = Date.now();"
+      + "for (;;) {"
+      + "  if (Date.now() - t0 > 120000) return JSON.stringify({ err: 'timeout', seen: (document.querySelector('.ec-proc') ? document.querySelector('.ec-proc').innerText : '').slice(0, 200) });"
+      + "  if (document.querySelector('.ec-proc .ec-stage.tool_done')) break;"
+      + "  await new Promise((r) => setTimeout(r, 1000));"
+      + "}"
+      + "await new Promise((r) => setTimeout(r, 800));"
+      + "const card = document.querySelector('.ec-result .tr-card');"
+      + "return JSON.stringify({ stages: document.querySelectorAll('.ec-proc .ec-stage').length,"
+      + "  detail: (document.querySelector('.ec-proc .ec-stage.tool_done .ec-stage-text') || {}).innerText || '',"
+      + "  card: !!card, items: document.querySelectorAll('.ec-result .tr-item').length,"
+      + "  subs: Array.from(document.querySelectorAll('.ec-result .tr-sub')).map((x) => x.textContent.trim()).slice(0, 5) });"
+      + "})()")) || "{}");
+    step("⑨ 体检按钮：过程卡 + 结果富卡（明细可见）",
+      !rv.err && rv.card === true && /体检：\d+ 条问题/.test(String(rv.detail)) && (rv.subs || []).some((s) => String(s).includes("问题清单")),
+      JSON.stringify(rv));
+  }
 } catch (e) {
   step("UI 剧本异常", false, String(e));
 } finally {
