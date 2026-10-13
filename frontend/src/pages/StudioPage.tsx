@@ -116,7 +116,7 @@ export function StudioPage() {
     if (!sceneId || busy) return;
     setBusy('prose.review_meeting');
     try {
-      const { job_id } = await enqueueBookJob(bookId ?? '', 'review_meeting', { text });
+      const { job_id } = await enqueueBookJob(bookId ?? '', 'review_meeting', { text, scene_id: sceneId });
       const st = await pollJob(job_id, (s) => {
         const lastStage = (s.stages ?? []).slice(-1)[0];
         if (lastStage) setBusy(`prose.review_meeting · ${lastStage.text}`);
@@ -275,10 +275,12 @@ export function StudioPage() {
         <button
           className="ws-btn s2-meeting"
           disabled={!!busy || !text.trim()}
-          title="体检 → 润色（有问题才做）→ 质检 → 评审，一次跑完并给出裁决"
+          title="体检与质检并发 → 润色（有问题才做）→ 评审，后台跑完给出裁决（刷新不中断）"
           onClick={() => void runMeetingAsync()}
         >
-          {busy === 'prose.review_meeting' ? '审稿中…' : '🗂 审稿会'}
+          {busy.startsWith('prose.review_meeting')
+            ? '审稿中…' + (busy.includes(' · ') ? busy.split(' · ')[1].slice(0, 14) : '')
+            : '🗂 审稿会'}
         </button>
         <details className="s2-more">
           <summary>精修工具 ▾</summary>

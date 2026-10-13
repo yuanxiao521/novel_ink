@@ -1180,7 +1180,7 @@ export interface JobState {
 export async function enqueueBookJob(
   bookId: string,
   kind: 'plan_batch' | 'review_meeting' | 'quality_loop',
-  body: { direction?: string; batch_size?: number; batch_from?: number; text?: string } = {},
+  body: { direction?: string; batch_size?: number; batch_from?: number; text?: string; scene_id?: string } = {},
 ): Promise<{ job_id: string; kind: string; status: string }> {
   return send('POST', `/api/v1/books/${bookId}/jobs/${kind}`, body);
 }

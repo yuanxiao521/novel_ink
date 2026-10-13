@@ -77,16 +77,22 @@ class _MeetingSvc:
 
     async def prose_review(self, scene_id: str, text: str):
         self.calls.append("review")
-        return {"report": {"overall": "还行", "issues": self._issues}}
+        report: dict = {"overall": "还行", "issues": self._issues}
+        vf = getattr(self, "_voice_findings", None)
+        if vf:
+            report["voice_findings"] = vf
+        return {"report": report}
 
     async def prose_polish(self, scene_id: str, text: str):
         self.calls.append("polish")
         return {"after": "打磨后的正文", "summary": "删一句"}
 
-    async def prose_verify(self, scene_id: str, text: str):
+    async def prose_verify(self, scene_id: str, text: str, skip_voice: bool = False):
+        """v1.42：审稿会并发路径带 skip_voice=True（口吻由体检独家负责）。"""
         self.calls.append("verify")
-        # 默认有一处风险提示；需要"干净场景"的用例把它置空（见 _CleanSvc）
-        return {"opinion": {"risks": self._risks, "foreshadow_updates": [], "belief_deltas": []}}
+        self.skip_voice_seen = skip_voice
+        return {"opinion": {"risks": list(self._risks), "foreshadow_updates": [],
+                            "belief_deltas": [], "voice_risks": []}}
 
     async def prose_quality_score(self, scene_id: str, text: str = ""):
         self.calls.append("score")
@@ -102,7 +108,9 @@ async def test_review_meeting_orchestrates_and_audits():
 
     svc = _MeetingSvc()
     out = await run_meeting(svc, "scene-1", "原始正文")
-    assert svc.calls == ["review", "polish", "verify", "score"]      # 一次编排，顺序固定
+    # v1.42：体检与质检并发（互不依赖），润色在体检之后按需，评审最后
+    assert svc.calls == ["review", "verify", "polish", "score"]
+    assert svc.skip_voice_seen is True      # 口吻不重复查（由体检独家负责）
     assert [s["step"] for s in out["steps"]] == ["体检", "润色", "质检", "评审"]
     assert out["candidate"] == "打磨后的正文"
     assert "质量回环" in out["verdict"]                               # 76 < 78
@@ -120,6 +128,24 @@ async def test_review_meeting_skips_polish_when_clean():
     out = await run_meeting(svc, "scene-1", "原始正文")
     assert svc.calls == ["review", "verify", "score"]                # 没问题就不白跑润色
     assert out["candidate"] == "" and "可直接保存" in out["verdict"]
+
+
+async def test_review_meeting_merges_voice_findings_into_verify():
+    """v1.42：体检的口吻发现必须合并回质检意见（字段形状不变，下游零改动）。"""
+    from app.services.agents.review_meeting import run_meeting
+
+    svc = _MeetingSvc(issues=[], score={"total": 92, "scores": {"coherence": 92}, "weak_points": []})
+    svc._risks = ["账本冲突"]
+    svc._voice_findings = [
+        {"char": "沈拂", "evidence": "他轻嗤一声", "issue": "外露情绪不符其克制腔调", "suggestion": "改为纯动作"},
+    ]
+    out = await run_meeting(svc, "scene-1", "原始正文")
+    op = out["verify"]["opinion"]
+    assert len(op["voice_risks"]) == 1 and op["voice_risks"][0]["char"] == "沈拂"
+    assert op["voice_risks"][0]["risk"] == "外露情绪不符其克制腔调"     # issue → risk 映射
+    assert any(str(r).startswith("口吻：沈拂") for r in op["risks"])   # 人类可读行也补上
+    # 体检步骤里体现口吻条数（审计可解释）
+    assert [s for s in out["steps"] if s["step"] == "体检"][0]["voice"] == 1
 
 
 async def test_review_meeting_handles_empty_prose():

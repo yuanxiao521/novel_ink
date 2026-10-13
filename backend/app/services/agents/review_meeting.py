@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 import uuid
@@ -41,10 +42,18 @@ async def run_meeting(service, scene_id: str, text: str = "") -> dict:
 
     steps: list[dict] = []
 
-    review = await service.prose_review(scene_id, body)
-    issues = ((review or {}).get("report") or {}).get("issues") or []
+    # v1.42：体检与质检**互不依赖** → 并发执行；口吻只由体检做一遍（质检走 skip_voice）。
+    # 实测动机：串行时体检 52.9s + 质检 43.2s = 96s，且两者重复查口吻。
+    review, verify = await asyncio.gather(
+        service.prose_review(scene_id, body),
+        service.prose_verify(scene_id, body, skip_voice=True),
+    )
+    report = (review or {}).get("report") or {}
+    issues = report.get("issues") or []
     high = [i for i in issues if str((i or {}).get("severity")) == "high"]
-    steps.append({"step": "体检", "issues": len(issues), "high": len(high)})
+    voice_findings = report.get("voice_findings") or []
+    steps.append({"step": "体检", "issues": len(issues), "high": len(high),
+                  "voice": len(voice_findings)})
 
     candidate = ""
     if issues:
@@ -52,8 +61,18 @@ async def run_meeting(service, scene_id: str, text: str = "") -> dict:
         candidate = str((polish or {}).get("after") or "")
         steps.append({"step": "润色", "changed": bool(candidate)})
 
-    verify = await service.prose_verify(scene_id, body)
+    # 把体检的口吻发现合并回质检意见（字段名与形状保持不变，前端与下游零改动）
     opinion = (verify or {}).get("opinion") or {}
+    if voice_findings:
+        opinion["voice_risks"] = [
+            {"char": v.get("char") or "", "evidence": v.get("evidence") or "",
+             "risk": v.get("issue") or "", "suggestion": v.get("suggestion") or ""}
+            for v in voice_findings
+        ]
+        for v in opinion["voice_risks"]:
+            line = f"口吻：{v['char']}「{str(v['evidence'] or '')[:24]}」{v['risk']}"
+            if isinstance(opinion.get("risks"), list) and line not in opinion["risks"]:
+                opinion["risks"].append(line)
     risks = opinion.get("risks") or []
     steps.append({
         "step": "质检",

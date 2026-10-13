@@ -676,6 +676,7 @@ class AsyncJobIn(models.BaseModel):
     batch_from: int = 0
     inspiration_ids: list[str] = []
     text: str = ""
+    scene_id: str = ""      # v1.42：审稿会/质量回环是场景级任务，必须带（此前空 → SceneNotFoundError）
 
 
 @router.post("/books/{book_id}/jobs/{kind}")
@@ -694,11 +695,13 @@ async def enqueue_book_job(book_id: str, kind: str, body: AsyncJobIn,
             "batch_size": max(0, body.batch_size), "batch_from": body.batch_from,
             "inspiration_ids": body.inspiration_ids,
         },
-        "review_meeting": {"scene_id": "", "text": body.text},
-        "quality_loop": {"scene_id": "", "text": body.text},
+        "review_meeting": {"scene_id": body.scene_id, "text": body.text},
+        "quality_loop": {"scene_id": body.scene_id, "text": body.text},
     }
     if kind not in kinds:
         raise HTTPException(status_code=400, detail=f"未知任务类型：{kind}（可选 {sorted(kinds)}）")
+    if kind in ("review_meeting", "quality_loop") and not body.scene_id:
+        raise HTTPException(status_code=400, detail=f"{kind} 是场景级任务，必须提供 scene_id")
     payload = {k: v for k, v in kinds[kind].items() if v is not None}
     job = await tw.enqueue(kind, payload)
     return job

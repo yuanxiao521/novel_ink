@@ -1193,9 +1193,12 @@ class SimulationService:
         })
         return {"after": out.get("after", text), "summary": out.get("summary", "")}
 
-    async def prose_verify(self, scene_id: str, text: str) -> dict:
+    async def prose_verify(self, scene_id: str, text: str, skip_voice: bool = False) -> dict:
         """质检员：伏笔/信念/因果对照 → verifier note（pending，明细存 payload_json，
-        作者 approve 时据此落账本）。"""
+        作者 approve 时据此落账本）。
+
+        skip_voice=True（v1.42）：口吻交给体检员，本工具不重复分析（审稿会并发路径）。
+        """
         from app.services.engine.prose import verify_prose
 
         scene, book_id = await self._scene_and_book(scene_id)
@@ -1204,7 +1207,7 @@ class SimulationService:
         world_states = (await self.repo.list_world_states(book_id)) if book_id else []
         characters = await self.repo.list_characters_for_scene(scene_id) if scene_id else []
         opinion = await verify_prose(llm_client, text, foreshadows, beliefs, world_states,
-                                     characters=characters)
+                                     characters=characters, skip_voice=skip_voice)
         sug = (
             f"伏笔推进 {len(opinion.get('foreshadow_updates') or [])} 条；"
             f"信念变化 {len(opinion.get('belief_deltas') or [])} 条；"

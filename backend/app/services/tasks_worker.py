@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 import uuid
 from typing import Any
@@ -21,6 +22,8 @@ from typing import Any
 import redis.asyncio as aredis
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 _REDIS_URL = settings.redis_url          # redis://127.0.0.1:6379/1
 _PREFIX = "novel_ink:job:"
@@ -88,6 +91,20 @@ async def enqueue(job_kind: str, payload: dict) -> dict:
     return {"job_id": job_id, "kind": job_kind, "status": "queued"}
 
 
+async def _guard(job_id: str, coro):
+    """任务守卫（v1.42）：异常必须写进 Redis 状态，否则前端永远轮询到 running。
+
+    事故背景：审稿会任务因 scene_id 为空抛 SceneNotFoundError——arq 自己记了失败，
+    但 novel_ink:job:* 一直停在 running（stages 空白）→ 前端死等。
+    """
+    try:
+        return await coro
+    except Exception as e:  # noqa: BLE001
+        logger.exception("[job] %s 执行失败: %s", job_id, e)
+        await _set(job_id, status="failed", error=f"{type(e).__name__}: {e}"[:300])
+        raise
+
+
 # ---------------------------------------------------------------- worker 端任务函数
 async def _stage(job_id: str, text: str, detail: str = "") -> None:
     await _set(job_id, running_since=int(time.time() * 1000))
@@ -106,66 +123,83 @@ async def run_plan_batch(ctx: dict, *, job_id: str = "", book_id: str, direction
                          batch_size: int = 3, batch_from: int = 0,
                          inspiration_ids: list[str] | None = None) -> dict:
     """后台：主笔排一批骨架预览。结果（plan+batch）写 Redis，前端确认后照常 commit。"""
-    if not job_id:
-        job_id = "job-unknown"
-    await _stage(job_id, "正在排本批骨架（自动承接已落库章节）…")
+    jid = job_id or "job-unknown"
+    return await _guard(jid, _do_plan_batch(jid, book_id, direction, batch_size, batch_from, inspiration_ids))
+
+
+async def _do_plan_batch(jid: str, book_id: str, direction: str, batch_size: int,
+                         batch_from: int, inspiration_ids: list[str] | None) -> dict:
+    await _stage(jid, "正在排本批骨架（自动承接已落库章节）…")
     from app.db.repo import Repo
     from app.services.service import SimulationService
 
     svc = SimulationService(Repo())
     plan = await svc.plan_book(book_id, direction, inspiration_ids,
                               batch_size=batch_size, batch_from=batch_from)
-    await _stage(job_id, f"本批 {len((plan.get('plan') or {}).get('chapters') or [])} 章已排好，等作者确认落库")
-    await _set(job_id, status="done", result=plan)
+    await _stage(jid, f"本批 {len((plan.get('plan') or {}).get('chapters') or [])} 章已排好，等作者确认落库")
+    await _set(jid, status="done", result=plan)
     return plan
 
 
 async def run_review_meeting(ctx: dict, *, job_id: str = "", scene_id: str, text: str = "") -> dict:
-    """后台：D 批审稿会（体检→润色→质检→评审→裁决）。"""
-    if not job_id:
-        job_id = "job-unknown"
-    await _stage(job_id, "审稿会开始：体检 → 润色(按需) → 质检 → 评审")
+    """后台：D 批审稿会（体检 ∥ 质检 → 润色按需 → 评审 → 裁决）。"""
+    jid = job_id or "job-unknown"
+    return await _guard(jid, _do_review_meeting(jid, scene_id, text))
+
+
+async def _do_review_meeting(jid: str, scene_id: str, text: str) -> dict:
+    await _stage(jid, "审稿会开始：体检 ∥ 质检 → 润色(按需) → 评审")
     from app.db.repo import Repo
     from app.services.service import SimulationService
 
     svc = SimulationService(Repo())
     out = await svc.prose_review_meeting(scene_id, text)
     for s in out.get("steps") or []:
-        await _stage(job_id, f"{s.get('step')} 完成" + (f"（{s.get('total')} 分）" if s.get("total") is not None else ""))
-    await _stage(job_id, f"裁决：{out.get('verdict', '')}")
-    await _set(job_id, status="done", result=out)
+        extra = ""
+        if s.get("total") is not None:
+            extra = f"（{s.get('total')} 分）"
+        elif s.get("issues") is not None:
+            extra = f"（问题 {s.get('issues')} 条 · 口吻 {s.get('voice') or 0} 处）"
+        await _stage(jid, f"{s.get('step')} 完成{extra}")
+    await _stage(jid, f"裁决：{out.get('verdict', '')}")
+    await _set(jid, status="done", result=out)
     return out
 
 
 async def run_quality_loop(ctx: dict, *, job_id: str = "", scene_id: str, text: str = "") -> dict:
     """后台：A2 质量回环（自评 → 定点/全文重写 → 三闸复检）。"""
-    if not job_id:
-        job_id = "job-unknown"
-    await _stage(job_id, "质量回环开始：自评 → 按需重写 → 复检")
+    jid = job_id or "job-unknown"
+    return await _guard(jid, _do_quality_loop(jid, scene_id, text))
+
+
+async def _do_quality_loop(jid: str, scene_id: str, text: str) -> dict:
+    await _stage(jid, "质量回环开始：自评 → 按需重写 → 复检")
     from app.db.repo import Repo
     from app.services.service import SimulationService
 
     svc = SimulationService(Repo())
     out = await svc.prose_quality_loop(scene_id, text)
-    await _stage(job_id, f"回环结束：{'已采纳改写' if out.get('accepted') else '未采纳（评分达标或未改动）'}")
-    await _set(job_id, status="done", result=out)
+    await _stage(jid, f"回环结束：{'已采纳改写' if out.get('accepted') else '未采纳（评分达标或未改动）'}")
+    await _set(jid, status="done", result=out)
     return out
-
 
 
 async def run_bookkeeping(ctx: dict, *, job_id: str = "", scene_id: str, text: str) -> dict:
     """后台：保存正文后的自动记账（原 _bookkeep_after_save 挪进队列，获得重试保障）。"""
-    if not job_id:
-        job_id = 'job-unknown'
+    jid = job_id or "job-unknown"
+    return await _guard(jid, _do_bookkeeping(jid, scene_id, text))
+
+
+async def _do_bookkeeping(jid: str, scene_id: str, text: str) -> dict:
     from app.db.repo import Repo
     from app.services.service import SimulationService
 
     svc = SimulationService(Repo())
-    await _stage(job_id, '记账：分析正文对伏笔/信念/世界状态的影响…')
+    await _stage(jid, "记账：分析正文对伏笔/信念/世界状态的影响…")
     await svc._bookkeep_after_save(scene_id, text)
-    await _stage(job_id, '记账完成')
-    await _set(job_id, status='done', result={'scene_id': scene_id})
-    return {'scene_id': scene_id}
+    await _stage(jid, "记账完成")
+    await _set(jid, status="done", result={"scene_id": scene_id})
+    return {"scene_id": scene_id}
 
 class WorkerSettings:
     """arq worker 配置：arq app.services.tasks_worker.WorkerSettings"""

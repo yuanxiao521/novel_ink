@@ -393,8 +393,15 @@ async def polish_prose(llm_client: Any, text: str) -> dict:
 
 async def verify_prose(llm_client: Any, text: str, foreshadows: list[dict],
                        beliefs: list[dict], world_states: list[dict] | None = None,
-                       characters: list[dict] | None = None) -> dict:
-    """质检员：伏笔/信念/因果/世界状态/口吻风险对照；回退 → 空意见。"""
+                       characters: list[dict] | None = None,
+                       skip_voice: bool = False) -> dict:
+    """质检员：伏笔/信念/因果/世界状态/口吻风险对照；回退 → 空意见。
+
+    skip_voice=True（v1.42）：**口吻检查交给体检员**，本工具不重复分析、voice_risks 返回空。
+    用途：审稿会里体检与质检**并发**执行时，同一件事只查一遍（省一次重复分析 + 输出更短）。
+    """
+    if skip_voice:
+        return await _verify_lite(llm_client, text, foreshadows, beliefs, world_states, characters)
     cast_names = {str(c.get("name") or "").strip() for c in (characters or []) if c.get("name")}
     f_txt = "\n".join(f"- {f.get('text')}（{f.get('status')}）" for f in foreshadows) or "（无未回收伏笔）"
     b_txt = "\n".join(f"- {b.get('char_id')}：{b.get('text')}" for b in beliefs if b.get("text")) or "（无信念记录）"
@@ -418,4 +425,54 @@ async def verify_prose(llm_client: Any, text: str, foreshadows: list[dict],
         line = f"口吻：{v.get('char')}「{str(v.get('evidence') or '')[:24]}」{str(v.get('risk') or '')}"
         if isinstance(report.get("risks"), list) and line not in report["risks"]:
             report["risks"].append(line)
+    return report
+
+def _verify_prompt_lite(characters: list[dict] | None, f_txt: str, b_txt: str,
+                        ws_txt: str, text: str) -> str:
+    """质检的"瘦身版"prompt（v1.42）：去掉口吻段，明确告诉模型别重复体检的活。
+
+    实测动机：审稿会里体检 52.9s + 质检 43.2s，而两者都在查口吻 → 同一件事查两遍。
+    口吻改由体检独家负责，质检专注账本对照（伏笔/信念/因果/状态/风险）。
+    """
+    return (
+        "你是小说【质检员】。对照这本书的伏笔账本、角色信念账本与世界状态账本，审读正文，"
+        "给出结构化质检意见：\n"
+        "1. foreshadow_updates：正文是否命中/推进了未回收伏笔（只对账本中已有的伏笔）；\n"
+        "2. belief_deltas：正文是否改变了某角色认知（对账本中已有信念角色）；\n"
+        "3. causal：正文中的新事实/事件的因果补记；\n"
+        "4. risks：与设定/账本冲突的提示（**不含口吻**，口吻由体检员独家负责）；\n"
+        "5. state_deltas：正文揭示的状态变化（当前值/持续态，不是一次性动作）——\n"
+        "   character：境界/位置/身份等；item：携带/缺失/耗尽；time：当前叙事日；\n"
+        "   term：锁定术语标准叫法；numeric：年龄/战力/金钱/距离。\n"
+        "   previous_value 用账本当前值；首次出现的关键状态留空。只报变化或新关键状态。\n"
+        "\n【本次简化·重要】口吻风险（voice_risks）已由**体检员**单独检查完毕，"
+        "你不要做任何口吻分析，voice_risks 一律返回空数组 []。专注上面五类，尽快给出结果。\n"
+        "\n出场角色卡（仅供理解语境，不做口吻比对）：\n" + (
+            "\n".join(f"- {c.get('name')}：{c.get('summary') or ''}" for c in (characters or [])
+                      if c.get("name")) or "（无）")
+        + "\n伏笔账本现状：\n" + f_txt
+        + "\n信念账本现状：\n" + b_txt
+        + "\n世界状态账本现状：\n" + ws_txt
+        + "\n正文：\n" + (text or "（空）")
+    )
+
+
+async def _verify_lite(llm_client: Any, text: str, foreshadows: list[dict],
+                       beliefs: list[dict], world_states: list[dict] | None,
+                       characters: list[dict] | None) -> dict:
+    """瘦身版质检（无口吻段）：给审稿会并发用；voice_risks 恒为空，由调用方合并体检结果。"""
+    f_txt = "\n".join(f"- {f.get('text')}（{f.get('status')}）" for f in foreshadows) or "（无未回收伏笔）"
+    b_txt = "\n".join(f"- {b.get('char_id')}：{b.get('text')}" for b in beliefs if b.get("text")) or "（无信念记录）"
+    ws_txt = "\n".join(
+        f"- [{s.get('kind')}] {s.get('name')}：{s.get('value')}"
+        for s in (world_states or []) if s.get("name")
+    ) or "（无世界状态记录）"
+    report = await _run_role(
+        llm_client,
+        _verify_prompt_lite(characters, f_txt, b_txt, ws_txt, text),
+        VERIFY_SCHEMA, VERIFY_VALIDATOR,
+        {"foreshadow_updates": [], "belief_deltas": [], "causal": [], "risks": [],
+         "voice_risks": [], "state_deltas": []},
+    )
+    report["voice_risks"] = []   # 由调用方（审稿会）合并体检的 voice_findings
     return report
