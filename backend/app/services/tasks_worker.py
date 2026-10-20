@@ -13,6 +13,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -28,6 +29,15 @@ logger = logging.getLogger(__name__)
 _REDIS_URL = settings.redis_url          # redis://127.0.0.1:6379/1
 _PREFIX = "novel_ink:job:"
 _TTL = 60 * 60 * 24                      # 结果保留 24h
+
+# ---- 队列活性（v1.45 · B51 的代码层补完）------------------------------------
+# B51：worker 被 Redis 断连搞死时**没有任何东西会重启它**，队列从此静默停摆，
+# 前端要等轮询 5 分钟超时才报错，而且会留下永远 running 的僵尸任务。
+# 这里补两件事：①worker 心跳（让 /health 能说「没人消费」）②启动清扫遗留僵尸。
+HEARTBEAT_KEY = "novel_ink:worker:heartbeat"
+_HB_TTL = 90            # 心跳键存活秒数：worker 挂掉后最多 90s 内被 /health 发现
+_HB_EVERY = 30          # 刷新间隔
+STUCK_SEC = 600         # running 超过这么久 = 疑似僵尸（前端轮询上限 300s，留余量）
 
 
 def _key(job_id: str) -> str:
@@ -103,6 +113,105 @@ async def _guard(job_id: str, coro):
         logger.exception("[job] %s 执行失败: %s", job_id, e)
         await _set(job_id, status="failed", error=f"{type(e).__name__}: {e}"[:300])
         raise
+
+
+# ---------------------------------------------------------------- 队列活性（v1.45）
+async def _write_heartbeat() -> None:
+    r = await _client()
+    try:
+        await r.set(HEARTBEAT_KEY, json.dumps({"at": int(time.time() * 1000)}), ex=_HB_TTL)
+    finally:
+        await r.aclose()
+
+
+async def _heartbeat_loop() -> None:
+    """worker 活着就每 30s 刷一次心跳；被取消（进程退出）时**删键**，
+    让 /health 立刻能说「没有消费者」，而不是等 TTL 慢慢过期。"""
+    try:
+        while True:
+            await _write_heartbeat()
+            await asyncio.sleep(_HB_EVERY)
+    except asyncio.CancelledError:
+        try:
+            r = await _client()
+            try:
+                await r.delete(HEARTBEAT_KEY)
+            finally:
+                await r.aclose()
+        except Exception:  # noqa: BLE001  退出路径不能因为清理失败再抛
+            pass
+        raise
+
+
+def select_orphans(states: list[dict], now_ms: int, threshold_ms: int = STUCK_SEC * 1000) -> list[str]:
+    """**纯函数**：挑出「上一条进程留下的 running 僵尸」。
+
+    只挑 running_since（无则 created_at）超过阈值的——避免误杀另一个并行 worker 的活任务。
+    """
+    out: list[str] = []
+    for st in states or []:
+        if str(st.get("status")) != "running":
+            continue
+        since = int(st.get("running_since") or st.get("created_at") or 0)
+        jid = str(st.get("job_id") or "")
+        if jid and since and now_ms - since >= threshold_ms:
+            out.append(jid)
+    return out
+
+
+async def sweep_orphans(threshold_ms: int = STUCK_SEC * 1000) -> int:
+    """worker 启动时清扫上个进程留下的僵尸任务 → 返回清扫条数。"""
+    r = await _client()
+    try:
+        states: list[dict] = []
+        for k in await r.keys(_PREFIX + "*"):
+            raw = await r.get(k)
+            try:
+                st = json.loads(raw) if raw else {}
+            except Exception:  # noqa: BLE001  坏 JSON 跳过，不影响清扫
+                continue
+            if isinstance(st, dict):
+                states.append(st)
+        ids = select_orphans(states, int(time.time() * 1000), threshold_ms)
+        for jid in ids:
+            await _set(jid, status="failed",
+                       error="worker 重启：该任务在上一次进程中断时未完成（已自动标记 failed）")
+        return len(ids)
+    finally:
+        await r.aclose()
+
+
+async def queue_health() -> dict:
+    """队列活性（/health.queue）：前端据此提示「后台队列没有消费者」。
+
+    返回 status ∈ ok | no-worker | stuck；alive=False 时排批/审稿会/质量回环会一直排队，
+    必须让作者看得见（T9：静默降级必须反馈）。
+    """
+    r = await _client()
+    try:
+        now = int(time.time() * 1000)
+        raw = await r.get(HEARTBEAT_KEY)
+        hb = json.loads(raw) if raw else None
+        age = int((now - int(hb["at"])) / 1000) if isinstance(hb, dict) and hb.get("at") else None
+        alive = age is not None and age <= _HB_TTL
+        queued = int(await r.llen("arq:queue") or 0)
+        in_progress = len(await r.keys("arq:in-progress:*"))
+        stuck = 0
+        for k in await r.keys(_PREFIX + "*"):
+            try:
+                s = json.loads(await r.get(k) or "{}")
+            except Exception:  # noqa: BLE001
+                continue
+            if isinstance(s, dict) and str(s.get("status")) == "running":
+                since = int(s.get("running_since") or s.get("created_at") or 0)
+                if since and now - since >= STUCK_SEC * 1000:
+                    stuck += 1
+        status = "ok" if (alive and stuck == 0) else ("no-worker" if not alive else "stuck")
+        return {"alive": alive, "status": status, "heartbeat_age": age,
+                "heartbeat_ttl": _HB_TTL, "queued": queued,
+                "in_progress": in_progress, "stuck": stuck}
+    finally:
+        await r.aclose()
 
 
 # ---------------------------------------------------------------- worker 端任务函数
@@ -207,6 +316,28 @@ class WorkerSettings:
     redis_settings = None   # 在类体下方赋值（arq RedisSettings）
     max_jobs = 4
     job_timeout = 600      # LLM 长任务放宽
+    health_check_interval = 60   # arq 自己的健康键也刷新勤一点（默认 3600 太钝）
+
+    @staticmethod
+    async def on_startup(ctx: dict) -> None:
+        """v1.45：启动即 ①清扫上个进程留下的僵尸任务 ②起心跳。"""
+        try:
+            swept = await sweep_orphans()
+            if swept:
+                logger.warning("[worker] 启动清扫：%d 个遗留 running 任务已标记 failed", swept)
+        except Exception:  # noqa: BLE001  清扫失败不能挡住 worker 启动
+            logger.warning("[worker] 启动清扫失败（忽略，继续起）", exc_info=True)
+        ctx["heartbeat"] = asyncio.ensure_future(_heartbeat_loop())
+
+    @staticmethod
+    async def on_shutdown(ctx: dict) -> None:
+        task = ctx.get("heartbeat")
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except Exception:  # noqa: BLE001  关机路径不抛
+                pass
 
 
 def _build_worker():

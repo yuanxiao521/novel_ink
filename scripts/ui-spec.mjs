@@ -314,6 +314,13 @@ try {
         && dr.dirty === true && String(dr.saveLabel).includes("保存*"),
       JSON.stringify(dr));
   }
+
+  // ⑪ 队列活性可见（v1.45 · B51）：/health.queue 暴露 worker 心跳——前端横幅据此提示「没有消费者」
+  const q = health && health.queue;
+  step("⑪ 队列活性可见（/health.queue：worker 心跳 / 队列长度 / 僵尸数）",
+    !!q && typeof q.alive === "boolean" && q.alive === true
+      && typeof q.queued === "number" && typeof q.stuck === "number",
+    JSON.stringify(q));
 } catch (e) {
   step("UI 剧本异常", false, String(e));
 } finally {

@@ -30,10 +30,14 @@ export function DegradedBanner() {
 
   const d = health?.degraded;
   const llm = health?.llm;
+  const q = health?.queue;
   const dbBad = Boolean(d?.active);
   // B32：LLM 不可用（模型名错 / 账号异常 / 额度）同样是降级 —— 正文与角色演绎会静默走确定性回退，必须可见
   const llmBad = Boolean(llm && llm.configured && !llm.ok);
-  if (dismissed || (!dbBad && !llmBad)) return null;
+  // B51：后台队列没有消费者 —— 排批/审稿会/质量回环会一直排队，前端原来只能等到超时才知道
+  const queueBad = Boolean(q && q.alive === false);
+  const queueStuck = Boolean(q && q.alive !== false && (q.stuck ?? 0) > 0);
+  if (dismissed || (!dbBad && !llmBad && !queueBad && !queueStuck)) return null;
   return (
     <div className="degraded-banner" role="alert">
       <span className="degraded-dot" />
@@ -46,6 +50,15 @@ export function DegradedBanner() {
             {d?.last_reason ? ` · ${d.last_reason.slice(0, 80)}` : ''}
           </>
         )}
+        {(dbBad || llmBad) && (queueBad || queueStuck) ? ' ｜ ' : ''}
+        {queueBad && (
+          <>
+            后台队列没有消费者（worker 未运行）
+            {q?.error ? `：${String(q.error).slice(0, 80)}` : ''}
+            {' '}—— 主笔排批 / 审稿会 / 质量回环会一直排队，请重启 worker
+          </>
+        )}
+        {queueStuck && <>后台队列有 {q?.stuck} 个任务长时间卡在 running（疑似僵尸）</>}
         {dbBad && llmBad ? ' ｜ ' : ''}
         {llmBad && (
           <>

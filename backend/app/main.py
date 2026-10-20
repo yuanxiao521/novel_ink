@@ -101,11 +101,21 @@ async def unhandled_error_handler(request: Request, exc: Exception) -> JSONRespo
 
 
 @app.get("/health")
-def health():
+async def health():
     """健康检查。**T9：降级必须可见** —— degraded.active=true 表示有操作落内存态兜底，
-    structural>0 表示其中含"疑似 bug"的结构性错误（B18/B21 那类）。"""
+    structural>0 表示其中含"疑似 bug"的结构性错误（B18/B21 那类）。
+
+    v1.45 增加 queue 段（B51）：worker 心跳 / 队列长度 / 疑似僵尸数。
+    worker 挂掉时排批·审稿会·质量回环会一直排队，前端据此提示，而不是让人干等超时。
+    """
     from app.db.repo import degradation_status
-
     from app.services.llm.client import llm_status
+    from app.services.tasks_worker import queue_health
 
-    return {"status": "ok", "degraded": degradation_status(), "llm": llm_status()}
+    try:
+        queue = await queue_health()
+    except Exception as e:  # noqa: BLE001  Redis 不可达不能把 /health 打挂
+        queue = {"alive": False, "status": "unknown",
+                 "error": f"{type(e).__name__}: {e}"[:160]}
+    return {"status": "ok", "degraded": degradation_status(),
+            "llm": llm_status(), "queue": queue}

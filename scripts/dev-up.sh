@@ -38,13 +38,14 @@ if command -v curl >/dev/null; then
 fi
 
 echo "== 2.5/3 任务队列 worker：arq（Redis db1，长 LLM 操作后台化）=="
-if tasklist 2>/dev/null | grep -q "arq\|tasks_worker" || netstat -ano 2>/dev/null | grep -qE ":6379.*ESTABLISHED.*python"; then
-  echo "   疑似已在运行，跳过（如需重启请手工杀 python 进程）"
+# v1.45（B51）：改走监督脚本 —— Redis/Docker 抖一下 arq 会直接退出且不自愈，
+# 裸跑时没人重启它，队列就静默停摆（实测踩过）。监督脚本退出即重启并留日志。
+if tasklist 2>/dev/null | grep -q "tasks_worker"; then
+  echo "   已在运行，跳过（如需重启请先杀 python 进程）"
 else
-  ( cd "$ROOT/backend" && nohup "$ROOT/.venv/Scripts/python.exe" -m arq app.services.tasks_worker.WorkerSettings \
-      >"$ROOT/logs/arq-worker.log" 2>&1 & )
-  sleep 3
-  echo "   已启动 -> logs/arq-worker.log"
+  ( nohup bash "$ROOT/scripts/worker-supervise.sh" >"$ROOT/logs/arq-worker.log" 2>&1 & )
+  sleep 4
+  echo "   已启动（监督循环）-> logs/arq-worker.log"
 fi
 
 echo "== 3/3 前端：vite $WEB_PORT =="

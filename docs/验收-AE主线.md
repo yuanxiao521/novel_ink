@@ -19,6 +19,7 @@
 | E | **角色在场感**（只读意见卡） | v1.24 |
 | F | **长任务后台化**（arq 队列，刷新/断网不断链）+ 审稿会并发提速 + **按钮原位、过程与明细进责编流**（SSE 过程卡 + 明细富卡 + 审计可收起） | v1.41 / v1.42 / v1.43 |
 | G | **写手素材治理**（账本筛选/去重/脏名字闸门 + 场景缺口显式标注）+ **正文 token 流式** + 脏缓冲保护 | v1.44 |
+| H | **队列活性可见**（`/health.queue` 心跳）+ worker 防抖监督 + 启动自动清扫僵尸任务 | v1.45 |
 
 ---
 
@@ -252,6 +253,22 @@ curl -N -s -X POST "http://127.0.0.1:8001/api/v1/scenes/scene-85bc6bfe/prose/dra
 node scripts/ui-spec.mjs
 # 期望 ⑩：{"mid": >=1, "sawBusyLabel": true, "dirty": true, "saveLabel": "💾 保存*"}
 # 注意：⑨/⑩ 在 LLM 不健康时**明确 SKIP**（不再让回退路径的"0 条问题"假通过）
+```
+### 3.11 队列活性（v1.45 · B51）
+
+```bash
+# ① 队列活性：worker 心跳 / 队列长度 / 僵尸数（前端横幅据此提示「没有消费者」）
+curl -s http://127.0.0.1:8001/health | python -c "import json,sys; q=json.load(sys.stdin)['queue']; print(q)"
+# 期望：{'alive': True, 'status': 'ok', 'heartbeat_age': <90, 'queued': 0, 'in_progress': 0, 'stuck': 0}
+
+# ② 杀 worker → 最长 90s 后 alive=false / status=no-worker（前端横幅亮）
+#    正常退出会立刻删心跳键（立即发现）；被强杀则等 TTL 过期
+# ③ 重启 → 上个进程留下的 running 僵尸被**自动**标 failed，日志：
+#    [worker] 启动清扫：N 个遗留 running 任务已标记 failed
+bash scripts/worker-supervise.sh     # 防抖：退出即重启 + 带时间日志
+
+# ④ L3 ⑪ 已把队列活性变成永久断言（12/12）
+node scripts/ui-spec.mjs
 ```
 ## 4. 存量验收（S1–S4 / A2 / A3，仍在跑）
 

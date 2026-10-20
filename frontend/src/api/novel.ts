@@ -793,11 +793,25 @@ export interface LlmInfo {
   last_error: string;
 }
 
+/** v1.45（B51）：后台任务队列的活性——worker 死了要立刻看得见，别让人干等超时。 */
+export interface QueueInfo {
+  alive: boolean;
+  status: 'ok' | 'no-worker' | 'stuck' | 'unknown' | string;
+  heartbeat_age?: number | null;
+  heartbeat_ttl?: number;
+  queued?: number;
+  in_progress?: number;
+  stuck?: number;
+  error?: string;
+}
+
 export interface HealthStatus {
   status: string;
   degraded: DegradedInfo;
   /** B32：LLM 可用性（模型名/账号异常时 ok=false）—— 必须可见，否则正文会静默走回退 */
   llm?: LlmInfo;
+  /** v1.45（B51）：后台队列活性（排批 / 审稿会 / 质量回环都靠它） */
+  queue?: QueueInfo;
 }
 
 /** T9：健康检查（含降级状态）—— 前端据此显示"降级中"横幅。 */
