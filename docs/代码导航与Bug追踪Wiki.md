@@ -136,6 +136,7 @@ e:\novel_desk-agent
 ├── webapp/                     # 旧静态版（设计稿对照，React 的前身，含 maestro 融合 demo）
 │   └── (index/dashboard/characters/★maestro.html + js/ + css/ + .bak 备份)
 ├── docs/                       # ★需求与设计文档（同层 MVP 规范）
+│   ├── ★产品方向v2-现状与下一阶段规划.md   ← **方向校准基准（2026-10-20 起）**
 │   ├── MVP设计.md / prompt核心设定.md
 │   ├── agent职责与prompt设计.md
 │   └── ★本项目Wiki.md           ← 本文档（唯一导航源）
