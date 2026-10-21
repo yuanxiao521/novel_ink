@@ -1279,7 +1279,9 @@ class SimulationService:
         scenes_text += ("【本章场景大纲】\n" + scene_lines) if scene_lines else "（本章未拆场）"
         return {"chapter": chapter, "book_id": book_id, "characters": characters,
                 "memory": memory, "constraints": constraints, "world_states": world_states,
-                "existing": existing, "scenes_text": scenes_text, "word_target": target}
+                "existing": existing, "scenes_text": scenes_text, "word_target": target,
+                # v1.47：把场清单原样带出，供分段编排按"场功能"推进
+                "scenes": scenes}
 
     async def save_chapter_prose(self, chapter_id: str, text: str) -> dict:
         """保存章正文（唯一真源：chapters.prose_md）→ **自动触发章级记账**（后台任务）。
@@ -1361,14 +1363,16 @@ class SimulationService:
         from app.services.engine.prose import SEG_CHARS, chapter_prompt, chapter_segment_goals
 
         ctx = await self._chapter_context(chapter_id)
-        goals = chapter_segment_goals(ctx["word_target"])
+        # v1.47 · P1 章级编排：有场时按场功能分段（每场一段，段目标带场标题+本场目标）
+        goals = chapter_segment_goals(ctx["word_target"], scenes=ctx.get("scenes"))
+        seg_target = max(300, int(ctx["word_target"]) // max(1, len(goals)))
         written = ctx["existing"]
         for i, goal in enumerate(goals, start=1):
             prompt = chapter_prompt(
                 chapter=ctx["chapter"], characters=ctx["characters"],
                 world_states=ctx["world_states"], constraints=ctx["constraints"],
                 memory=ctx["memory"], scenes=ctx["scenes_text"], written=written,
-                seg_no=i, seg_total=len(goals), seg_goal=goal, seg_target=SEG_CHARS)
+                seg_no=i, seg_total=len(goals), seg_goal=goal, seg_target=seg_target)
             seg: list[str] = []
             if i > 1:
                 yield "\n\n"          # 段间空行：前端直接拼接即成段落

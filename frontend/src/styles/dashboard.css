@@ -964,9 +964,10 @@ a.btn-primary {
 }
 
 /* 快速操作 */
+/* v1.47：快速操作改 2 列网格（原来 5 个竖排占满右栏高度） */
 .quick-actions {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 6px;
 }
 

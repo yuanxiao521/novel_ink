@@ -27,7 +27,9 @@ interface SceneRow { id: string; title?: string; goal?: string; final_prose?: st
 export function WritePage() {
   const { chapterId = '' } = useParams<{ chapterId: string }>();
   const nav = useNavigate();
-  const { book } = useWorkspace();
+  const { book, chapters } = useWorkspace();
+  /** 全书章进度（v1.47 主线视图）：作者一进来就知道"写到第几章了" */
+  const chapterIdx = chapters.findIndex((c) => c.id === chapterId);
   const { showConfirm } = useDialog();
 
   const [text, setText] = useState('');
@@ -144,6 +146,11 @@ export function WritePage() {
           <div className="s2-body">
             <aside className="s2-info">
               <div className="s2-info-title">这一章</div>
+              <div className="s2-kv"><span>全书进度</span>
+                <b>{chapters.length > 0
+                  ? `第 ${chapterIdx >= 0 ? chapterIdx + 1 : '?'} 章 / 共 ${chapters.length} 章`
+                  : '—'}</b>
+              </div>
               <div className="s2-kv"><span>字数目标</span><b>{wordTarget > 0 ? `${wordTarget} 字` : '未设（默认 4000）'}</b></div>
               <div className="s2-kv"><span>基调</span><b>{tone || '未定'}</b></div>
               <div className="s2-kv"><span>要完成的事</span>

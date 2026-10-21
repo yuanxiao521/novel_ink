@@ -790,7 +790,7 @@
 .s2-dirty { color: var(--accent-warn); font-weight: 600; }
 
 /* ---------- 章级写作主线（v1.46 · 直写链路） ---------- */
-.wp-prose { padding: 18px 22px; max-height: 100%; overflow-y: auto; }
+.wp-prose { padding: 18px 22px 18px 36px; max-height: 100%; overflow-y: auto; }
 .wp-para {
   position: relative;
   margin: 0 0 18px;

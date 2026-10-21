@@ -573,11 +573,44 @@ _CHAPTER_PROMPT = """你是小说正文【写手】。这次不是写一段，�
 {written_tail}"""
 
 
-def chapter_segment_goals(word_target: int | None, seg_chars: int = SEG_CHARS) -> list[str]:
+def _group_scenes(scenes: list[dict], max_groups: int) -> list[list[dict]]:
+    """把场按顺序合并成不超过 max_groups 组（场多于上限时相邻合并，不丢场）。"""
+    if len(scenes) <= max_groups:
+        return [[s] for s in scenes]
+    per = -(-len(scenes) // max_groups)      # ceil：每组至少这么多场
+    groups: list[list[dict]] = [scenes[i:i + per] for i in range(0, len(scenes), per)]
+    return groups[:max_groups]
+
+
+def _scene_goal(idx: int, group: list[dict]) -> str:
+    """一场（或合并后的几场）→ 一段推进任务。"""
+    if len(group) == 1:
+        s = group[0]
+        title = str(s.get("title") or "").strip() or f"第 {idx} 场"
+        goal = str(s.get("goal") or "").strip()
+        tail = f"：{goal}" if goal else "：按本章基调与冲突把这一场写完整"
+        return f"第 {idx} 场《{title}》{tail}"
+    titles = "、".join((str(s.get("title") or "").strip() or f"第{idx}场") for s in group)
+    return f"第 {idx} 段（合并 {len(group)} 场：{titles}）：按顺序推进这几场，场与场之间自然衔接"
+
+
+def chapter_segment_goals(word_target: int | None, seg_chars: int = SEG_CHARS,
+                          scenes: list[dict] | None = None) -> list[str]:
     """把「这一章写多少字」拆成若干段的**推进任务**（0-token，不额外调模型）。
 
-    形状：开篇 → 推进 ×(n-2) → 收束。段数由字数目标决定（上限 MAX_SEGS 防跑飞）。
+    两种形状（v1.47 · P1 章级编排）：
+      ① **有场** → 按场功能推进：每场一段（场数超上限时相邻合并），段目标带场标题与「本场目标」
+         —— 这样写手知道"这一段要完成第 3 场那件事"，而不是笼统的"推进一层"；
+      ② **没场** → 退化为通用节奏：开篇 → 推进 ×(n-2) → 收束。
+    段数：有场时由场数决定（≤MAX_SEGS）；没场时由字数目标决定。
     """
+    scene_list = [s for s in (scenes or [])
+                  if str((s or {}).get("title") or "").strip()
+                  or str((s or {}).get("goal") or "").strip()]
+    if scene_list:
+        groups = _group_scenes(scene_list, MAX_SEGS)
+        return [_scene_goal(i, g) for i, g in enumerate(groups, start=1)]
+
     target = int(word_target or 0) or DEFAULT_WORD_TARGET
     n = max(1, min(MAX_SEGS, -(-target // seg_chars)))
     if n == 1:

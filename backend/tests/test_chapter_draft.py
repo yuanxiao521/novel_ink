@@ -159,3 +159,33 @@ async def test_chapter_bookkeeping_skips_without_llm(svc):
     """LLM 未接入 → 明确 skipped（不静默、不报错、不回滚已保存正文）。"""
     out = await svc.chapter_bookkeeping("ch-w", "随便一段。")
     assert out.get("skipped") and "LLM" in str(out["skipped"])
+
+def test_segment_goals_follow_scenes():
+    """v1.47 · P1 章级编排：有场时按场功能分段——每场一段，段目标带场标题与本场目标。"""
+    scenes = [
+        {"title": "零里废弃车站", "goal": "主角醒来，发现路引"},
+        {"title": "第一里界墙", "goal": "被影子识破"},
+        {"title": "午夜前地下通道", "goal": "进入地下黑市"},
+    ]
+    goals = chapter_segment_goals(2500, scenes=scenes)
+    assert len(goals) == 3
+    assert goals[0].startswith("第 1 场《零里废弃车站》") and "路引" in goals[0]
+    assert "第 3 场《午夜前地下通道》" in goals[2] and "地下黑市" in goals[2]
+
+
+def test_segment_goals_merge_when_too_many_scenes():
+    """场数超过 MAX_SEGS 时相邻合并（不丢场），段目标标注合并了几场。"""
+    scenes = [{"title": f"场{i}", "goal": ""} for i in range(1, 13)]
+    goals = chapter_segment_goals(9999, scenes=scenes)
+    # 合并规则：每组 ceil(12/8)=2 场 → 6 组（≤ 上限，且 12 场一个不丢）
+    assert 1 <= len(goals) <= MAX_SEGS
+    assert "合并" in goals[0]
+    all_titles = " ".join(goals)
+    assert all(f"场{i}" in all_titles for i in range(1, 13))
+
+
+def test_segment_goals_fallback_without_scenes():
+    """没有场时仍退回通用节奏（开篇→推进→收束）——无场景也能写。"""
+    goals = chapter_segment_goals(1600, scenes=[])
+    assert goals[0].startswith("开篇")
+    assert goals[-1].startswith("收束")
