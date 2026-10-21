@@ -17,7 +17,7 @@ from __future__ import annotations
 import statistics
 from typing import Any, Optional
 
-from app.services.text_metrics import scenes_chars   # 字数唯一口径（B39）
+from app.services.text_metrics import chapter_chars, scenes_chars   # 字数唯一口径（B39/v1.46）
 
 # ---------------------------------------------------------------- 阈值（可调）
 FLAT_STD = 8.0            # 章间张力标准差低于此值 + 均值低 → R1 平铺
@@ -63,8 +63,11 @@ def chapter_metrics(chapters: list[dict], scenes: list[dict],
         stats = [scene_tension(archives_by_scene.get(str(s.get("id")))) for s in ch_scenes]
         avgs = [st["avg"] for st in stats if st["has"]]
         peaks = [st["peak"] for st in stats if st["has"]]
-        prose_chars = scenes_chars(ch_scenes)   # 唯一字数口径（B39）
-        done = bool(ch_scenes) and all((s.get("final_prose") or "").strip() for s in ch_scenes)
+        # 唯一字数口径（B39/v1.46）：章正文优先、场景聚合回退
+        prose_chars = chapter_chars(ch, ch_scenes)
+        ch_has_body = bool(str(ch.get("prose_md") or "").strip())
+        # 直写模式看章正文；场景模式仍看"所有场定稿"（1/3 场有正文不算写完）
+        done = ch_has_body or (bool(ch_scenes) and all((s.get("final_prose") or "").strip() for s in ch_scenes))
         status = "done" if done else ("draft" if ch_scenes else "planned")
         trend = next((st["trend"] for st in reversed(stats) if st["has"]), "flat")
         out.append({

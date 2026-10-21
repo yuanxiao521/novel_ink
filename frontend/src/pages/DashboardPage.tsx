@@ -238,7 +238,7 @@ export function DashboardPage() {
                 <span>❝</span> 金句池
               </div>
               {!data || data.quotes.length === 0 ? (
-                <EmptyState compact icon="❝" title="暂无金句" desc="定稿正文后自动抽取。" />
+                <EmptyState compact icon="❝" title="暂无金句" desc="写完章/场正文后自动抽取（支持「」与“”对白）。" />
               ) : (
                 <div className="quote-list">
                   {data.quotes.map((q, i) => (
@@ -256,7 +256,7 @@ export function DashboardPage() {
                 <span>✦</span> 近 4 周写作热力
               </div>
               {!data || data.heat.every((o) => o === 0) ? (
-                <EmptyState compact icon="▦" title="暂无成文记录" desc="定稿新场景后按日更新。" />
+                <EmptyState compact icon="▦" title="暂无成文记录" desc="写完章/场正文后按日更新（章正文与场景正文都计入）。" />
               ) : (
                 <>
                   <div className="heat-grid">

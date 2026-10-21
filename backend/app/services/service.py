@@ -26,7 +26,8 @@ from app.errors import (ChapterNotFoundError, ConflictError, InvalidActionError,
 from app.schemas import models
 from app.services.engine.director import PlanCfg
 from app.services.engine.style_checks import voice_prior as style_voice_prior
-from app.services.text_metrics import prose_chars, scenes_chars   # 字数唯一口径（B39）
+from app.services.text_metrics import (chapter_body, chapter_chars, prose_chars,  # 字数唯一口径（B39/v1.46）
+                                      scenes_chars)
 from app.services.engine.book_audit import voice_drift_by_scene, timeline_replay   # 整书体检（v1.38）
 from app.services.llm.client import client as llm_client  # 模块级引用：便于测试统一替换（conftest）
 
@@ -375,12 +376,10 @@ class SimulationService:
         for ch in chapters:
             scenes = await self.repo.list_scenes_by_chapter(ch["id"])
             items: list[dict] = []
-            ch_chars = 0
             for s in scenes:
                 prose = str(s.get("final_prose") or "")
                 chars = prose_chars(prose)
                 finalized = bool(prose.strip())
-                ch_chars += chars
                 scene_total += 1
                 if not finalized:
                     unfinished += 1
@@ -389,8 +388,15 @@ class SimulationService:
                     "word_count": chars, "finalized": finalized,
                     "preview": _preview(prose), "goal": s.get("goal") or "",
                 })
+            # v1.46 直写链路：章正文优先、场景聚合回退（口径统一走 text_metrics）
+            body = chapter_body(ch, scenes)
+            ch_chars = prose_chars(body)
+            has_body = bool(str(ch.get("prose_md") or "").strip())
             total_chars += ch_chars
-            done = bool(items) and all(i["finalized"] for i in items)
+            # 「这一章写完没有」判据（v1.46）：
+            #   · 直写模式（有章正文）→ 就算写完
+            #   · 场景模式（无章正文）→ **仍是"所有场都定稿"**（1/3 场有正文不算写完）
+            done = has_body or (bool(items) and all(i["finalized"] for i in items))
             if done:
                 done_chapters += 1
             out.append({
@@ -398,6 +404,7 @@ class SimulationService:
                 "title": ch.get("title") or "", "tone": ch.get("tone") or "",
                 "summary": ch.get("summary") or "", "word_target": int(ch.get("word_target") or 0),
                 "word_count": ch_chars, "scene_count": len(items),
+                "has_body": has_body, "body_chars": prose_chars(str(ch.get("prose_md") or "")),
                 "done": done, "scenes": items,
             })
         return {
@@ -431,16 +438,20 @@ class SimulationService:
             except Exception:  # noqa: BLE001
                 continue
 
-        # 逐场正文（含章号，供前端定位）
+        # 逐个**写作单元**正文（v1.46：章正文优先、场景聚合回退；含章号供前端定位）
+        # 此前只扫场景 → 章级直写的书（场景为空）体检得到"还没有可分析的角色对白"，等于空转。
         scene_texts: list[dict] = []
         for ch in chapters:
-            for s in await self.repo.list_scenes_by_chapter(ch["id"]):
-                prose = str(s.get("final_prose") or "").strip()
-                if prose:
-                    scene_texts.append({
-                        "scene_id": s["id"], "order": int(ch.get("order_no") or 0),
-                        "title": s.get("title") or "", "text": prose,
-                    })
+            ch_scenes = await self.repo.list_scenes_by_chapter(ch["id"])
+            body = chapter_body(ch, ch_scenes).strip()
+            if body:
+                scene_texts.append({
+                    "scene_id": str(ch["id"]) if str(ch.get("prose_md") or "").strip()
+                                else (ch_scenes[0]["id"] if ch_scenes else str(ch["id"])),
+                    "order": int(ch.get("order_no") or 0),
+                    "title": ch.get("title") or "",
+                    "text": body,
+                })
 
         voice = voice_drift_by_scene(scene_texts, [{'name': c.name} for c in cards])
         timeline = timeline_replay(await self.repo.list_world_states(book_id))
@@ -480,16 +491,19 @@ class SimulationService:
         for s in scenes_all:
             scenes_by_ch.setdefault(s["chapter_id"], []).append(s)
 
-        word_count = scenes_chars(scenes_all)   # 唯一口径（B39）
+        # 唯一口径（B39/v1.46）：章正文优先、场景聚合回退
+        word_count = sum(chapter_chars(ch, scenes_by_ch.get(ch["id"], [])) for ch in chapters)
 
         # ---- 时间线：章状态 + 章字数 ----
         timeline: list[dict] = []
         chapters_done = 0
         for ch in chapters:
             ch_scenes = scenes_by_ch.get(ch["id"], [])
-            fully_done = bool(ch_scenes) and all(
+            ch_has_body = bool(str(ch.get("prose_md") or "").strip())
+            # 章写完的判据（v1.46）：直写模式看章正文；场景模式仍看"所有场定稿"
+            fully_done = ch_has_body or (bool(ch_scenes) and all(
                 (s.get("final_prose") or "").strip() for s in ch_scenes
-            )
+            ))
             if fully_done:
                 status, label, badge = "done", "已定稿", "done"
                 chapters_done += 1
@@ -503,7 +517,8 @@ class SimulationService:
                 "chapter_id": ch["id"], "title": ch.get("title") or "",
                 "order_no": ch.get("order_no") or 0, "tone": ch.get("tone") or "",
                 "status": status, "label": label, "badge": badge,
-                "word_count": scenes_chars(ch_scenes),
+                "word_count": chapter_chars(ch, ch_scenes),
+                "has_body": ch_has_body,
             })
 
         # ---- 伏笔 KPI + 待办 ----
@@ -535,26 +550,36 @@ class SimulationService:
         health = 100 - min(20, len(open_fs) * 3) - min(30, (len(chapters) - chapters_done) * 5)
         health = max(0, min(100, health))
 
-        # ---- 金句（从最终正文抽对话行）----
+        # ---- 逐章正文（章正文优先、场景聚合回退）----
+        # v1.46 直写链路：金句与热力都必须跟着"正文真源"走，否则直写的章在概览里
+        # 会表现为「金句池暂无 / 写作热力暂无成文记录」——看起来像按钮没接线（实测踩到）。
+        chapter_bodies: list[tuple[str, str]] = [
+            (str(ch.get("title") or ""), chapter_body(ch, scenes_by_ch.get(ch["id"], [])))
+            for ch in chapters
+        ]
+
+        # ---- 金句（从正文抽对话行：优先「」引号，其次整行双引号）----
         quotes: list[dict] = []
-        for s in scenes_all:
-            prose = s.get("final_prose") or ""
-            for line in prose.splitlines():
+        for title, prose in chapter_bodies:
+            for line in (prose or "").splitlines():
                 line = line.strip()
-                if line and (("「" in line and "」" in line) or (line.startswith('"') and line.endswith('"'))):
-                    quotes.append({"text": line[:60], "author": s.get("title") or "—— 正文"})
+                if line and (("「" in line and "」" in line)
+                             or ("“" in line and "”" in line)
+                             or (line.startswith('"') and line.endswith('"'))):
+                    quotes.append({"text": line[:60], "author": title or "—— 正文"})
                     if len(quotes) >= 3:
                         break
             if len(quotes) >= 3:
                 break
 
-        # ---- 近 4 周热力（按定稿时间散布字数，数据不足则全 0）----
+        # ---- 近 4 周热力（按"这一章最后一次改动"的时间散布本章字数）----
         heat = [0.0] * 28
         now = datetime.now()
-        for s in scenes_all:
-            if not (s.get("final_prose") or "").strip():
+        for ch in chapters:
+            body = chapter_body(ch, scenes_by_ch.get(ch["id"], []))
+            if not body.strip():
                 continue
-            ts = s.get("updated_at") or s.get("created_at")
+            ts = ch.get("updated_at") or ch.get("created_at")
             if not ts:
                 continue
             try:
@@ -565,7 +590,7 @@ class SimulationService:
                 continue
             days = (now - d).days
             if 0 <= days < 28:
-                heat[27 - days] += len(s.get("final_prose") or "")
+                heat[27 - days] += prose_chars(body)
 
         return {
             "book": {"id": book.get("id"), "title": book.get("title") or "",
@@ -1948,16 +1973,23 @@ class SimulationService:
         total_chars = 0
         for ch in sorted(chapters, key=lambda c: c.get("order_no") or 0):
             scenes = await self.repo.list_scenes_by_chapter(ch["id"])
-            finalized = [s for s in scenes if s.get("final_prose")]
-            if not finalized:
+            # v1.46 直写链路：有章正文就出一块；否则按场景逐场（场景间用 * * * 分隔）
+            has_body = bool(str(ch.get("prose_md") or "").strip())
+            if has_body:
+                bodies = [str(ch.get("prose_md")).strip()]
+            else:
+                bodies = [str(s["final_prose"]).strip() for s in scenes
+                          if (s.get("final_prose") or "").strip()]
+            if not bodies:
                 continue  # 未定稿章节不入书稿
-            bodies = [str(s["final_prose"]).strip() for s in finalized]
-            chars = sum(prose_chars(t) for t in bodies)
+            chars = prose_chars("\n\n".join(bodies))
             total_chars += chars
             chapters_out.append({
                 "order_no": int(ch.get("order_no") or 0),
                 "title": str(ch.get("title") or ""),
-                "bodies": bodies, "chars": chars, "scenes": len(finalized),
+                "bodies": bodies, "chars": chars,
+                "scenes": len(bodies) if not has_body else 0,
+                "has_body": has_body,
             })
         if not chapters_out:
             raise InvalidActionError("本书尚无已定稿内容，先在导演台定稿再导出")
@@ -1972,11 +2004,12 @@ class SimulationService:
         for i, c in enumerate(chapters_out, start=1):
             title = c["title"].strip() or "（无题）"
             # 章标题本身常已含「第 N 章」（主笔排的、手建的都这样）→ 别重复前缀
+            tail = (f" / {c['scenes']} 场" if c["scenes"] else "（直写）")
             if re.match(r"^第\s*[0-9一二三四五六七八九十百零]+\s*章", title):
-                lines.append(f"{i}. {title} — {c['chars']:,} 字 / {c['scenes']} 场")
+                lines.append(f"{i}. {title} — {c['chars']:,} 字{tail}")
             else:
                 label = f"第 {c['order_no']} 章" if c["order_no"] else f"第 {i} 章"
-                lines.append(f"{i}. {label} {title} — {c['chars']:,} 字 / {c['scenes']} 场")
+                lines.append(f"{i}. {label} {title} — {c['chars']:,} 字{tail}")
         lines.append("")
 
         for c in chapters_out:

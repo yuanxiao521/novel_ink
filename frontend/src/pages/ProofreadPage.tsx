@@ -201,7 +201,7 @@ export function ProofreadPage() {
                       <div className="ha-card">
                         <div className="ha-head"><span>口音漂移</span><b className={'ha-score ' + (audit.voice.flagged > 0 ? 'warn' : '')}>{audit.voice.flagged > 0 ? audit.voice.flagged + ' 处' : '通过'}</b></div>
                         {audit.voice.characters.length === 0 ? (
-                          <p className="ha-line">还没有可分析的角色对白（角色卡要有名字，正文要有「」对白）。</p>
+                          <p className="ha-line">还没有可分析的角色对白（要有角色卡，且正文里出现对白——支持「」与“”；章正文与场景正文都算）。</p>
                         ) : (
                           audit.voice.characters.map((v) => (
                             <div className="ha-issue" key={v.name}>

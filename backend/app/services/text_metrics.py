@@ -26,3 +26,21 @@ def prose_chars(text: str | None) -> int:
 def scenes_chars(scenes: list[dict] | None) -> int:
     """一组场景的正文合计（只统计已定稿 `final_prose`，未定稿按 0）。"""
     return sum(prose_chars(s.get("final_prose")) for s in (scenes or []))
+
+
+def chapter_body(chapter: dict | None, scenes: list[dict] | None = None) -> str:
+    """一章的正文：**章正文（chapters.prose_md）优先，空则退回场景聚合**（v1.46 直写链路）。
+
+    与 `service.get_chapter_prose` 的回退规则**必须一致**——否则会出现"显示的字数"和
+    "读到的正文"两个口径（B39 的教训：同一本书同屏两个字数）。
+    """
+    body = str((chapter or {}).get("prose_md") or "").strip()
+    if body:
+        return body
+    parts = [str((s or {}).get("final_prose") or "") for s in (scenes or [])]
+    return "\n\n".join(p for p in parts if p.strip())
+
+
+def chapter_chars(chapter: dict | None, scenes: list[dict] | None = None) -> int:
+    """一章的字数（唯一口径）：走 chapter_body 同一份回退逻辑。"""
+    return prose_chars(chapter_body(chapter, scenes))

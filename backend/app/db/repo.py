@@ -320,6 +320,7 @@ class Repo:
                 "summary": r.summary, "order_no": r.order_no,
                 "tone": r.tone, "tension_curve": r.tension_curve, "word_target": r.word_target,
                 "prose_md": r.prose_md or "",
+                "updated_at": r.updated_at.isoformat() if r.updated_at else "",
             } for r in rows]
 
         return await self._query_or_mem(_q, [])
@@ -334,6 +335,7 @@ class Repo:
                 "summary": r.summary, "order_no": r.order_no,
                 "tone": r.tone, "tension_curve": r.tension_curve, "word_target": r.word_target,
                 "prose_md": r.prose_md or "",
+                "updated_at": r.updated_at.isoformat() if r.updated_at else "",
             }
 
         if not self.use_db:
@@ -1106,6 +1108,10 @@ class Repo:
                     "order_no": c.get("order_no", 0), "tone": c.get("tone") or "",
                     "tension_curve": c.get("tension_curve") or "",
                     "word_target": c.get("word_target") or 0,
+                    # v1.46 直写链路：章正文（供概览/校对/导出统一口径）
+                    "prose_md": c.get("prose_md") or "",
+                    "created_at": c.get("created_at") or "",
+                    "updated_at": c.get("updated_at") or "",
                     "scenes": scene_list,
                 })
             return {
@@ -1161,6 +1167,10 @@ class Repo:
                     "id": c.id, "title": c.title, "summary": c.summary,
                     "order_no": c.order_no, "tone": c.tone,
                     "tension_curve": c.tension_curve, "word_target": c.word_target,
+                    # v1.46 直写链路：章正文（供概览/校对/导出统一口径）
+                    "prose_md": c.prose_md or "",
+                    "created_at": c.created_at.isoformat() if c.created_at else "",
+                    "updated_at": c.updated_at.isoformat() if c.updated_at else "",
                     "scenes": scene_list,
                 })
             return {

@@ -295,6 +295,26 @@ curl -s -X PUT "http://127.0.0.1:8001/api/v1/chapters/<chapterId>/prose" \
 node scripts/ui-spec.mjs   # ⑫ /write 打开即见整章正文 + 进度条 + 「写这一章」
 ```
 
+### 3.13 概览/校对/导出口径一致（v1.46 接线 · B54）
+
+```bash
+B=book-14b4b312   # 有章级直写内容的书
+# ① 概览：KPI 字数 / 时间线 / 金句 / 热力 必须一致
+curl -s "http://127.0.0.1:8001/api/v1/books/$B/dashboard" | python -c "import json,sys; d=json.load(sys.stdin); print(d['kpi'], d['timeline'], d['quotes'][:1], sum(d['heat']))"
+# 期望：kpi.word_count == timeline[].word_count == sum(heat) == quotes 非空
+# 实测：6636 / 6636 / 6636 / 金句 3 条（作者=第一章）
+
+# ② 校对：章字数 + has_body + done
+curl -s "http://127.0.0.1:8001/api/v1/books/$B/collation" | python -c "import json,sys; d=json.load(sys.stdin); print(d['kpi'], [(c['title'],c['word_count'],c['has_body'],c['done']) for c in d['chapters']])"
+
+# ③ 导出：全书字数与目录口径
+curl -s "http://127.0.0.1:8001/api/v1/books/$B/export?fmt=md" | head -8
+# 期望：全书约 6,636 字 · 共 1 章；目录「1. 第一章 零里雨夜 — 6,636 字（直写）」
+
+# ④ 全书体检能读到章正文（scenes_checked 含章级直写单元）
+curl -s "http://127.0.0.1:8001/api/v1/books/$B/health-report" | python -c "import json,sys; d=json.load(sys.stdin); print(d['voice']['scenes_checked'], d['structure']['score'])"
+```
+
 ## 4. 存量验收（S1–S4 / A2 / A3，仍在跑）
 
 ```powershell

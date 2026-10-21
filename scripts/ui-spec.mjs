@@ -274,9 +274,12 @@ try {
   }
 
   // ⑩ 写手流式（v1.44）：点顶栏「写手 · 初稿」→ 正文区**边收边写**（采样到中间态）+ 头部「未保存」
+  //    注意：先**重新导航**拿干净页面 —— ⑨ 刚跑完体检，顶栏按钮可能还处在上一轮的 busy 禁用态
+  //    （实测踩到：disabledAtClick=true 导致整条断言超时）。
   if (llmDown) {
     skip("⑩ 写手流式（正文区边收边写）", "LLM 不可用：" + llmWhy);
   } else {
+    await goto(WEB + "/studio/" + proseScene + "?book=" + proseBook + "&tab=editor", 8000);
     const dr = JSON.parse((await ev("(async () => {"
       + "const find = () => Array.from(document.querySelectorAll('.s2-actions button')).find((x) => x.textContent.includes('写手'));"
       + "let b = find();"
@@ -285,7 +288,7 @@ try {
       + "const initial = readLen();"
       + "/* 等按钮可用（上一次工具跑完才解禁；如实记录点击时的禁用态，不猜） */"
       + "const tWait = Date.now();"
-      + "while (b.disabled && Date.now() - tWait < 8000) { await new Promise((r) => setTimeout(r, 200)); b = find(); }"
+      + "while (b.disabled && Date.now() - tWait < 15000) { await new Promise((r) => setTimeout(r, 200)); b = find(); }"
       + "const disabledAtClick = !!b.disabled;"
       + "b.click();"
       + "const lens = [];"
