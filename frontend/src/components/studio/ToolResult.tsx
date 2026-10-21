@@ -26,6 +26,12 @@ const DIM_LABEL: Record<string, string> = {
   pacing: '节奏', dialogue: '对白', imagery: '画面',
 };
 
+/** v1.49：记忆检索命中的素材类型（kind → 中文标签）。 */
+const MEM_KIND_LABEL: Record<string, string> = {
+  chapter: '前情', scene: '场', character: '角色', world: '世界观',
+  foreshadow: '伏笔', belief: '信念', memory: '记忆',
+};
+
 /** 一句「结论」——与后端 _summarize 同一口径（前端只在后端没给时兜底）。 */
 function headline(tool: string, d: Rec): string {
   if (tool === 'prose.review') {
@@ -282,7 +288,39 @@ export function ToolResult({ tool, data, onApplyText }: ToolResultProps) {
     );
   }
 
-  if (tool === 'prose.scan_tone') {
+  if (tool === "memory.search") {
+    const hits = asArr(d.hits);
+    const mode = asStr(d.mode);
+    return (
+      <div className="tr-card">
+        <div className="tr-head">🧠 记忆检索
+          <span className="tr-head-sub">
+            {mode === "hybrid" ? "向量 + 关键词" : "中文关键词"} · 命中 {hits.length} 条
+          </span>
+        </div>
+        {asStr(d.query) && <div className="tr-none">查询：{asStr(d.query)}</div>}
+        {hits.length === 0 ? (
+          <div className="tr-none">没有命中：记忆索引可能还没建（写作页可点「重建索引」），或这本书还没素材</div>
+        ) : (
+          <div className="tr-list">
+            {hits.map((h, i) => (
+              <div className="tr-item" key={i}>
+                <span className={`tr-sev ${asStr(h.kind) === "character" ? "voice" : "mid"}`}>
+                  {MEM_KIND_LABEL[asStr(h.kind)] ?? asStr(h.kind)}
+                </span>
+                <span className="tr-item-main">
+                  {asStr(h.title) && <b>{asStr(h.title)}：</b>}
+                  {asStr(h.text).slice(0, 140)}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (tool === "prose.scan_tone") {
     const rules = asArr(asRec(d.report).rules);
     return (
       <div className="tr-card">

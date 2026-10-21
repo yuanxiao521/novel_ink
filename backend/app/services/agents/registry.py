@@ -136,6 +136,19 @@ TOOLS.update({
 })
 
 
+TOOLS.update({
+    # ---------- 记忆检索（v1.49 · RAG）----------
+    # 与写作页「记忆」面板同一份检索实现（rag.recall），所以对话里问到的
+    # 「前情/这个角色/世界观/有哪些没收的伏笔」和写手 prompt 看到的是同一批素材，
+    # 不会出现"对话说一套、落笔写一套"。
+    "memory.search": ToolDecl(
+        "memory.search", "记忆检索：按查询取前情/相关角色/世界观/未回收伏笔片段（只读）", "read",
+        params=("book_id", "query"), optional=("kinds", "top_k"),
+        handler="memory_search", group="memory",
+    ),
+})
+
+
 def get_tool(name: str) -> ToolDecl | None:
     return TOOLS.get(name)
 

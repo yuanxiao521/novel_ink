@@ -32,6 +32,16 @@ class Settings(BaseSettings):
     model_strong: str = "deepseek-v4.1-flash"   # 角色演绎（原强档）
     model_cheap: str = "deepseek-v4.1-flash"    # 导演/张力评估/成文（原廉档）
 
+    # ---- 记忆检索 / 向量通道（RAG · v1.49）----
+    # 向量通道**可选**：留空 = 纯关键词检索（zhparser 中文分词），功能照跑；
+    # 配上 OpenAI 兼容的 embedding 服务即自动升级为混合检索（向量+关键词 RRF）。
+    embed_base_url: str = ""      # 例：https://dashscope.aliyuncs.com/compatible-mode/v1
+    embed_api_key: str = ""
+    embed_model: str = "text-embedding-v4"
+    embed_dim: int = 1024         # 必须与 mem_chunks.embedding vector(1024) 一致
+    embed_batch: int = 10
+    rag_top_k: int = 8            # 单次召回条数上限
+
     # ---- 任务队列（arq · v1.41）：长 LLM 操作后台化 ----
     redis_url: str = "redis://127.0.0.1:6379/1"   # db1（与宿主上其它项目 db0 隔离）
 

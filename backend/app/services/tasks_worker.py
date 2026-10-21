@@ -86,7 +86,8 @@ async def enqueue(job_kind: str, payload: dict) -> dict:
               "quality_loop": "run_quality_loop",
               "bookkeeping": "run_bookkeeping",
               "chapter_bookkeeping": "run_chapter_bookkeeping",
-              "chapter_inspect": "run_chapter_inspect"}
+              "chapter_inspect": "run_chapter_inspect",
+              "book_reindex": "run_book_reindex"}
     arq_fn = fn_map.get(job_kind)
     if not arq_fn:
         raise ValueError(f"未知任务类型: {job_kind}（可选 {sorted(fn_map)}）")
@@ -200,58 +201,69 @@ async def queue_health() -> dict:
     必须让作者看得见（T9：静默降级必须反馈）。
     """
     r = await _client()
-    errors: list[str] = []
     try:
-        now = int(time.time() * 1000)
-        # 每个探针独立容错：单个 Redis 异常不能把整个队列状态打成"没有消费者"
-        # （实测踩过：一次瞬时 WRONGTYPE 让横幅误报 "worker 未运行"，而 worker 明明在跑）
-        age = None
-        try:
-            raw = await r.get(HEARTBEAT_KEY)
-            hb = json.loads(raw) if raw else None
-            age = int((now - int(hb["at"])) / 1000) if isinstance(hb, dict) and hb.get("at") else None
-        except Exception as e:  # noqa: BLE001
-            errors.append(f"heartbeat: {type(e).__name__}: {e}"[:120])
-        alive = age is not None and age <= _HB_TTL
-
-        queued = 0
-        try:
-            queued = int(await r.llen("arq:queue") or 0)
-        except Exception as e:  # noqa: BLE001
-            errors.append(f"queue_len: {type(e).__name__}: {e}"[:120])
-
-        in_progress = 0
-        try:
-            in_progress = len(await r.keys("arq:in-progress:*"))
-        except Exception as e:  # noqa: BLE001
-            errors.append(f"in_progress: {type(e).__name__}: {e}"[:120])
-
-        stuck = 0
-        try:
-            for k in await r.keys(_PREFIX + "*"):
-                try:
-                    s = json.loads(await r.get(k) or "{}")
-                except Exception:  # noqa: BLE001  单个坏键跳过
-                    continue
-                if isinstance(s, dict) and str(s.get("status")) == "running":
-                    since = int(s.get("running_since") or s.get("created_at") or 0)
-                    if since and now - since >= STUCK_SEC * 1000:
-                        stuck += 1
-        except Exception as e:  # noqa: BLE001
-            errors.append(f"stuck_scan: {type(e).__name__}: {e}"[:120])
-
-        if errors:
-            # 有探针失败 → status=unknown（前端据此提示"状态查询失败"而不是"没有消费者"）
-            return {"alive": alive, "status": "unknown", "heartbeat_age": age,
-                    "heartbeat_ttl": _HB_TTL, "queued": queued,
-                    "in_progress": in_progress, "stuck": stuck,
-                    "error": "；".join(errors)[:300]}
-        status = "ok" if (alive and stuck == 0) else ("no-worker" if not alive else "stuck")
-        return {"alive": alive, "status": status, "heartbeat_age": age,
-                "heartbeat_ttl": _HB_TTL, "queued": queued,
-                "in_progress": in_progress, "stuck": stuck}
+        out = await _queue_probe(r)
+        if out.get("error"):
+            # v1.49：瞬时抖动（连接被对端关闭 / 键类型竞态）不算故障，重测一次再下结论。
+            # 假告警比不告警更伤信任：一次抖动就报「队列状态未知」会让人不再相信横幅。
+            await asyncio.sleep(0.15)
+            out = await _queue_probe(r)
+        return out
     finally:
         await r.aclose()
+
+
+async def _queue_probe(r: "aredis.Redis") -> dict:
+    """单次队列探针（每项独立容错）；返回里带 error 字段 = 有探针失败。"""
+    errors: list[str] = []
+    now = int(time.time() * 1000)
+    # 每个探针独立容错：单个 Redis 异常不能把整个队列状态打成"没有消费者"
+    # （实测踩过：一次瞬时 WRONGTYPE 让横幅误报 "worker 未运行"，而 worker 明明在跑）
+    age = None
+    try:
+        raw = await r.get(HEARTBEAT_KEY)
+        hb = json.loads(raw) if raw else None
+        age = int((now - int(hb["at"])) / 1000) if isinstance(hb, dict) and hb.get("at") else None
+    except Exception as e:  # noqa: BLE001
+        errors.append(f"heartbeat: {type(e).__name__}: {e}"[:120])
+    alive = age is not None and age <= _HB_TTL
+
+    queued = 0
+    try:
+        queued = int(await r.llen("arq:queue") or 0)
+    except Exception as e:  # noqa: BLE001
+        errors.append(f"queue_len: {type(e).__name__}: {e}"[:120])
+
+    in_progress = 0
+    try:
+        in_progress = len(await r.keys("arq:in-progress:*"))
+    except Exception as e:  # noqa: BLE001
+        errors.append(f"in_progress: {type(e).__name__}: {e}"[:120])
+
+    stuck = 0
+    try:
+        for k in await r.keys(_PREFIX + "*"):
+            try:
+                s = json.loads(await r.get(k) or "{}")
+            except Exception:  # noqa: BLE001  单个坏键跳过
+                continue
+            if isinstance(s, dict) and str(s.get("status")) == "running":
+                since = int(s.get("running_since") or s.get("created_at") or 0)
+                if since and now - since >= STUCK_SEC * 1000:
+                    stuck += 1
+    except Exception as e:  # noqa: BLE001
+        errors.append(f"stuck_scan: {type(e).__name__}: {e}"[:120])
+
+    if errors:
+        # 有探针失败 → status=unknown（前端据此提示"状态查询失败"而不是"没有消费者"）
+        return {"alive": alive, "status": "unknown", "heartbeat_age": age,
+                "heartbeat_ttl": _HB_TTL, "queued": queued,
+                "in_progress": in_progress, "stuck": stuck,
+                "error": "；".join(errors)[:300]}
+    status = "ok" if (alive and stuck == 0) else ("no-worker" if not alive else "stuck")
+    return {"alive": alive, "status": status, "heartbeat_age": age,
+            "heartbeat_ttl": _HB_TTL, "queued": queued,
+            "in_progress": in_progress, "stuck": stuck}
 
 
 # ---------------------------------------------------------------- worker 端任务函数
@@ -392,10 +404,30 @@ async def _do_chapter_inspect(jid: str, chapter_id: str) -> dict:
     await _set(jid, status="done", result=out)
     return out
 
+async def run_book_reindex(ctx: dict, *, job_id: str = "", book_id: str) -> dict:
+    """后台：**记忆索引全量重建**（v1.49 · RAG）——建索引要扫全表 + 可能调 embedding，
+    必须离开请求线程（前端点「重建记忆」立刻返回 job_id）。"""
+    jid = job_id or "job-unknown"
+    return await _guard(jid, _do_book_reindex(jid, book_id))
+
+
+async def _do_book_reindex(jid: str, book_id: str) -> dict:
+    from app.db.repo import Repo
+    from app.services.service import SimulationService
+
+    svc = SimulationService(Repo())
+    await _stage(jid, "记忆索引：抽取章摘要/角色/世界观/伏笔素材…")
+    out = await svc.reindex_book_memory(book_id)
+    await _stage(jid, "记忆索引完成：%d 块（向量 %d，模式 %s）" % (
+        int(out.get("chunks") or 0), int(out.get("vectors") or 0), str(out.get("mode"))))
+    await _set(jid, status="done", result=out)
+    return out
+
+
 class WorkerSettings:
     """arq worker 配置：arq app.services.tasks_worker.WorkerSettings"""
     functions = [run_plan_batch, run_review_meeting, run_quality_loop, run_bookkeeping,
-                 run_chapter_bookkeeping, run_chapter_inspect]
+                 run_chapter_bookkeeping, run_chapter_inspect, run_book_reindex]
     redis_settings = None   # 在类体下方赋值（arq RedisSettings）
     max_jobs = 4
     job_timeout = 600      # LLM 长任务放宽

@@ -743,6 +743,37 @@ async def delete_memory(memory_id: str, svc: SimulationService = Depends(get_ser
     await svc.delete_memory(memory_id)
 
 
+# ------------------------------------------------------------------ 记忆检索（RAG · v1.49）
+@router.get("/books/{book_id}/memory/stats")
+async def book_memory_stats(book_id: str, svc: SimulationService = Depends(get_service)):
+    """记忆索引统计：块数 / 各 kind 分布 / 向量条数 / 向量通道是否可用。"""
+    return await svc.book_memory_stats(book_id)
+
+
+@router.get("/books/{book_id}/memory/search")
+async def book_memory_search(book_id: str, q: str, kinds: str = "", top_k: int = 8,
+                             svc: SimulationService = Depends(get_service)):
+    """记忆检索（作者/前端调试用）：q 必填；kinds 逗号分隔（chapter,character,world,...）。"""
+    ks = [k.strip() for k in kinds.replace("，", ",").split(",") if k.strip()] or None
+    return await svc.memory_search(book_id, q, ks, top_k)
+
+
+@router.post("/books/{book_id}/memory/reindex")
+async def book_memory_reindex(book_id: str,
+                              svc: SimulationService = Depends(get_service)):
+    """重建本书记忆索引（后台任务）：立刻返回 job_id，进度查 GET /jobs/{job_id}。"""
+    from app.services import tasks_worker as tw
+
+    return await tw.enqueue("book_reindex", {"book_id": book_id})
+
+
+@router.get("/chapters/{chapter_id}/recall")
+async def chapter_recall(chapter_id: str, svc: SimulationService = Depends(get_service)):
+    """本章将注入写手 prompt 的记忆素材（写作页「记忆」面板数据源）。"""
+    out = await svc.chapter_recall(chapter_id)
+    return out
+
+
 # ------------------------------------------------------------------ 主笔共创对话（P0-2）
 @router.post("/books/{book_id}/chief/tools")
 async def chief_tools_chat(book_id: str, body: chief.ChiefChatIn,

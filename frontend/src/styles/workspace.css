@@ -975,3 +975,37 @@
 .tr-cand { margin-top: 9px; padding: 8px; background: var(--bg-panel); border: 1px dashed var(--border-light); border-radius: var(--radius-md); }
 .tr-cand-head { margin-bottom: 5px; font-size: 11.5px; color: var(--text-muted); }
 .tr-cand-text { margin-bottom: 7px; font-size: 12px; line-height: 1.7; color: var(--text-secondary); }
+/* v1.49 · 写作页「记忆」面板：写手这次会读到什么（前情/角色/世界观/伏笔）
+   动机：直写链路原来只有「上一章结尾 600 字」，作者看不到写手到底还记得什么，
+   一旦写偏就只会归咎于"模型不行"。这里把注入素材摊开，并显示检索模式（关键词/混合/兜底）。 */
+.wp-mem-toggle {
+  margin-left: 8px; padding: 1px 7px; font-family: inherit; font-size: 10.5px;
+  cursor: pointer; color: var(--text-secondary); background: transparent;
+  border: 1px solid var(--border-light); border-radius: var(--radius-md);
+}
+.wp-mem-toggle:hover { border-color: var(--accent-primary); color: var(--accent-primary); }
+.wp-mem-line {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  margin: 6px 0 2px; font-size: 11.5px; color: var(--text-secondary);
+}
+.wp-mem-mode {
+  padding: 1px 7px; font-size: 10.5px; border-radius: var(--radius-pill);
+  border: 1px solid var(--border-light); color: var(--text-muted);
+}
+.wp-mem-mode.is-hybrid { color: var(--accent-cyan); border-color: var(--accent-cyan); }
+.wp-mem-mode.is-keyword { color: var(--accent-primary); border-color: var(--accent-primary); }
+.wp-mem-mode.is-fallback { color: var(--accent-warn); border-color: var(--accent-warn); }
+.wp-mem-body {
+  margin-top: 6px; max-height: 200px; overflow: auto; padding: 8px 9px;
+  border: 1px solid var(--border-light); border-radius: var(--radius-md); background: var(--bg-panel);
+}
+.wp-mem-group + .wp-mem-group { margin-top: 8px; }
+.wp-mem-group-head { font-size: 11px; font-weight: 600; color: var(--accent-cyan); margin-bottom: 3px; }
+.wp-mem-item {
+  display: flex; flex-direction: column; gap: 1px; padding: 3px 0;
+  font-size: 11px; line-height: 1.55; color: var(--text-muted);
+}
+.wp-mem-item b { color: var(--text-secondary); font-weight: 600; }
+.wp-mem-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.wp-mem-actions .ws-btn { padding: 3px 9px; font-size: 11px; white-space: nowrap; }
+

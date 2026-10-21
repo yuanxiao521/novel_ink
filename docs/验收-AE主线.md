@@ -337,6 +337,46 @@ curl -s "http://127.0.0.1:8001/api/v1/jobs/$JOB"
 node scripts/ui-spec.mjs   # ⑫ 已断言按钮存在
 ```
 
+### 3.15 记忆检索（RAG · v1.49）
+
+```bash
+B=book-14b4b312; CH=chapter-c08f2b6b
+
+# ① 重建记忆索引（后台任务；首进书或大改设定后跑一次）
+JOB=$(curl -s -X POST "http://127.0.0.1:8001/api/v1/books/$B/memory/reindex" | python -c "import json,sys; print(json.load(sys.stdin)['job_id'])")
+curl -s "http://127.0.0.1:8001/api/v1/jobs/$JOB"
+# 期望 result = {chunks>0, vectors, by_kind{chapter,character,world,foreshadow,memory}, mode:"keyword"}
+# 实测：25 块 · 向量 0（未配 embedding）· by_kind{chapter:2,character:5,world:13,foreshadow:4,memory:1} · 2 阶段 ~150ms
+
+# ② 索引统计 + 向量通道状态（为什么是纯关键词，这里能看出来）
+curl -s "http://127.0.0.1:8001/api/v1/books/$B/memory/stats"
+# 期望 embedding.available=false 且 reason 写明「未配置 NOVEL_EMBED_*」
+
+# ③ 关键词检索（正斜杠/中文都要能命中）
+curl -s --get --data-urlencode "q=路引 涂改" --data "top_k=3" \
+  "http://127.0.0.1:8001/api/v1/books/$B/memory/search"
+# 期望 hits 里 kind ∈ {chapter,character,world,foreshadow}，score 降序
+
+# ④ 本章记忆素材（写手 prompt 与前端面板共用这一份）
+curl -s "http://127.0.0.1:8001/api/v1/chapters/$CH/recall"
+# 期望 {mode, from_search, counts{prev,characters,world,foreshadows}, chars, text}
+# 实测：counts={prev:0(本书仅 1 章),characters:4,world:5,foreshadows:4} · chars=827 · from_search=3
+
+# ⑤ 前端：写作页左栏「记忆 · 写手会读到」可展开，四类计数与明细可见
+node scripts/ui-spec.mjs   # ⑬ 永久回归（模式徽标 + 折叠展开 + 明细 ≥1 条）
+```
+
+**降级验收（功能不消失，只降质量）**：
+
+```bash
+# A. 没建过索引：检索为空 → 兜底直取（最近 3 章摘要 + 全部角色/世界观/未回收伏笔）
+curl -s "http://127.0.0.1:8001/api/v1/chapters/$CH/recall"   # mode=fallback 且 counts 仍非空
+
+# B. 没配 embedding：mode=keyword，向量通道 available=false，检索照常工作（当前生产状态）
+
+# C. DB 不可用：store 返回 [] → recall 全量走兜底直取；prompt 里那一段退化为「（无检索素材…）」
+```
+
 ## 4. 存量验收（S1–S4 / A2 / A3，仍在跑）
 
 ```powershell
@@ -358,7 +398,7 @@ $py = "E:\novel_desk-agent\.venv\Scripts\python.exe"
 | --- | --- |
 | **写权限矩阵强制** | ✅ 已启用（v1.30）：`check_write` 接进 ToolExecutor（`scenes:final_prose`/`prose_annotations` 字段级闸门）；`agent_tasks` 由 tasks.py 发起者白名单强制；其余行 enforced=False（无工具写路径/走 UI 直调，**诚实标注非漏做**） |
 | **Redis** | 未引入（触发条件：多 worker / 后台长任务 / 多人实时 / 高频进度）；纪律：只做传输·缓存·锁，不放业务事实 |
-| **素材库（RAG）** | 侧栏灰态占位「RAG 后」；属 A1 上下文 + 跨书素材，等触发 |
+| **素材库（RAG）** | ✅ **v1.49 已落地检索层**：`mem_chunks`（7 类 kind）+ zhparser 中文关键词检索 + `memory.search` 工具 + 写手 prompt 记忆段 + 写作页「记忆」面板 + arq 重建任务；向量通道代码/表/索引已就绪，**只差 embedding key**（百炼账号欠费）。**仍缺**：rerank / 多查询改写 / 跨书素材库页面（侧栏仍是灰态占位） |
 | **成书 / 导出** | ✅ v1.31 + **v1.34 收口第一刀**（字数唯一口径 · 导出加目录「章 + 字数 + 场次」）；**v1.35 补 C**：逐章校对页 `/proofread`（每章场景清单 / 字数 / 定稿状态 / 一键去改）；**仍缺**（作者已明确暂缓）：epub·docx / 分卷。历史：`export_book_md` 场景间 `* * *` 分隔 + 全书字数统计；概览页头部「导出成书」入口（有定稿章才显示）；阅读台原入口保留 |
 | **世界状态浏览视图** | ✅ 已交付（v1.28 浏览 / v1.29 作者编辑）：`GET/POST/PUT/DELETE /world-states` + 设定页真列表（kind 过滤 / 前值 / 作者手改徽标 / 行内编辑与新增） |
 | **A4 分批交付** | ✅ 已交付（v1.33）：每批 N 章 → 预览复核 → **增量落库**（默认 `mode=append`，旧章与正文不动）→ 确认后「✦ 继续下一批」；首批给全世界观（B35），骨架全量替换需显式确认且已有正文时被 409 拦住（B33） |

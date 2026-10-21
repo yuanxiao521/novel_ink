@@ -1277,11 +1277,27 @@ class SimulationService:
         if prev_tail:
             scenes_text += "【上一章结尾（承接语感，不要重复）】\n" + prev_tail + "\n\n"
         scenes_text += ("【本章场景大纲】\n" + scene_lines) if scene_lines else "（本章未拆场）"
+
+        # v1.49 · 记忆检索：按本章目标召回「前情 / 相关角色 / 世界观 / 未回收伏笔」。
+        # 与 prev_tail 的分工：prev_tail 保语感（上一章最后 600 字原样承接），
+        # recall 保事实（前 9 章摘要、角色腔调、世界状态、伏笔状态）。
+        recall_text = ""
+        recall_bundle: dict = {}
+        try:
+            from app.services.rag import recall as rag_recall
+
+            recall_bundle = await rag_recall.chapter_recall(self.repo, book_id, chapter_id)
+            recall_text = rag_recall.render(recall_bundle)
+        except Exception as e:  # noqa: BLE001  检索失败不能挡住写作
+            logger.warning("[recall] 装配失败 chapter=%s：%s", chapter_id, e)
+
         return {"chapter": chapter, "book_id": book_id, "characters": characters,
                 "memory": memory, "constraints": constraints, "world_states": world_states,
                 "existing": existing, "scenes_text": scenes_text, "word_target": target,
                 # v1.47：把场清单原样带出，供分段编排按"场功能"推进
-                "scenes": scenes}
+                "scenes": scenes,
+                # v1.49：检索出来的记忆素材（prompt 用 recall_text，前端用 recall）
+                "recall_text": recall_text, "recall": recall_bundle}
 
     async def save_chapter_prose(self, chapter_id: str, text: str) -> dict:
         """保存章正文（唯一真源：chapters.prose_md）→ **自动触发章级记账**（后台任务）。
@@ -1372,6 +1388,7 @@ class SimulationService:
                 chapter=ctx["chapter"], characters=ctx["characters"],
                 world_states=ctx["world_states"], constraints=ctx["constraints"],
                 memory=ctx["memory"], scenes=ctx["scenes_text"], written=written,
+                recall=ctx.get("recall_text") or "",
                 seg_no=i, seg_total=len(goals), seg_goal=goal, seg_target=seg_target)
             seg: list[str] = []
             if i > 1:
@@ -1382,6 +1399,53 @@ class SimulationService:
             piece = "".join(seg).strip()
             if piece:
                 written = (written + "\n\n" + piece).strip() if written.strip() else piece
+
+    # ---------------------------------------------------------------- 记忆检索（RAG · v1.49）
+    async def chapter_recall(self, chapter_id: str) -> dict:
+        """本章会注入写手 prompt 的记忆素材（前端「记忆」面板与后端同一份口径）。"""
+        from app.services.rag import recall as rag_recall
+
+        chapter = await self.repo.get_chapter(chapter_id)
+        if chapter is None:
+            raise ChapterNotFoundError(f"未找到章节: {chapter_id}")
+        book_id = str(chapter.get("book_id") or "")
+        bundle = await rag_recall.chapter_recall(self.repo, book_id, chapter_id)
+        bundle["text"] = rag_recall.render(bundle)
+        bundle["book_id"] = book_id
+        return bundle
+
+    async def memory_search(self, book_id: str, query: str,
+                            kinds: object = None, top_k: object = None) -> dict:
+        """工具 memory.search 的实现：对话里查「前情 / 角色 / 世界观 / 伏笔」。"""
+        from app.config import settings as _settings
+        from app.services.rag import recall as rag_recall
+
+        parsed: list[str] | None = None
+        if isinstance(kinds, str):
+            parsed = [k.strip() for k in kinds.replace("，", ",").split(",") if k.strip()]
+        elif isinstance(kinds, (list, tuple)):
+            parsed = [str(k).strip() for k in kinds if str(k).strip()]
+        try:
+            k = int(top_k) if top_k is not None else int(_settings.rag_top_k or 8)
+        except (TypeError, ValueError):
+            k = int(_settings.rag_top_k or 8)
+        return await rag_recall.search_for_tool(self.repo, book_id, query, parsed, k)
+
+    async def book_memory_stats(self, book_id: str) -> dict:
+        """记忆索引统计（前端「记忆」面板 + /health.rag）。"""
+        from app.services.rag import embedder, store
+
+        data = await store.stats(book_id)
+        data["book_id"] = book_id
+        data["embedding"] = embedder.status()
+        return data
+
+    async def reindex_book_memory(self, book_id: str) -> dict:
+        """全量重建记忆索引（arq 任务 book_reindex 的实际执行体）。"""
+        from app.services.rag import indexer
+
+        return await indexer.reindex_book(self.repo, book_id)
+
 
     # ---------------------------------------------------------------- P1：设定补齐 + 章级巡检（v1.48）
     async def ensure_chapter_settings(self, chapter_id: str, force: bool = False) -> dict:

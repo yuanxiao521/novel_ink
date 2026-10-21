@@ -1549,3 +1549,70 @@ export async function deleteWorldState(wsId: string): Promise<void> {
 export async function listAgentSpecs(): Promise<{ specs: AgentSpecInfo[]; write_matrix: Array<{ target: string; owner: string; note: string; enforced: boolean }> }> {
   return getJson(`${API_BASE}/api/v1/agent/specs`);
 }
+
+// ---------------------------------------------------------------------------
+// v1.49 · 记忆检索（RAG）：前情 / 相关角色 / 世界观 / 未回收伏笔
+// 为什么前端也要能读到：作者必须能看见「写手这次到底记住了什么」，
+// 否则"它为什么不按前文写"永远是个黑盒。写作页「记忆」面板与写手 prompt
+// 用的是**同一个后端接口**（/chapters/{id}/recall），口径不分叉。
+// ---------------------------------------------------------------------------
+
+export interface RecallItem {
+  id: string;
+  kind: string;
+  chapter_no: number;
+  title: string;
+  text: string;
+  score: number;
+}
+
+export interface ChapterRecall {
+  prev: RecallItem[];
+  characters: RecallItem[];
+  world: RecallItem[];
+  foreshadows: RecallItem[];
+  /** keyword（中文关键词）| hybrid（向量+关键词）| fallback（全靠兜底直取） */
+  mode: string;
+  /** 四段里由检索命中的段数；0 = 全靠兜底直取 */
+  from_search: number;
+  query: string;
+  counts: Record<string, number>;
+  chars: number;
+  text: string;
+  book_id?: string;
+}
+
+export interface MemoryStats {
+  book_id: string;
+  chunks: number;
+  by_kind: Record<string, number>;
+  vectors: number;
+  indexed_at: number;
+  embedding?: { available: boolean; model?: string; dim?: number; reason?: string };
+}
+
+/** 本章会注入写手 prompt 的记忆素材（写作页「记忆」面板数据源）。 */
+export async function fetchChapterRecall(chapterId: string): Promise<ChapterRecall> {
+  return getJson<ChapterRecall>(`${API_BASE}/api/v1/chapters/${chapterId}/recall`);
+}
+
+/** 记忆索引统计 + 向量通道是否可用（为什么是纯关键词，这里能看出来）。 */
+export async function fetchBookMemoryStats(bookId: string): Promise<MemoryStats> {
+  return getJson<MemoryStats>(`${API_BASE}/api/v1/books/${bookId}/memory/stats`);
+}
+
+/** 重建本书记忆索引（后台任务）：返回 job_id，用 pollJob 取进度。 */
+export async function reindexBookMemory(bookId: string): Promise<{ job_id: string; kind: string; status: string }> {
+  const res = await fetch(`${API_BASE}/api/v1/books/${bookId}/memory/reindex`, { method: "POST" });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return (await res.json()) as { job_id: string; kind: string; status: string };
+}
+
+/** 记忆检索（对话调试用）：按查询取片段，kinds 逗号分隔。 */
+export async function searchMemory(
+  bookId: string, q: string, kinds = "", topK = 8,
+): Promise<{ query: string; mode: string; hits: RecallItem[]; count: number }> {
+  const params = new URLSearchParams({ q, top_k: String(topK) });
+  if (kinds) params.set("kinds", kinds);
+  return getJson(`${API_BASE}/api/v1/books/${bookId}/memory/search?${params.toString()}`);
+}

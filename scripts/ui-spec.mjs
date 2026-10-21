@@ -367,6 +367,28 @@ try {
         && (wr.btns || []).some((b) => String(b).includes("写这一章"))
         && wr.prog === 1,
       JSON.stringify(wr));
+
+    // ⑬ 记忆面板（v1.49 · 记忆检索）：写作页左栏必须能读到「写手这次会读到什么」
+    //    动机：直写链路原来只有「上一章结尾 600 字」，作者看不到注入 prompt 的素材，
+    //    写偏了只能归咎"模型不行"。这一项永久回归：前情/角色/世界观/伏笔四类 + 检索模式 + 折叠展开。
+    const mr = JSON.parse((await ev("(async () => {"
+      + "const title = Array.from(document.querySelectorAll('.s2-info-title')).map((x) => x.textContent.trim()).find((t) => t.indexOf('记忆') >= 0);"
+      + "if (!title) return JSON.stringify({ err: 'no memory section' });"
+      + "const line = (document.querySelector('.wp-mem-line') || {}).innerText || '';"
+      + "const toggle = document.querySelector('.wp-mem-toggle');"
+      + "const before = document.querySelectorAll('.wp-mem-item').length;"
+      + "if (toggle && toggle.textContent.indexOf('展开') >= 0) toggle.click();"
+      + "await new Promise((r) => setTimeout(r, 400));"
+      + "return JSON.stringify({ line: line, before: before,"
+      + "  mode: (document.querySelector('.wp-mem-mode') || {}).innerText || '',"
+      + "  groups: Array.from(document.querySelectorAll('.wp-mem-group-head')).map((x) => x.innerText.trim()),"
+      + "  items: document.querySelectorAll('.wp-mem-item').length,"
+      + "  actions: Array.from(document.querySelectorAll('.wp-mem-actions button')).map((b) => b.textContent.trim()) });"
+      + "})()")) || "{}");
+    step("⑬ 记忆面板：写作页可读「写手会读到什么」（前情/角色/世界观/伏笔 + 检索模式 + 可展开）",
+      !mr.err && String(mr.line).indexOf("前情") >= 0 && String(mr.line).indexOf("伏笔") >= 0
+        && mr.items >= 1 && (mr.actions || []).some((a) => String(a).indexOf("检索") >= 0),
+      JSON.stringify(mr));
   }
 } catch (e) {
   step("UI 剧本异常", false, String(e));

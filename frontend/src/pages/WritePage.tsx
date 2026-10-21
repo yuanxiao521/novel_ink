@@ -5,9 +5,11 @@ import { ContextBar } from '../components/common/ContextBar';
 import { useDialog } from '../components/common/Dialog';
 import { useWorkspace } from '../context/WorkspaceContext';
 import {
-  chapterDraftStream, enqueueChapterInspect, fetchChapterProse, generateChapterSettings,
-  listScenes, pollJob, saveChapterProse,
+  chapterDraftStream, enqueueChapterInspect, fetchBookMemoryStats, fetchChapterProse,
+  fetchChapterRecall, generateChapterSettings, listScenes, pollJob, reindexBookMemory,
+  saveChapterProse,
 } from '../api/novel';
+import type { ChapterRecall, MemoryStats, RecallItem } from '../api/novel';
 
 /* ==========================================================================
    WritePage —— 章级写作主线（v1.46 · 直写链路）
@@ -22,6 +24,22 @@ import {
      3. 手动编辑
      4. 保存（落 chapters.prose_md，唯一真源）
    ========================================================================== */
+
+/** 记忆素材分组（顺序 = 写手 prompt 里的顺序：前情 → 角色 → 世界观 → 伏笔） */
+const MEM_GROUPS: Array<[keyof Pick<ChapterRecall, 'prev' | 'characters' | 'world' | 'foreshadows'>, string]> = [
+  ['prev', '前情提要'],
+  ['characters', '相关角色'],
+  ['world', '世界观 / 世界状态'],
+  ['foreshadows', '未回收伏笔'],
+];
+
+/** 检索模式标签：让作者一眼看出「这次是靠检索还是靠兜底」 */
+const MEM_MODE_LABEL: Record<string, string> = {
+  keyword: '关键词检索',
+  hybrid: '混合检索',
+  fallback: '兜底直取',
+  empty: '无素材',
+};
 
 interface SceneRow {
   id: string; title?: string; goal?: string; final_prose?: string;
@@ -51,9 +69,28 @@ export function WritePage() {
   const [settingsBusy, setSettingsBusy] = useState(false);
   const [inspectBusy, setInspectBusy] = useState(false);
   const [inspect, setInspect] = useState<Record<string, unknown> | null>(null);
+  /** v1.49 · 记忆检索：写手这次会读到什么（前情 / 角色 / 世界观 / 未回收伏笔） */
+  const [recall, setRecall] = useState<ChapterRecall | null>(null);
+  const [memStats, setMemStats] = useState<MemoryStats | null>(null);
+  const [memOpen, setMemOpen] = useState(false);
+  const [memBusy, setMemBusy] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
 
   const flash = (t: string) => { setToast(t); window.setTimeout(() => setToast(''), 2400); };
+
+  /** 记忆素材 + 索引统计：读不到就当没有（面板说明不可用），绝不影响写作 */
+  const loadRecall = useCallback(async () => {
+    if (!chapterId) return;
+    try {
+      const r = await fetchChapterRecall(chapterId);
+      setRecall(r);
+      if (r.book_id) {
+        try { setMemStats(await fetchBookMemoryStats(r.book_id)); } catch { /* 统计失败不影响素材 */ }
+      }
+    } catch {
+      setRecall(null);
+    }
+  }, [chapterId]);
 
   const load = useCallback(async () => {
     if (!chapterId) return;
@@ -67,7 +104,8 @@ export function WritePage() {
       setSavedText(d.prose_md || d.prose || '');
     } catch { /* 保持现状 */ }
     try { setScenes((await listScenes(chapterId)) as unknown as SceneRow[]); } catch { setScenes([]); }
-  }, [chapterId]);
+    await loadRecall();
+  }, [chapterId, loadRecall]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -133,6 +171,34 @@ export function WritePage() {
     } catch (e) {
       flash(`巡检失败：${String(e instanceof Error ? e.message : e)}`);
     } finally { setInspectBusy(false); }
+  };
+
+  /** v1.49：重新检索（改完摘要/设定后，想立刻看写手会读到什么） */
+  const refreshRecall = async () => {
+    if (memBusy) return;
+    setMemBusy(true);
+    try {
+      await loadRecall();
+      flash('记忆已重新检索：写手看到的素材已刷新（正文重写才生效）');
+    } finally { setMemBusy(false); }
+  };
+
+  /** v1.49：重建本书记忆索引（后台任务；首进书或大改设定后点一次） */
+  const rebuildIndex = async () => {
+    if (memBusy) return;
+    const bid = recall?.book_id || memStats?.book_id;
+    if (!bid) { flash("还没读到书 id：先刷新页面再试"); return; }
+    setMemBusy(true);
+    try {
+      const { job_id } = await reindexBookMemory(bid);
+      const st = await pollJob(job_id);
+      if (st.status === 'failed') throw new Error(st.error || '重建失败');
+      const res = (st.result ?? {}) as Record<string, unknown>;
+      flash(`记忆索引已重建：${String(res.chunks ?? 0)} 块 · 向量 ${String(res.vectors ?? 0)} · ${String(res.mode ?? "")}`);
+      await loadRecall();
+    } catch (e) {
+      flash(`重建索引失败：${String(e instanceof Error ? e.message : e)}`);
+    } finally { setMemBusy(false); }
   };
 
   const save = async () => {
@@ -224,6 +290,69 @@ export function WritePage() {
                   </span>
                 </div>
               ))}
+
+              {/* v1.49 · 记忆：写手这次会读到什么（前情/角色/世界观/伏笔） */}
+              <div className="s2-info-title" style={{ marginTop: 12 }}>
+                记忆 · 写手会读到
+                <button className="wp-mem-toggle" onClick={() => setMemOpen((v) => !v)}>
+                  {memOpen ? "收起" : "展开"}
+                </button>
+              </div>
+              {recall === null && (
+                <div className="s2-hint">记忆素材读不到（后端或索引不可用，不影响写作）</div>
+              )}
+              {recall !== null && (
+                <>
+                  <div className="wp-mem-line">
+                    <span className={`wp-mem-mode is-${recall.mode}`}>
+                      {MEM_MODE_LABEL[recall.mode] ?? recall.mode}
+                    </span>
+                    <span>
+                      前情 {recall.counts.prev ?? 0} · 角色 {recall.counts.characters ?? 0}
+                      {" · "}世界观 {recall.counts.world ?? 0} · 伏笔 {recall.counts.foreshadows ?? 0}
+                    </span>
+                  </div>
+                  <div className="s2-hint">
+                    {recall.chars > 0
+                      ? `共 ${recall.chars} 字会拼进写手 prompt（有预算上限，超了自动截断）`
+                      : "本章没有可注入的记忆素材（第一章，或索引还没建）"}
+                  </div>
+                  {memOpen && (
+                    <div className="wp-mem-body">
+                      {MEM_GROUPS.map(([key, label]) => {
+                        const items = recall[key];
+                        if (!items || items.length === 0) return null;
+                        return (
+                          <div className="wp-mem-group" key={key}>
+                            <div className="wp-mem-group-head">{label} · {items.length}</div>
+                            {items.map((it: RecallItem) => (
+                              <div className="wp-mem-item" key={it.id}>
+                                <b>{it.title || "—"}</b>
+                                <span title={it.text}>{it.text.length > 64 ? `${it.text.slice(0, 64)}…` : it.text}</span>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <div className="wp-mem-actions">
+                    <button className="ws-btn" disabled={memBusy} onClick={() => void refreshRecall()}
+                            title="重新检索：改完摘要/设定后立刻看写手会读到什么">
+                      ↻ 检索
+                    </button>
+                    <button className="ws-btn" disabled={memBusy} onClick={() => void rebuildIndex()}
+                            title="重建本书记忆索引（章摘要/角色/世界观/伏笔）——首进书或大改设定后点一次">
+                      {memBusy ? "⟳ 处理中…" : `⟳ 重建${memStats ? `（${memStats.chunks}）` : ""}`}
+                    </button>
+                  </div>
+                  {memStats?.embedding && !memStats.embedding.available && (
+                    <div className="s2-hint" title={memStats.embedding.reason || ""}>
+                      向量未开 · 纯关键词检索
+                    </div>
+                  )}
+                </>
+              )}
             </aside>
 
             <section className="s2-prose">

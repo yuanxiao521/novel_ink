@@ -117,5 +117,10 @@ async def health():
     except Exception as e:  # noqa: BLE001  Redis 不可达不能把 /health 打挂
         queue = {"alive": False, "status": "unknown",
                  "error": f"{type(e).__name__}: {e}"[:160]}
+    # v1.49：记忆检索 / 向量通道状态。embedding.available=false 不是故障——
+    # 那是「纯关键词检索」模式（reason 里写明为什么没开向量）。
+    from app.services.rag import embedder as rag_embedder
+
     return {"status": "ok", "degraded": degradation_status(),
-            "llm": llm_status(), "queue": queue}
+            "llm": llm_status(), "queue": queue,
+            "rag": {"embedding": rag_embedder.status(), "ts_config": "zh"}}
