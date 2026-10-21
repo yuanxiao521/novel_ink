@@ -8,6 +8,7 @@ import { DashboardPage } from './pages/DashboardPage';
 import { CharactersPage } from './pages/CharactersPage';
 import { MaestroPage } from './pages/MaestroPage';
 import { StudioPage } from './pages/StudioPage';
+import { WritePage } from './pages/WritePage';
 import { SettingsPage } from './pages/SettingsPage';
 import { ProofreadPage } from './pages/ProofreadPage';
 import { DegradedBanner } from './components/common/DegradedBanner';
@@ -74,6 +75,8 @@ export function App() {
               <Route path="/maestro" element={<MaestroPage />} />
               <Route path="/studio" element={<SceneEntry kind="studio" />} />
               <Route path="/studio/:sceneId" element={<StudioPage />} />
+              {/* v1.46 直写链路：章级写作主线（章是最小可写单位，场是可选细分） */}
+              <Route path="/write/:chapterId" element={<WritePage />} />
               <Route path="/proofread" element={<ProofreadPage />} />
         <Route path="/characters" element={<CharactersPage />} />
               <Route path="/settings" element={<SettingsPage />} />

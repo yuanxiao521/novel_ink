@@ -321,6 +321,42 @@ try {
     !!q && typeof q.alive === "boolean" && q.alive === true
       && typeof q.queued === "number" && typeof q.stuck === "number",
     JSON.stringify(q));
+
+  // ⑫ 章级写作主线（v1.46 · 直写链路）：/write/{chapterId} 打开即见**整章**正文
+  //    产品方向 v2：章是最小可写单位，场是可选细分 —— 没有场景也必须能写、能看。
+  let proseChapter = null;
+  let proseBookId = "";
+  for (const b of books) {
+    const t = await (await fetch(BASE + "/api/v1/books/" + b.id + "/tree")).json().catch(() => null);
+    for (const ch of (t && t.chapters) || []) {
+      const d = await (await fetch(BASE + "/api/v1/chapters/" + ch.id + "/prose")).json().catch(() => null);
+      if (d && String(d.prose_md || "").trim().length > 200) {
+        proseChapter = { id: ch.id, title: ch.title }; proseBookId = b.id; break;
+      }
+    }
+    if (proseChapter) break;
+  }
+  if (!proseChapter) {
+    skip("⑫ 章级写作主线（/write 打开即见整章）", "没有「章正文非空」的章节作夹具（先在写作页点「写这一章」）");
+  } else {
+    await goto(WEB + "/write/" + proseChapter.id + "?book=" + proseBookId, 8000);
+    const wr = JSON.parse((await ev("(() => {"
+      + "const paras = Array.from(document.querySelectorAll('.wp-para'));"
+      + "return JSON.stringify({ url: location.pathname,"
+      + "  title: (document.querySelector('.s2-title')||{}).innerText || '',"
+      + "  sub: (document.querySelector('.s2-sub')||{}).innerText || '',"
+      + "  paras: paras.length,"
+      + "  first: paras[0] ? paras[0].innerText.trim().slice(0, 40) : '',"
+      + "  btns: Array.from(document.querySelectorAll('.s2-actions button')).map((b) => b.textContent.trim()),"
+      + "  prog: document.querySelectorAll('.wp-progress-bar').length });"
+      + "})()")) || "{}");
+    step("⑫ 章级写作主线：/write 打开即见整章正文 + 进度条 + 「写这一章」",
+      !wr.err && String(wr.url).startsWith("/write/") && wr.paras >= 3
+        && String(wr.first).length > 10
+        && (wr.btns || []).some((b) => String(b).includes("写这一章"))
+        && wr.prog === 1,
+      JSON.stringify(wr));
+  }
 } catch (e) {
   step("UI 剧本异常", false, String(e));
 } finally {

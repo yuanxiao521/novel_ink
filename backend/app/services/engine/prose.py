@@ -524,3 +524,96 @@ async def _verify_lite(llm_client: Any, text: str, foreshadows: list[dict],
     )
     report["voice_risks"] = []   # 由调用方（审稿会）合并体检的 voice_findings
     return report
+
+# ---------------------------------------------------------------- 章级直写（v1.46 · 直写链路）
+# 产品方向 v2：**章是最小可写单位，场是可选的细分**。
+# 原来只写「场」且 prompt 写死 150-220 字 → 一场=一段，全书至今 286 字、长不出一章。
+# 这里的做法：按章字数目标拆成若干段（0-token 推进任务），逐段流式写、段间承接。
+
+SEG_CHARS = 800          # 单段目标字数（约 2-3 个自然段）
+MAX_SEGS = 8             # 单次最多分段（防跑飞：800×8 ≈ 6400 字）
+DEFAULT_WORD_TARGET = 4000
+
+_CHAPTER_PROMPT = """你是小说正文【写手】。这次不是写一段，而是**写完一章**——
+会分 {seg_total} 段完成，你只写其中的第 {seg_no} 段。
+
+【本章】
+标题：{title}
+基调：{tone}
+张力曲线：{tension_curve}
+字数目标：{word_target} 字（已写 {written_chars} 字，本段目标约 {seg_target} 字）
+本章要完成的事：{summary}
+
+【本段任务】
+{seg_goal}
+
+【写作纪律】
+1. 只输出正文；不要标题、不要解释、不要「第 X 段」这类标记；
+2. **承接上文**：接着【已写正文】最后一句往下写，不重复已写内容、不做总结；
+3. 人物腔调必须对得上角色卡的「腔调」：句长、语气词、称呼、用词层级要能区分；角色没开口就别替他说话；
+4. 世界状态与账本一致；标注「未填」的设定**不要自行发明**，宁可留白；
+5. 本段停在一个自然的句读上，不要为了「收尾」跳到结局。
+
+【角色卡】
+{characters}
+
+【世界状态（与本章相关）】
+{world_states}
+
+【书级约束】
+{constraints}
+
+【书级记忆】
+{memory}
+
+【本章场景大纲（有场时作为分段依据；没有就按上面的任务推进）】
+{scenes}
+
+【已写正文（承接用，不要重复）】
+{written_tail}"""
+
+
+def chapter_segment_goals(word_target: int | None, seg_chars: int = SEG_CHARS) -> list[str]:
+    """把「这一章写多少字」拆成若干段的**推进任务**（0-token，不额外调模型）。
+
+    形状：开篇 → 推进 ×(n-2) → 收束。段数由字数目标决定（上限 MAX_SEGS 防跑飞）。
+    """
+    target = int(word_target or 0) or DEFAULT_WORD_TARGET
+    n = max(1, min(MAX_SEGS, -(-target // seg_chars)))
+    if n == 1:
+        return ["从开篇写到本章阶段结果：建立场景与人物，推进核心冲突，收在一个钩子上"]
+    goals = ["开篇：建立场景、人物与当下处境，落下本章第一个钩子"]
+    for _ in range(n - 2):
+        goals.append("推进：把本章要完成的事往前推一层，制造一处冲突 / 信息揭示 / 关系变化")
+    goals.append("收束：把本章要完成的事推到阶段性结果，留下接下一章的钩子")
+    return goals
+
+
+def chapter_prompt(*, chapter: dict, characters: list[dict] | None = None,
+                   world_states: list[dict] | None = None, constraints: str = "",
+                   memory: str = "", scenes: str = "", written: str = "",
+                   seg_no: int = 1, seg_total: int = 1, seg_goal: str = "",
+                   seg_target: int = SEG_CHARS) -> str:
+    """装配「第 N 段」的写手 prompt。
+
+    只喂已写正文的**尾部**（600 字）而不是全文：段数多了以后，全文会吃掉上下文预算，
+    而承接只需要尾部语感与最后一句。"""
+    body = (written or "").strip()
+    tail = body[-600:] if len(body) > 600 else body
+    return _CHAPTER_PROMPT.format(
+        title=chapter.get("title") or "（未命名）",
+        tone=chapter.get("tone") or "（未定）",
+        tension_curve=chapter.get("tension_curve") or "（未定）",
+        word_target=chapter.get("word_target") or DEFAULT_WORD_TARGET,
+        written_chars=len(body.replace(chr(10), "").replace(" ", "")),
+        summary=chapter.get("summary") or "（未填 · 按基调与角色卡推进，不要发明新设定）",
+        seg_no=seg_no, seg_total=seg_total,
+        seg_goal=seg_goal or "（按本章任务自然推进）",
+        seg_target=seg_target,
+        characters=_characters_block(characters or []),
+        world_states=_world_states_block(world_states or []),
+        constraints=constraints or "（无）",
+        memory=memory or "（无）",
+        scenes=scenes or "（本章未拆场：按基调与摘要推进即可）",
+        written_tail=tail or "（本章尚未开始，这是第一段）",
+    )

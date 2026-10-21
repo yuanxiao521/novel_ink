@@ -319,6 +319,7 @@ class Repo:
                 "id": r.id, "book_id": r.book_id, "title": r.title,
                 "summary": r.summary, "order_no": r.order_no,
                 "tone": r.tone, "tension_curve": r.tension_curve, "word_target": r.word_target,
+                "prose_md": r.prose_md or "",
             } for r in rows]
 
         return await self._query_or_mem(_q, [])
@@ -332,11 +333,24 @@ class Repo:
                 "id": r.id, "book_id": r.book_id, "title": r.title,
                 "summary": r.summary, "order_no": r.order_no,
                 "tone": r.tone, "tension_curve": r.tension_curve, "word_target": r.word_target,
+                "prose_md": r.prose_md or "",
             }
 
         if not self.use_db:
             return self._mem.get(chapter_id)
         return await self._query_or_mem(_q, None)
+
+    async def save_chapter_prose(self, chapter_id: str, text: str) -> bool:
+        """章正文落库（v1.46 · 直写链路）。返回 False = 章节不存在。
+
+        为什么单独一个方法：章正文是**新增的权威列**，不需要动章的其他字段，
+        也就不该走 save_chapter（那会连带重算 chapter_count，纯属多余写放大）。
+        """
+        row = await self.get_chapter(chapter_id)
+        if row is None:
+            return False
+        await self._upsert(Chapter, {**row, "prose_md": text})
+        return True
 
     async def save_chapter(self, data: dict) -> None:
         await self._upsert(Chapter, data)

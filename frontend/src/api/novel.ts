@@ -186,7 +186,17 @@ export interface ChapterProse {
   order_no: number;
   word_count: number;
   scenes: Array<{ scene_id: string; title: string; prose: string; finalized: boolean }>;
+  /** 章正文：章正文（prose_md）优先，否则场景聚合 —— v1.46 直写链路 */
   prose: string;
+  // ---- v1.46 章级直写字段（后端新增，老字段语义不变）----
+  /** 章正文权威存储（chapters.prose_md）：直写模式的真源 */
+  prose_md?: string;
+  /** 字数（= word_count，新名，口径仍走 text_metrics） */
+  words?: number;
+  /** 本章字数目标（主笔规划产物，之前从未注入写手 → 已修） */
+  word_target?: number;
+  tone?: string;
+  summary?: string;
 }
 
 /** 作者手动定稿：聚合该 sim 回合成文 → 写入场景 final_prose（幂等覆盖）。 */
@@ -1216,6 +1226,36 @@ export async function toolRunStream(
     { tool, args, confirm },
     (s) => onStage(s as ToolRunStage),
   );
+}
+
+
+/* ---------- 章级直写（v1.46 · 直写链路）：章是最小可写单位，场是可选细分 ---------- */
+/* 注意：ChapterProse / fetchChapterProse 复用文件上方既有定义（只做了字段扩展），
+   不要在这里再定义一份——重复实现会让"改了一处另一处没生效"（B45 的教训）。 */
+
+/** 保存章正文（写入 chapters.prose_md，直写链路的唯一真源）。 */
+export async function saveChapterProse(chapterId: string, text: string): Promise<{ chapter_id: string; saved: boolean; words: number }> {
+  return send('PUT', `/api/v1/chapters/${chapterId}/prose`, { text });
+}
+
+/**
+ * **章级直写**流式（v1.46）：按章字数目标分段写满一章，逐 token 回调。
+ * 与 draftProseStream 的区别：那是「写一段（150-220 字）」，这是「写完一章」。
+ */
+export async function chapterDraftStream(
+  chapterId: string,
+  onToken: (delta: string) => void,
+  onDone?: (text: string, chars: number) => void,
+): Promise<void> {
+  let err = '';
+  await streamPost(`${API_BASE}/api/v1/chapters/${chapterId}/prose/draft/stream`, {}, (s) => {
+    if (s.event === 'token') onToken(String((s.data as { delta?: string }).delta ?? ''));
+    else if (s.event === 'done') {
+      const d = s.data as { text?: string; chars?: number };
+      onDone?.(String(d.text ?? ''), Number(d.chars ?? 0));
+    } else if (s.event === 'error') err = String((s.data as { error?: string }).error ?? '章级直写出错');
+  });
+  if (err) throw new Error(err);
 }
 
 

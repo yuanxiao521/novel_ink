@@ -21,7 +21,8 @@ from langgraph.graph.state import CompiledStateGraph
 from app import scenarios
 from app.config import settings
 from app.db.repo import Repo
-from app.errors import ConflictError, InvalidActionError, SceneNotFoundError, SimNotFoundError
+from app.errors import (ChapterNotFoundError, ConflictError, InvalidActionError,
+                        SceneNotFoundError, SimNotFoundError)
 from app.schemas import models
 from app.services.engine.director import PlanCfg
 from app.services.engine.style_checks import voice_prior as style_voice_prior
@@ -1193,6 +1194,101 @@ class SimulationService:
                 except Exception:  # noqa: BLE001  收尾失败不能盖掉主流程
                     logger.warning("[draft] 流式收尾落审计失败", exc_info=True)
 
+    # ---------------------------------------------------------------- 章级直写（v1.46）
+    async def _chapter_context(self, chapter_id: str) -> dict:
+        """装配**章级**写作上下文（直写链路）：章节 + 全书角色卡 + 相关账本 + 约束 + 记忆
+        + 上一章结尾 + 本章场景大纲（有场时作为分段依据，没有就靠章摘要推进）。
+
+        与场景级的区别：场景级只喂「本场角色 + 本场相关账本」；章级要喂全书角色与章级目标，
+        因为**章是最小可写单位，场只是可选细分**。
+        """
+        from app.services.agents.constraints import build_constraints
+        from app.services.agents.constraints import render as render_constraints
+        from app.services.engine.prose import DEFAULT_WORD_TARGET
+        from app.services.engine.scene_context import select_world_states
+
+        chapter = await self.repo.get_chapter(chapter_id)
+        if chapter is None:
+            raise ChapterNotFoundError(f"未找到章节: {chapter_id}")
+        book_id = str(chapter.get("book_id") or "")
+        characters = (await self.repo.list_characters_by_book(book_id)) if book_id else []
+        memory = (await self.chief_perceive(book_id, limit=8, include_world_states=False)
+                  if book_id else "")
+        constraints = (render_constraints(await build_constraints(self.repo, book_id))
+                       if book_id else "")
+
+        all_ws = (await self.repo.list_world_states(book_id)) if book_id else []
+        existing = str(chapter.get("prose_md") or "")
+        scenes = await self.repo.list_scenes_by_chapter(chapter_id)
+        scene_lines = "\n".join(
+            ("- " + str(s.get("title") or "（未命名场）")
+             + ("：" + str(s.get("goal")) if str(s.get("goal") or "").strip() else ""))
+            for s in scenes
+        )
+        cast = {c.get("name") or "" for c in characters if c.get("name")}
+        scope_text = " ".join([str(chapter.get("summary") or ""), scene_lines])
+        world_states, _dropped = select_world_states(
+            all_ws, cast, scene_text=scope_text, prose_text=existing)
+
+        # 上一章结尾（承接语感）：同书 order_no 更小的最近一章
+        prev_tail = ""
+        try:
+            chapters = await self.repo.list_chapters_by_book(book_id)
+            cur_no = int(chapter.get("order_no") or 0)
+            prevs = [c for c in chapters if int(c.get("order_no") or 0) < cur_no]
+            prevs.sort(key=lambda c: int(c.get("order_no") or 0), reverse=True)
+            for p in prevs:
+                body = str(p.get("prose_md") or "").strip()
+                if body:
+                    prev_tail = body[-600:]
+                    break
+        except Exception:  # noqa: BLE001  上一章读不到不影响本章
+            prev_tail = ""
+
+        target = int(chapter.get("word_target") or 0) or DEFAULT_WORD_TARGET
+        scenes_text = ""
+        if prev_tail:
+            scenes_text += "【上一章结尾（承接语感，不要重复）】\n" + prev_tail + "\n\n"
+        scenes_text += ("【本章场景大纲】\n" + scene_lines) if scene_lines else "（本章未拆场）"
+        return {"chapter": chapter, "book_id": book_id, "characters": characters,
+                "memory": memory, "constraints": constraints, "world_states": world_states,
+                "existing": existing, "scenes_text": scenes_text, "word_target": target}
+
+    async def save_chapter_prose(self, chapter_id: str, text: str) -> dict:
+        """保存章正文（唯一真源：chapters.prose_md）。"""
+        ok = await self.repo.save_chapter_prose(chapter_id, text)
+        if not ok:
+            raise ChapterNotFoundError(f"未找到章节: {chapter_id}")
+        return {"chapter_id": chapter_id, "saved": True, "words": prose_chars(text)}
+
+    async def chapter_draft_stream(self, chapter_id: str):
+        """**章级直写**流式：按字数目标分段写满（一次写完本章，逐 token yield）。
+
+        与场景级 prose_draft_stream 的区别：不是「生成一段候选」，而是「把一章写完」。
+        段数由 word_target 决定（上限 MAX_SEGS 防跑飞），段与段之间自动承接；
+        落库仍由作者点保存（前端 PUT）——保持「候选 → 采纳 → 落库」的一致性。
+        """
+        from app.services.engine.prose import SEG_CHARS, chapter_prompt, chapter_segment_goals
+
+        ctx = await self._chapter_context(chapter_id)
+        goals = chapter_segment_goals(ctx["word_target"])
+        written = ctx["existing"]
+        for i, goal in enumerate(goals, start=1):
+            prompt = chapter_prompt(
+                chapter=ctx["chapter"], characters=ctx["characters"],
+                world_states=ctx["world_states"], constraints=ctx["constraints"],
+                memory=ctx["memory"], scenes=ctx["scenes_text"], written=written,
+                seg_no=i, seg_total=len(goals), seg_goal=goal, seg_target=SEG_CHARS)
+            seg: list[str] = []
+            if i > 1:
+                yield "\n\n"          # 段间空行：前端直接拼接即成段落
+            async for tok in llm_client.chat_stream(prompt, temperature=0.85):
+                seg.append(tok)
+                yield tok
+            piece = "".join(seg).strip()
+            if piece:
+                written = (written + "\n\n" + piece).strip() if written.strip() else piece
+
     async def prose_review(self, scene_id: str, text: str) -> dict:
         """体检员：结构化体检报告 → editor note（pending）。"""
         from app.services.engine.prose import review_prose
@@ -1735,19 +1831,34 @@ class SimulationService:
         }
 
     async def get_chapter_prose(self, chapter_id: str) -> dict | None:
-        """章节正文 = 该章全部场景定稿正文聚合（按 cursor_pos 排序）。"""
+        """章节正文（v1.46 直写链路后有两种来源，**章正文优先**）。
+
+        - 直写模式：正文在 chapters.prose_md（章是最小可写单位）
+        - 场景模式：正文 = 各场 final_prose 聚合（场是可选细分）
+        两者都非空时以章正文为准（避免出现第二个正文真源/字数口径打架——B39 的教训）。
+        新增 prose_md / words / word_target / tone / summary 字段；老字段（prose/scenes/
+        word_count）保持原语义不变，零破坏。
+        """
         ch = await self.repo.get_chapter(chapter_id)
         if ch is None:
             return None
         scenes = await self.repo.list_scenes_by_chapter(chapter_id)
         parts = [s.get("final_prose") or "" for s in scenes]
-        prose = "\n\n".join(p for p in parts if p)
+        scenes_prose = "\n\n".join(p for p in parts if p)
+        chapter_body = str(ch.get("prose_md") or "")
+        prose = chapter_body if chapter_body.strip() else scenes_prose
         return {
             "chapter_id": chapter_id,
             "book_id": ch.get("book_id", ""),
             "title": ch.get("title", ""),
             "order_no": ch.get("order_no", 0),
             "word_count": prose_chars(prose),
+            # ---- v1.46 章级直写字段（新增，不动老字段） ----
+            "prose_md": chapter_body,
+            "words": prose_chars(prose),
+            "word_target": int(ch.get("word_target") or 0),
+            "tone": ch.get("tone") or "",
+            "summary": ch.get("summary") or "",
             "scenes": [
                 {
                     "scene_id": s["id"], "title": s.get("title", ""),

@@ -25,6 +25,8 @@ class Chapter(TimestampMixin, Base):
     tone: Mapped[str] = mapped_column(String(20), default="")              # 基调 action/suspense/warmth/serene
     tension_curve: Mapped[str] = mapped_column(Text, default="")           # 张力曲线（JSON 或 raise/hold/release）
     word_target: Mapped[int] = mapped_column(Integer, default=0)           # 本章字数目标
+    # ---- 直写链路（v1.46 / 0018）：章是最小可写单位，场是可选细分 ----
+    prose_md: Mapped[str] = mapped_column(Text, default="")                # 本章正文（权威存储）
 
     book: Mapped["Book"] = relationship(back_populates="chapters")
     scenes: Mapped[list["Scene"]] = relationship(back_populates="chapter", cascade="all, delete-orphan")

@@ -20,6 +20,7 @@
 | F | **长任务后台化**（arq 队列，刷新/断网不断链）+ 审稿会并发提速 + **按钮原位、过程与明细进责编流**（SSE 过程卡 + 明细富卡 + 审计可收起） | v1.41 / v1.42 / v1.43 |
 | G | **写手素材治理**（账本筛选/去重/脏名字闸门 + 场景缺口显式标注）+ **正文 token 流式** + 脏缓冲保护 | v1.44 |
 | H | **队列活性可见**（`/health.queue` 心跳）+ worker 防抖监督 + 启动自动清扫僵尸任务 | v1.45 |
+| I | **直写链路**：章成为最小可写单位（`chapters.prose_md` + 章级分段写满 + `/write` 主线视图） | v1.46 |
 
 ---
 
@@ -270,6 +271,26 @@ bash scripts/worker-supervise.sh     # 防抖：退出即重启 + 带时间日�
 # ④ L3 ⑪ 已把队列活性变成永久断言（12/12）
 node scripts/ui-spec.mjs
 ```
+### 3.12 章级直写（v1.46 · 直写链路）
+
+```bash
+# ① 章正文读写（章是最小可写单位，场是可选的细分）
+curl -s "http://127.0.0.1:8001/api/v1/chapters/<chapterId>/prose"
+# 期望含：prose_md / words / word_count / word_target / tone / summary / scenes
+
+# ② 章级流式直写：按 word_target 分段写满，段间自动承接
+curl -N -s -X POST "http://127.0.0.1:8001/api/v1/chapters/<chapterId>/prose/draft/stream" \
+  -H "Content-Type: application/json" -d "{}"
+# 实测（新书·第一章，word_target=2500）：182.8s · 6940 字符 · 6636 字 · 153 段
+
+# ③ 保存（落 chapters.prose_md，唯一真源）
+curl -s -X PUT "http://127.0.0.1:8001/api/v1/chapters/<chapterId>/prose" \
+  -H "Content-Type: application/json" -d "{\"text\": \"<正文>\"}"
+
+# ④ 前端主线视图 + L3 ⑫
+node scripts/ui-spec.mjs   # ⑫ /write 打开即见整章正文 + 进度条 + 「写这一章」
+```
+
 ## 4. 存量验收（S1–S4 / A2 / A3，仍在跑）
 
 ```powershell

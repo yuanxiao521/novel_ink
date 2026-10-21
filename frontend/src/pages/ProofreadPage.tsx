@@ -126,6 +126,8 @@ export function ProofreadPage() {
                         <span>{ch.scene_count} 场</span>
                         {ch.word_target > 0 && <span>目标 {ch.word_target} 字</span>}
                         <span className={'status-badge ' + (ch.done ? 'done' : 'draft')}>{ch.done ? '已定稿' : '待定稿'}</span>
+                        {/* v1.46 直写链路：章是最小可写单位 —— 无论有没有场，都能直接写这一章 */}
+                        <Link className="pf-go" to={'/write/' + ch.chapter_id + (bookId ? '?book=' + bookId : '')}>✍ 写这一章</Link>
                       </div>
                     </div>
                     {ch.summary && <p className="pf-chapter-summary">{ch.summary}</p>}
@@ -133,9 +135,10 @@ export function ProofreadPage() {
                       <EmptyState
                         compact
                         icon="▫"
-                        title="这章还没有场景"
-                        desc="章节要有场景才能落正文。"
-                        primary={{ label: '✦ 去主笔创作加场景', onClick: () => nav('/maestro') }}
+                        title="这章还没拆场（也能写）"
+                        desc="章就是最小写作单位，直接写即可；需要推演/细纲时再拆场。"
+                        primary={{ label: '✍ 写这一章', onClick: () => nav('/write/' + ch.chapter_id + (bookId ? '?book=' + bookId : '')) }}
+                        secondary={{ label: '✦ 去主笔拆场', onClick: () => nav('/maestro') }}
                       />
                     ) : (
                       <div className="pf-scenes">

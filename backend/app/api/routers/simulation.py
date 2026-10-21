@@ -329,6 +329,47 @@ async def prose_draft_stream(scene_id: str, svc: SimulationService = Depends(get
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
+# ---------------------------------------------------------------- 章级直写（v1.46 · 直写链路）
+# 产品方向 v2：**章是最小可写单位，场是可选的细分**。
+# 原来正文只存在 scenes.final_prose → 没有场景就写不了小说（Studio 直接空态死路），
+# 而一场只有 150-220 字（prompt 写死）→ 全书 286 字、写不出一章。
+
+
+@router.put("/chapters/{chapter_id}/prose")
+async def put_chapter_prose(chapter_id: str, body: ProseTextIn,
+                            svc: SimulationService = Depends(get_service)):
+    """保存章正文（唯一真源；字数用 text_metrics 现算，不落列）。"""
+    return await svc.save_chapter_prose(chapter_id, body.text)
+
+
+@router.post("/chapters/{chapter_id}/prose/draft/stream")
+async def chapter_prose_draft_stream(chapter_id: str,
+                                     svc: SimulationService = Depends(get_service)):
+    """**章级直写**（SSE）：按字数目标分段写满一章，逐 token 下发。
+
+    与 /scenes/{id}/prose/draft/stream 的区别：那是「写一段（150-220 字）」，
+    这是「写完一章」（按 word_target ≈4000 字，分 3-5 段，段间自动承接）。
+    event：token（{delta}）→ done（{text, chars}）；异常走 error（不静默断流）。
+    """
+    chapter = await svc.repo.get_chapter(chapter_id)
+    if chapter is None:
+        raise HTTPException(status_code=404, detail=f"未找到章节: {chapter_id}")
+
+    async def gen():
+        acc: list[str] = []
+        try:
+            async for tok in svc.chapter_draft_stream(chapter_id):
+                acc.append(tok)
+                yield _sse("token", {"delta": tok})
+            text = "".join(acc).strip()
+            yield _sse("done", {"text": text, "chars": len(text)})
+        except Exception as e:  # noqa: BLE001  流中异常要让前端看到
+            yield _sse("error", {"error": f"{type(e).__name__}: {e}"})
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
 @router.post("/scenes/{scene_id}/prose/review")
 async def prose_review(scene_id: str, body: ProseTextIn,
                        svc: SimulationService = Depends(get_service)):
