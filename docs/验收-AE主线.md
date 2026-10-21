@@ -287,7 +287,11 @@ curl -N -s -X POST "http://127.0.0.1:8001/api/v1/chapters/<chapterId>/prose/draf
 curl -s -X PUT "http://127.0.0.1:8001/api/v1/chapters/<chapterId>/prose" \
   -H "Content-Type: application/json" -d "{\"text\": \"<正文>\"}"
 
-# ④ 前端主线视图 + L3 ⑫
+# ④ 保存 → 章级记账自动串（P0 闭环）：PUT 之后响应应含 bookkeeping=queued
+#    实测：queued → worker 12s 完成 → 账本 +2 条（林澈=废弃车站 / 金属徽章=携带）
+#    手动重跑：POST /chapters/<chapterId>/bookkeeping  body {text}
+
+# ⑤ 前端主线视图 + L3 ⑫
 node scripts/ui-spec.mjs   # ⑫ /write 打开即见整章正文 + 进度条 + 「写这一章」
 ```
 

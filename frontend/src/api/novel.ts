@@ -1234,8 +1234,17 @@ export async function toolRunStream(
    不要在这里再定义一份——重复实现会让"改了一处另一处没生效"（B45 的教训）。 */
 
 /** 保存章正文（写入 chapters.prose_md，直写链路的唯一真源）。 */
-export async function saveChapterProse(chapterId: string, text: string): Promise<{ chapter_id: string; saved: boolean; words: number }> {
+export async function saveChapterProse(
+  chapterId: string, text: string,
+): Promise<{ chapter_id: string; saved: boolean; words: number; unchanged?: boolean; bookkeeping?: string }> {
   return send('PUT', `/api/v1/chapters/${chapterId}/prose`, { text });
+}
+
+/** 章级记账 + 复检（手动重跑；正常保存时会自动入队）。 */
+export async function chapterBookkeeping(
+  chapterId: string, text: string,
+): Promise<{ written: number; foreshadow: number; beliefs: number; states: number; risks: number; skipped?: string; error?: string }> {
+  return send('POST', `/api/v1/chapters/${chapterId}/bookkeeping`, { text });
 }
 
 /**

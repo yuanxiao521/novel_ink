@@ -94,7 +94,9 @@ export function WritePage() {
     try {
       const r = await saveChapterProse(chapterId, text);
       setSavedText(text);
-      flash(`已保存：${r.words} 字`);
+      flash(r.bookkeeping === 'queued'
+        ? `已保存：${r.words} 字 · 记账已排队（后台对照账本，结果进世界状态/伏笔）`
+        : `已保存：${r.words} 字`);
     } catch (e) {
       flash(`保存失败：${String(e instanceof Error ? e.message : e)}`);
     } finally { setBusy(false); }

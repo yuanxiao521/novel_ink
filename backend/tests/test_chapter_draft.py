@@ -129,3 +129,33 @@ async def test_chapter_draft_stream_segments_and_carryover(svc, monkeypatch):
     text = "".join(got)
     assert text.count("雨落下来") == 2
     assert chr(10) + chr(10) in text, "段间应有空行（前端直接拼接即成段落）"
+
+@pytest.mark.asyncio
+async def test_chapter_bookkeeping_writes_ledger(svc, monkeypatch):
+    """P0 闭环：保存后的章级记账 —— 章正文对照账本 → 写世界状态/伏笔/信念。"""
+    import app.services.engine.prose as prose_mod
+    import app.services.service as service_mod
+
+    class _FakeLLM:
+        available = True
+
+    async def _fake_verify(llm, text, foreshadows, beliefs, world_states, characters=None):
+        return {"foreshadow_updates": [], "belief_deltas": [],
+                "state_deltas": [{"kind": "character", "name": "林澈",
+                                  "key": "char:林澈:位置", "value": "废弃车站",
+                                  "previous_value": ""}],
+                "causal": [], "risks": ["测试风险"]}
+
+    monkeypatch.setattr(service_mod, "llm_client", _FakeLLM())
+    monkeypatch.setattr(prose_mod, "verify_prose", _fake_verify)
+    out = await svc.chapter_bookkeeping("ch-w", "林澈醒在废弃车站。")
+    assert out["states"] == 1 and out["risks"] == 1 and out["written"] >= 1
+    rows = await svc.repo.list_world_states("book-w")
+    assert any("林澈" in str(r.get("name") or "") for r in rows), "账本应新增世界状态"
+
+
+@pytest.mark.asyncio
+async def test_chapter_bookkeeping_skips_without_llm(svc):
+    """LLM 未接入 → 明确 skipped（不静默、不报错、不回滚已保存正文）。"""
+    out = await svc.chapter_bookkeeping("ch-w", "随便一段。")
+    assert out.get("skipped") and "LLM" in str(out["skipped"])

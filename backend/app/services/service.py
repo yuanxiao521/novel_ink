@@ -1255,11 +1255,74 @@ class SimulationService:
                 "existing": existing, "scenes_text": scenes_text, "word_target": target}
 
     async def save_chapter_prose(self, chapter_id: str, text: str) -> dict:
-        """保存章正文（唯一真源：chapters.prose_md）。"""
-        ok = await self.repo.save_chapter_prose(chapter_id, text)
-        if not ok:
+        """保存章正文（唯一真源：chapters.prose_md）→ **自动触发章级记账**（后台任务）。
+
+        P0 闭环：保存 → 记账（对照伏笔/信念/世界状态账本）+ 复检（verify）→ 写账本，
+        与场景级 save_scene_prose 对齐。同内容重复保存 unchanged 不触发（天然幂等）。
+        """
+        chapter = await self.repo.get_chapter(chapter_id)
+        if chapter is None:
             raise ChapterNotFoundError(f"未找到章节: {chapter_id}")
-        return {"chapter_id": chapter_id, "saved": True, "words": prose_chars(text)}
+        body = (text or "").strip()
+        unchanged = str(chapter.get("prose_md") or "").strip() == body
+        if not await self.repo.save_chapter_prose(chapter_id, body):
+            raise ChapterNotFoundError(f"未找到章节: {chapter_id}")
+
+        bookkeeping = "skip"
+        if body and not unchanged:
+            try:
+                from app.services.tasks_worker import enqueue as job_enqueue
+
+                await job_enqueue("chapter_bookkeeping", {"chapter_id": chapter_id, "text": body})
+                bookkeeping = "queued"
+            except Exception as e:  # noqa: BLE001  队列不可用退回进程内任务（T9：不静默）
+                logger.warning("[bookkeeping] 章级入队失败，退回 asyncio 任务：%s", e)
+                asyncio.create_task(self.chapter_bookkeeping(chapter_id, body))
+                bookkeeping = "fallback"
+        return {"chapter_id": chapter_id, "saved": True, "words": prose_chars(body),
+                "unchanged": unchanged, "bookkeeping": bookkeeping}
+
+    async def chapter_bookkeeping(self, chapter_id: str, text: str) -> dict:
+        """**章级记账 + 复检**（v1.46 · P0 闭环）：章正文对照账本 → 写伏笔/信念/世界状态。
+
+        与场景级 _bookkeep_after_save 的差别：
+          - 角色取「全书角色」（章级没有「本场角色」概念）
+          - scene_no 用章的 order_no（账本要能定位到第几章发生的）
+          - **暂不落 prose_notes**：该表 scene_id 是必填外键，章级审计需要加列（P1 待办）
+        失败只告警——记账不能回滚已保存的正文。
+        """
+        from app.services.engine.prose import verify_prose
+
+        chapter = await self.repo.get_chapter(chapter_id)
+        if chapter is None:
+            raise ChapterNotFoundError(f"未找到章节: {chapter_id}")
+        book_id = str(chapter.get("book_id") or "")
+        body = (text or "").strip()
+        empty = {"written": 0, "foreshadow": 0, "beliefs": 0, "states": 0, "risks": 0}
+        if not book_id or not body:
+            return {**empty, "skipped": "空章节或空正文"}
+        if not llm_client.available:
+            return {**empty, "skipped": "LLM 未接入（跳过记账，不静默：/health.llm 有记录）"}
+        try:
+            foreshadows = await self.repo.list_foreshadows(book_id)
+            beliefs = await self.repo.list_beliefs(book_id)
+            world_states = await self.repo.list_world_states(book_id)
+            characters = await self.repo.list_characters_by_book(book_id)
+            opinion = await verify_prose(llm_client, body, foreshadows, beliefs, world_states,
+                                         characters=characters)
+            written = await self._apply_verify_bookkeeping(
+                book_id, opinion, source_event_id="CHAPTER_SAVE",
+                scene_no=int(chapter.get("order_no") or 0))
+            result = {**empty, "written": written,
+                      "foreshadow": len(opinion.get("foreshadow_updates") or []),
+                      "beliefs": len(opinion.get("belief_deltas") or []),
+                      "states": len(opinion.get("state_deltas") or []),
+                      "risks": len(opinion.get("risks") or [])}
+            logger.info("[chapter-bookkeeping] %s 写入 %d 条：%s", chapter_id, written, result)
+            return result
+        except Exception as e:  # noqa: BLE001  记账失败不影响已保存正文
+            logger.warning("[chapter-bookkeeping] 失败 %s：%s", chapter_id, e)
+            return {**empty, "error": f"{type(e).__name__}: {e}"}
 
     async def chapter_draft_stream(self, chapter_id: str):
         """**章级直写**流式：按字数目标分段写满（一次写完本章，逐 token yield）。

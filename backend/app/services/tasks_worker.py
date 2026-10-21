@@ -70,10 +70,25 @@ async def _set(job_id: str, **fields: Any) -> None:
 
 
 async def enqueue(job_kind: str, payload: dict) -> dict:
-    """入队：arq enqueue_job（写 arq:queue，worker 才能领到）+ 任务状态写 Redis。"""
+    """入队：arq enqueue_job（写 arq:queue，worker 才能领到）+ 任务状态写 Redis。
+
+    B53（v1.46）：**先校验 kind 再写状态键**。原实现先写 `status=queued` 再查 fn_map，
+    一旦 kind 没登记（本轮就是漏登记 chapter_bookkeeping），就会留下一个**永远 queued 的
+    僵尸键**——前端轮询到超时才报错。入队失败也要把状态标 failed，不留半成品。
+    """
     from arq import create_pool
 
     from app.services.tasks_worker import WorkerSettings
+
+    # 0) 先校验（不写任何状态）
+    fn_map = {"plan_batch": "run_plan_batch",
+              "review_meeting": "run_review_meeting",
+              "quality_loop": "run_quality_loop",
+              "bookkeeping": "run_bookkeeping",
+              "chapter_bookkeeping": "run_chapter_bookkeeping"}
+    arq_fn = fn_map.get(job_kind)
+    if not arq_fn:
+        raise ValueError(f"未知任务类型: {job_kind}（可选 {sorted(fn_map)}）")
 
     job_id = f"job-{uuid.uuid4().hex[:10]}"
     # 1) 任务状态（前端轮询用）
@@ -85,17 +100,13 @@ async def enqueue(job_kind: str, payload: dict) -> dict:
         }, ensure_ascii=False), ex=_TTL)
     finally:
         await r.aclose()
-    # 2) 真正入 arq 队列（worker 领取执行）——函数名映射到 worker functions
-    fn_map = {"plan_batch": "run_plan_batch",
-              "review_meeting": "run_review_meeting",
-              "quality_loop": "run_quality_loop",
-              "bookkeeping": "run_bookkeeping"}
-    arq_fn = fn_map.get(job_kind)
-    if not arq_fn:
-        raise ValueError(f"未知任务类型: {job_kind}")
+    # 2) 真正入 arq 队列；失败把状态键标 failed（否前端会一直看到 queued）
     pool = await create_pool(WorkerSettings.redis_settings)
     try:
         await pool.enqueue_job(arq_fn, job_id=job_id, **payload)
+    except Exception as e:  # noqa: BLE001
+        await _set(job_id, status="failed", error=f"入队失败：{type(e).__name__}: {e}"[:300])
+        raise
     finally:
         await pool.aclose()
     return {"job_id": job_id, "kind": job_kind, "status": "queued"}
@@ -310,9 +321,30 @@ async def _do_bookkeeping(jid: str, scene_id: str, text: str) -> dict:
     await _set(jid, status="done", result={"scene_id": scene_id})
     return {"scene_id": scene_id}
 
+async def run_chapter_bookkeeping(ctx: dict, *, job_id: str = "", chapter_id: str,
+                                 text: str = "") -> dict:
+    """后台：**章级**记账（v1.46 · 直写链路 P0）——章正文对照账本 → 写伏笔/信念/世界状态。"""
+    jid = job_id or "job-unknown"
+    return await _guard(jid, _do_chapter_bookkeeping(jid, chapter_id, text))
+
+
+async def _do_chapter_bookkeeping(jid: str, chapter_id: str, text: str) -> dict:
+    from app.db.repo import Repo
+    from app.services.service import SimulationService
+
+    svc = SimulationService(Repo())
+    await _stage(jid, "记账（章级）：章正文对照伏笔/信念/世界状态账本…")
+    out = await svc.chapter_bookkeeping(chapter_id, text)
+    await _stage(jid, "记账完成：写入 %d 条（伏笔 %d / 信念 %d / 状态 %d）" % (
+        out.get("written", 0), out.get("foreshadow", 0),
+        out.get("beliefs", 0), out.get("states", 0)))
+    await _set(jid, status="done", result=out)
+    return out
+
 class WorkerSettings:
     """arq worker 配置：arq app.services.tasks_worker.WorkerSettings"""
-    functions = [run_plan_batch, run_review_meeting, run_quality_loop, run_bookkeeping]
+    functions = [run_plan_batch, run_review_meeting, run_quality_loop, run_bookkeeping,
+                 run_chapter_bookkeeping]
     redis_settings = None   # 在类体下方赋值（arq RedisSettings）
     max_jobs = 4
     job_timeout = 600      # LLM 长任务放宽

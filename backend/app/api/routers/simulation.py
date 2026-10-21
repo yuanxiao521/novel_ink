@@ -370,6 +370,16 @@ async def chapter_prose_draft_stream(chapter_id: str,
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
+@router.post("/chapters/{chapter_id}/bookkeeping")
+async def chapter_bookkeeping(chapter_id: str, body: ProseTextIn,
+                              svc: SimulationService = Depends(get_service)):
+    """章级记账 + 复检（手动重跑入口）：章正文对照账本 → 写伏笔/信念/世界状态。
+
+    正常流程由保存（PUT /chapters/{id}/prose）**自动入队**触发，这里是重试/排查用。
+    """
+    return await svc.chapter_bookkeeping(chapter_id, body.text)
+
+
 @router.post("/scenes/{scene_id}/prose/review")
 async def prose_review(scene_id: str, body: ProseTextIn,
                        svc: SimulationService = Depends(get_service)):

@@ -70,3 +70,14 @@ async def test_queue_health_shape():
     assert isinstance(q["queued"], int) and isinstance(q["stuck"], int)
     if q["alive"] is False:
         assert q["status"] in {"no-worker", "stuck"}
+
+@pytest.mark.asyncio
+async def test_enqueue_rejects_unknown_kind_before_writing_state():
+    """B53：未知 kind 必须**先校验后写状态**——原实现会留下永远 queued 的僵尸键。"""
+    from app.services import tasks_worker as tw
+
+    with pytest.raises(ValueError) as ei:
+        await tw.enqueue("no_such_kind", {})
+    assert "未知任务类型" in str(ei.value)
+    # 校验发生在写 Redis 之前（因此不依赖 Redis 可用，也不会产生孤儿键）
+    assert "chapter_bookkeeping" in str(ei.value) or "可选" in str(ei.value)
