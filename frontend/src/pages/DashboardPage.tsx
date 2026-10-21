@@ -189,7 +189,7 @@ export function DashboardPage() {
                             <div className="tl-chapter">第 {c.order_no} 章</div>
                             <div className="tl-title">{c.title}</div>
                             <div className="tl-desc">
-                              {c.word_count > 0 ? `已定稿 ${c.word_count} 字` : (c.tone ? `基调 ${c.tone}` : '尚无场景')}
+                              {c.word_count > 0 ? `${c.word_count} 字` : (c.tone ? `基调 ${c.tone}` : '尚无场景')}
                             </div>
                             <span className={`status-badge ${c.badge}`}>{c.label}</span>
                           </div>

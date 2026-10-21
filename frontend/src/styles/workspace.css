@@ -832,6 +832,16 @@
   overflow: hidden;
 }
 .wp-progress-bar { height: 100%; background: var(--accent-cyan); transition: width 0.3s ease; }
+.wp-scene-todo { margin-left: 6px; font-style: normal; font-size: 10.5px; color: var(--text-muted); }
+
+/* 全局张力空态（v1.46）：空的时候不该占掉一整屏高（实测 100px 虚线大空块） */
+/* 全局张力空态（v1.46）：空的时候一行提示即可，别用大空态块占掉一整屏 */
+.tension-empty-line {
+  padding: 10px 2px;
+  font-size: 12.5px;
+  line-height: 1.8;
+  color: var(--text-muted);
+}
 
 /* 正文为空时在责编面板顶部明说（此时工具按钮是禁用的，别让人以为「坏了」） */
 .ec-empty-hint {

@@ -10,7 +10,7 @@ import { API_BASE } from '../types/types';
    优先级：路径参数 > ?query > localStorage > 第一本书
    ========================================================================== */
 
-export type StepKey = 'maestro' | 'director' | 'studio' | 'dashboard' | 'proofread' | 'settings';
+export type StepKey = 'maestro' | 'director' | 'studio' | 'write' | 'dashboard' | 'proofread' | 'settings';
 
 export interface SceneOption {
   id: string;
@@ -409,6 +409,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           next: nextScene
             ? { label: '下一场', to: `/studio/${nextScene.id}` }
             : { label: '概览复盘', to: `/dashboard?book=${bookId}` },
+        },
+        // v1.46 章级写作主线：这里 next 不再是「下一场」（那是场景视图的语义），
+        // 章视图写完之后该去的地方是「概览复盘」。
+        write: {
+          prev: { label: '正文协作', to: toStudio },
+          next: { label: '概览复盘', to: `/dashboard?book=${bookId}` },
         },
         dashboard: {
           prev: { label: '正文协作', to: toStudio },

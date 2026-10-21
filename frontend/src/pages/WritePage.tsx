@@ -27,7 +27,7 @@ interface SceneRow { id: string; title?: string; goal?: string; final_prose?: st
 export function WritePage() {
   const { chapterId = '' } = useParams<{ chapterId: string }>();
   const nav = useNavigate();
-  const { bookId } = useWorkspace();
+  const { book } = useWorkspace();
   const { showConfirm } = useDialog();
 
   const [text, setText] = useState('');
@@ -65,6 +65,8 @@ export function WritePage() {
   const paras = useMemo(() => text.split(/\n\s*\n/).filter((p) => p.trim()), [text]);
   const dirty = text !== savedText;
   const progress = wordTarget > 0 ? Math.min(100, Math.round((words / wordTarget) * 100)) : 0;
+  /** 超目标时不能显示"100%"了事——要如实说超了多少（实测 6636/2500 显示 100% 很误导）。 */
+  const overTarget = wordTarget > 0 && words > wordTarget;
 
   /** 写这一章：章级流式（分段写满，段间自动承接） */
   const writeChapter = async () => {
@@ -106,14 +108,18 @@ export function WritePage() {
     <div className="app-shell">
       <Sidebar active="studio" />
       <div className="main-col">
-        <ContextBar step="studio" />
+        <ContextBar step="write" />
         <div className="s2-page">
           {toast && <div className="s2-toast">{toast}</div>}
 
           <header className="s2-head">
             <span className="s2-title">{title || '未命名章'}</span>
             <span className="s2-sub">
-              {words} 字{wordTarget > 0 ? ` / 目标 ${wordTarget} 字（${progress}%）` : ''} · {paras.length} 段
+              {words} 字
+              {wordTarget > 0
+                ? (overTarget ? ` / 目标 ${wordTarget} 字（已超 ${words - wordTarget} 字）` : ` / 目标 ${wordTarget} 字（${progress}%）`)
+                : ''}
+              {' '}· {paras.length} 段
               {dirty && <b className="s2-dirty"> · 未保存</b>}
             </span>
             <span className="s2-src">基调：<b>{tone || '未定'}</b></span>
@@ -154,6 +160,7 @@ export function WritePage() {
                     onKeyDown={(e) => { if (e.key === 'Enter') nav(`/studio/${s.id}`); }}
                   >
                     {s.title || '（未命名场）'}
+                    {!(s.final_prose || '').trim() && <em className="wp-scene-todo">未写</em>}
                   </span>
                 </div>
               ))}
@@ -194,13 +201,13 @@ export function WritePage() {
                   <div className="wp-progress-bar" style={{ width: `${progress}%` }} />
                 </div>
                 <div className="s2-kv"><span>已写</span><b>{words} 字</b></div>
-                <div className="s2-kv"><span>目标</span><b>{wordTarget > 0 ? `${wordTarget} 字` : '未设'}</b></div>
+                <div className="s2-kv"><span>目标</span><b>{wordTarget > 0 ? `${wordTarget} 字` : '未设'}{overTarget ? `（已超 ${words - wordTarget}）` : ''}</b></div>
                 <div className="s2-kv"><span>段落</span><b>{paras.length}</b></div>
                 <div className="s2-hint" style={{ marginTop: 12 }}>
                   写作顺序建议：先让开篇立住 → 中间推进二到三次 → 收在一个钩子上。
                   「写这一章」就是按这个节奏分段的。
                 </div>
-                {bookId && <div className="s2-hint" style={{ marginTop: 8 }}>书：{bookId}</div>}
+                {book?.title && <div className="s2-hint" style={{ marginTop: 8 }}>书：{book.title}</div>}
               </div>
             </aside>
           </div>

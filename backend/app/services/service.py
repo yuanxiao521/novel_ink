@@ -563,9 +563,11 @@ class SimulationService:
         for title, prose in chapter_bodies:
             for line in (prose or "").splitlines():
                 line = line.strip()
-                if line and (("「" in line and "」" in line)
-                             or ("“" in line and "”" in line)
-                             or (line.startswith('"') and line.endswith('"'))):
+                is_quote = bool(line) and (("「" in line and "」" in line)
+                                          or ("“" in line and "”" in line)
+                                          or (line.startswith('"') and line.endswith('"')))
+                # v1.46：过短的对白（如「“滴。”」）不算金句 —— 去掉引号后不足 8 字就跳过
+                if is_quote and len(line.strip('「」“”"')) >= 8:
                     quotes.append({"text": line[:60], "author": title or "—— 正文"})
                     if len(quotes) >= 3:
                         break

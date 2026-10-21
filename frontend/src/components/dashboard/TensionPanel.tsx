@@ -44,14 +44,10 @@ export function TensionPanel({ view }: { view: GlobalView | null }) {
       </div>
 
       {summary.valid === 0 ? (
-        <EmptyState
-          compact
-          icon="〽"
-          title="尚无推演张力数据"
-          desc="进「导演台」跑一次推演即可生成曲线。"
-        >
-          {diagnostics.length > 0 && <div className="tension-hint">{diagnostics[0].detail}</div>}
-        </EmptyState>
+        <div className="tension-empty-line">
+          尚无推演张力数据 —— 进「导演台」跑一次推演即可生成曲线。
+          {diagnostics.length > 0 && <span className="tension-hint"> · {diagnostics[0].detail}</span>}
+        </div>
       ) : (
         <>
           <div className="tension-summary">
