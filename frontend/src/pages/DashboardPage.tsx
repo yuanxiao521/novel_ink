@@ -25,6 +25,8 @@ export function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [gview, setGview] = useState<GlobalView | null>(null);
   const [err, setErr] = useState('');
+  /** 金句池默认只展示 1 条（3 条会把右栏撑满，把热力图挤到下面） */
+  const [quotesOpen, setQuotesOpen] = useState(false);
 
   useEffect(() => {
     if (!bookId) {
@@ -87,10 +89,7 @@ export function DashboardPage() {
                 <span>进入导演台</span>
               </button>
             </Link>
-            <span className={`health-badge ${kpi && kpi.health < 60 ? 'warn' : ''}`}>
-              <span className="health-dot"></span>
-              健康分 {kpi?.health ?? '-'}
-            </span>
+            {/* v1.46：健康分已在下方 KPI 卡展示（带环形进度），顶栏不再重复 */}
             <ThemeToggle />
             <div className="user-avatar">作</div>
           </div>
@@ -240,14 +239,21 @@ export function DashboardPage() {
               {!data || data.quotes.length === 0 ? (
                 <EmptyState compact icon="❝" title="暂无金句" desc="写完章/场正文后自动抽取（支持「」与“”对白）。" />
               ) : (
-                <div className="quote-list">
-                  {data.quotes.map((q, i) => (
-                    <div className="quote-item" key={i}>
-                      <p className="quote-text">{q.text}</p>
-                      <span className="quote-author">—— {q.author}</span>
-                    </div>
-                  ))}
-                </div>
+                <>
+                  <div className="quote-list">
+                    {(quotesOpen ? data.quotes : data.quotes.slice(0, 1)).map((q, i) => (
+                      <div className="quote-item" key={i}>
+                        <p className="quote-text">{q.text}</p>
+                        <span className="quote-author">—— {q.author}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {data.quotes.length > 1 && (
+                    <button className="rail-more" onClick={() => setQuotesOpen((v) => !v)}>
+                      {quotesOpen ? '收起 ▴' : `展开全部 ${data.quotes.length} 条 ▾`}
+                    </button>
+                  )}
+                </>
               )}
             </div>
 

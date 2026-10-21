@@ -266,7 +266,12 @@ try {
       + "  overall: (document.querySelector('.tr-overall') || {}).innerText || '',"
       + "  subs: Array.from(document.querySelectorAll('.ec-result .tr-sub')).map((x) => x.textContent.trim()).slice(0, 5) });"
       + "})()")) || "{}");
-    step("⑨ 顶栏体检按钮：自动切责编 tab + 过程卡 + 结果富卡（明细可见，且**非回退**）",
+    // 区分「功能坏了」与「上游中途挂了」：回退报告（overall 含"模型未接入"+0 条问题）属于后者，
+    // 后者不该让 L3 假红（这轮就被上游账号池熔断坑过一次）。
+    const fallbackHit = String(rv.overall || "").includes("模型未接入");
+    if (!rv.err && fallbackHit) {
+      skip("⑨ 顶栏体检按钮：自动切责编 + 过程卡 + 结果富卡", "LLM 运行中不可用（返回了回退报告）");
+    } else step("⑨ 顶栏体检按钮：自动切责编 tab + 过程卡 + 结果富卡（明细可见，且**非回退**）",
       !rv.err && rv.editorTab === true && rv.card === true && /体检：\d+ 条问题/.test(String(rv.detail))
         && !String(rv.overall).includes("模型未接入")
         && (rv.subs || []).some((s) => String(s).includes("问题清单")),
@@ -311,7 +316,10 @@ try {
       + "  saveLabel: (Array.from(document.querySelectorAll('.s2-actions button')).map((x) => x.textContent.trim()).find((x) => x.includes('保存')) || '') });"
       + "})()")) || "{}");
     // 断言：正文区被**流式写入**（换掉了旧稿）· 抓到过中间态或"写手中"按钮态（证明不是一次性替换）· 未落库
-    step("⑩ 写手流式：正文区边收边写 +「未保存」标记 + 保存按钮转「保存*」",
+    const upstreamDead = !dr.err && dr.final === dr.initial && dr.sawBusyLabel === true;
+    if (upstreamDead) {
+      skip("⑩ 写手流式（正文区边收边写）", "LLM 运行中不可用（点了按钮但一个字没产出）");
+    } else step("⑩ 写手流式：正文区边收边写 +「未保存」标记 + 保存按钮转「保存*」",
       !dr.err && dr.disabledAtClick === false && dr.final > 50 && dr.final !== dr.initial
         && (dr.mid >= 1 || dr.sawBusyLabel === true)
         && dr.dirty === true && String(dr.saveLabel).includes("保存*"),

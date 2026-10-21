@@ -833,6 +833,26 @@
 }
 .wp-progress-bar { height: 100%; background: var(--accent-cyan); transition: width 0.3s ease; }
 .wp-scene-todo { margin-left: 6px; font-style: normal; font-size: 10.5px; color: var(--text-muted); }
+/* v1.46：金句池展开按钮 + 章摘要截断 */
+.rail-more {
+  width: 100%;
+  margin-top: 8px;
+  padding: 5px 8px;
+  font-family: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px dashed var(--border-light);
+  border-radius: var(--radius-md);
+}
+.rail-more:hover { border-color: var(--accent-primary); color: var(--accent-primary); }
+.wp-summary {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 
 /* 全局张力空态（v1.46）：空的时候不该占掉一整屏高（实测 100px 虚线大空块） */
 /* 全局张力空态（v1.46）：空的时候一行提示即可，别用大空态块占掉一整屏 */

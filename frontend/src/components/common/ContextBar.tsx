@@ -44,7 +44,8 @@ export function ContextBar({ step }: { step: StepKey }) {
           </>
         )}
 
-        {ws.scenes.length > 0 && (
+        {/* v1.46：章级写作视图不显示「场」——章是最小单位，场只是可选细分（显示出来会误导） */}
+        {step !== 'write' && ws.scenes.length > 0 && (
           <>
             <span className="ws-sep">/</span>
             <select className="ws-sel" value={ws.sceneId} onChange={(e) => ws.setScene(e.target.value)} title="切换场景">

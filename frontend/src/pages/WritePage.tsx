@@ -146,7 +146,9 @@ export function WritePage() {
               <div className="s2-info-title">这一章</div>
               <div className="s2-kv"><span>字数目标</span><b>{wordTarget > 0 ? `${wordTarget} 字` : '未设（默认 4000）'}</b></div>
               <div className="s2-kv"><span>基调</span><b>{tone || '未定'}</b></div>
-              <div className="s2-kv"><span>要完成的事</span><b>{summary || '未填'}</b></div>
+              <div className="s2-kv"><span>要完成的事</span>
+                <b className="wp-summary" title={summary || '未填'}>{summary || '未填'}</b>
+              </div>
               <div className="s2-info-title" style={{ marginTop: 12 }}>场 · {scenes.length}（可选细分）</div>
               {scenes.length === 0 && <div className="s2-hint">本章没拆场也能写——章就是最小单位。需要推演/细纲时再去主笔或导演台拆场。</div>}
               {scenes.map((s) => (
