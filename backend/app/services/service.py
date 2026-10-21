@@ -1308,6 +1308,7 @@ class SimulationService:
         chapter = await self.repo.get_chapter(chapter_id)
         if chapter is None:
             raise ChapterNotFoundError(f"未找到章节: {chapter_id}")
+        book_id = str(chapter.get("book_id") or "")
         body = (text or "").strip()
         unchanged = str(chapter.get("prose_md") or "").strip() == body
         if not await self.repo.save_chapter_prose(chapter_id, body):
@@ -1324,8 +1325,20 @@ class SimulationService:
                 logger.warning("[bookkeeping] 章级入队失败，退回 asyncio 任务：%s", e)
                 asyncio.create_task(self.chapter_bookkeeping(chapter_id, body))
                 bookkeeping = "fallback"
+        # v1.49 · 记忆索引保鲜：正文变了，索引里这一章的「摘要 + 正文尾部」就旧了，
+        # 写下一章时的「前情提要」会缺最新进展。顺手入队重建（幂等；无向量时单本 ~40ms）。
+        reindex = "skip"
+        if body and not unchanged:
+            try:
+                from app.services.tasks_worker import enqueue as job_enqueue
+
+                await job_enqueue("book_reindex", {"book_id": str(book_id)})
+                reindex = "queued"
+            except Exception as e:  # noqa: BLE001  索引旧了不影响正文，但要说出来
+                logger.warning("[rag] 记忆索引入队失败 %s：%s", chapter_id, e)
+                reindex = "failed"
         return {"chapter_id": chapter_id, "saved": True, "words": prose_chars(body),
-                "unchanged": unchanged, "bookkeeping": bookkeeping}
+                "unchanged": unchanged, "bookkeeping": bookkeeping, "reindex": reindex}
 
     async def chapter_bookkeeping(self, chapter_id: str, text: str) -> dict:
         """**章级记账 + 复检**（v1.46 · P0 闭环）：章正文对照账本 → 写伏笔/信念/世界状态。
@@ -1510,6 +1523,14 @@ class SimulationService:
             if patch:
                 await self.update_scene(s["id"], patch)
                 filled += len(patch)
+        # v1.49：补出来的摘要/场设定要进记忆索引（否则下一章检索不到这些设定）
+        if filled or (need_chapter and out.get("chapter_summary")):
+            try:
+                from app.services.tasks_worker import enqueue as job_enqueue
+
+                await job_enqueue("book_reindex", {"book_id": str(book_id)})
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[rag] 补设定后记忆索引入队失败 %s：%s", chapter_id, e)
         return {"filled": filled, "chapter_summary": need_chapter,
                 "scenes": len(scenes), "scenes_generated": len(gen_list)}
 

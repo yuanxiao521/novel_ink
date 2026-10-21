@@ -377,6 +377,17 @@ curl -s "http://127.0.0.1:8001/api/v1/chapters/$CH/recall"   # mode=fallback 且
 # C. DB 不可用：store 返回 [] → recall 全量走兜底直取；prompt 里那一段退化为「（无检索素材…）」
 ```
 
+**索引保鲜（v1.49.1）**：保存章正文 / 补全设定后会自动入队重建索引，不用手动点；
+保存回执里带 `reindex` 字段（`queued` / `skip`（内容没变）/ `failed`），不静默。
+
+```bash
+# 验一下「保存 → 真落库 → 索引跟上」这条链（B57 回归）
+curl -s -X PUT "http://127.0.0.1:8001/api/v1/chapters/$CH/prose" \
+  -H "Content-Type: application/json" -d "{\"text\": \"（粘贴一段新正文）\"}"
+# 期望：{"saved": true, "words": N, "unchanged": false, "bookkeeping": "queued", "reindex": "queued"}
+# 再查：curl .../chapters/$CH/prose → prose_md 应为刚保存的内容（刷新不丢）
+```
+
 ## 4. 存量验收（S1–S4 / A2 / A3，仍在跑）
 
 ```powershell

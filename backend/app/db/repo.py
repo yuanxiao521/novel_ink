@@ -1437,6 +1437,12 @@ class Repo:
                     row = model(id=pk)
                     session.add(row)
                 for k, v in data.items():
+                    # B57（v1.49.1）：**时间戳由 DB 维护**，dict 里的 created_at/updated_at 是
+                    # `get_chapter()` 之类的读接口返回的 isoformat **字符串**，直接 setattr 到
+                    # timestamptz 列会被 asyncpg 拒收（DataError）→ 整条 upsert 失败 → 静默落内存态：
+                    # 表现为「点了保存、提示已保存、刷新后正文回到旧版本」。实测章正文保存必踩。
+                    if k in ("created_at", "updated_at"):
+                        continue
                     if k != "id" and hasattr(row, k):
                         setattr(row, k, v)
                 await session.commit()
