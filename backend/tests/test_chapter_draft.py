@@ -189,3 +189,78 @@ def test_segment_goals_fallback_without_scenes():
     goals = chapter_segment_goals(1600, scenes=[])
     assert goals[0].startswith("开篇")
     assert goals[-1].startswith("收束")
+
+@pytest.mark.asyncio
+async def test_ensure_chapter_settings_fills_only_gaps(svc, monkeypatch):
+    """P1 补设定：**只补空字段**，已填的（作者手写）一个字都不覆盖。"""
+    import app.services.engine.prose as prose_mod
+    import app.services.service as service_mod
+
+    await svc.repo.save_scene({"id": "sc-a", "chapter_id": "ch-w", "title": "第一场",
+                               "stage_desc": "旧站台", "goal": "找到路引", "final_prose": ""})
+
+    class _FakeLLM:
+        available = True
+
+    async def _fake_gen(llm, chapter, scenes, characters=None, constraints=""):
+        return {"chapter_summary": "不该覆盖的摘要",
+                "scenes": [{"title": "第一场", "stage_desc": "不该覆盖的舞台",
+                            "goal": "不该覆盖的目标", "content_desc": "他会在这里遇到影子"}]}
+
+    monkeypatch.setattr(service_mod, "llm_client", _FakeLLM())
+    monkeypatch.setattr(prose_mod, "generate_chapter_settings", _fake_gen)
+    out = await svc.ensure_chapter_settings("ch-w")
+    assert out["filled"] == 1                     # 只补了 content_desc
+    sc = await svc.repo.get_scene("sc-a")
+    assert sc["stage_desc"] == "旧站台" and sc["goal"] == "找到路引"   # 未被覆盖
+    assert sc["content_desc"] == "他会在这里遇到影子"
+    ch = await svc.repo.get_chapter("ch-w")
+    assert ch["summary"] == "车站醒来，追查断轨"    # 已有摘要不动
+
+
+@pytest.mark.asyncio
+async def test_ensure_chapter_settings_skips_without_scenes(svc):
+    """本章未拆场 → 明确 skipped（不调用模型、不造假）。"""
+    out = await svc.ensure_chapter_settings("ch-w")
+    assert out.get("skipped") and "未拆场" in str(out["skipped"])
+
+
+@pytest.mark.asyncio
+async def test_chapter_inspect_composes_and_writes_ledger(svc, monkeypatch):
+    """P1 章级巡检：体检 ∥ 质检 → 评审 → 裁决 → 记账（合并体检口吻到风险）。"""
+    import app.services.engine.prose as prose_mod
+    import app.services.engine.quality as q_mod
+    import app.services.service as service_mod
+
+    class _FakeLLM:
+        available = True
+
+    async def _fake_review(llm, scene, text, characters=None, voice_prior=None):
+        return {"issues": [{"severity": "high", "text": "结尾跳步", "suggestion": "补过渡"}],
+                "voice_findings": [{"char": "林澈", "evidence": "他说", "issue": "腔调不对",
+                                    "suggestion": "改短句"}],
+                "overall": "总评"}
+
+    async def _fake_verify(llm, text, foreshadows, beliefs, world_states,
+                           characters=None, skip_voice=False):
+        return {"foreshadow_updates": [], "belief_deltas": [],
+                "state_deltas": [{"kind": "character", "name": "林澈",
+                                  "key": "char:林澈:位置", "value": "废弃车站",
+                                  "previous_value": ""}],
+                "causal": [], "risks": ["时间线冲突"]}
+
+    async def _fake_score(llm, text, characters=None):
+        return {"total": 82, "scores": {"tension": 80}}
+
+    monkeypatch.setattr(service_mod, "llm_client", _FakeLLM())
+    monkeypatch.setattr(prose_mod, "review_prose", _fake_review)
+    monkeypatch.setattr(prose_mod, "verify_prose", _fake_verify)
+    monkeypatch.setattr(q_mod, "score_text", _fake_score)
+
+    await svc.save_chapter_prose("ch-w", "林澈醒在废弃车站。他把路引收进内袋。")
+    out = await svc.chapter_inspect("ch-w")
+    assert out["review"]["issues"] == 1 and out["review"]["high"] == 1
+    assert out["verify"]["risks"] >= 2           # 原风险 + 体检口吻合并进来的那条
+    assert out["score"]["total"] == 82
+    assert out["bookkeeping_written"] >= 1       # 账本真的写了
+    assert isinstance(out["verdict"], str) and out["verdict"]

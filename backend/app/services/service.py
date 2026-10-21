@@ -1383,6 +1383,132 @@ class SimulationService:
             if piece:
                 written = (written + "\n\n" + piece).strip() if written.strip() else piece
 
+    # ---------------------------------------------------------------- P1：设定补齐 + 章级巡检（v1.48）
+    async def ensure_chapter_settings(self, chapter_id: str, force: bool = False) -> dict:
+        """补齐章摘要 + 各场设定（舞台/本场目标/内容描述）。
+
+        规则：**只补空字段，绝不覆盖作者手写**（force=True 才覆盖）。
+        动机：真实书场景设定填充率 0/3 → 写手自由发挥 → 体检必打回（「本场设定栏全空」）。
+        返回 {filled, skipped?/error?, chapter_summary, scenes}，调用方据此如实汇报。
+        """
+        from app.services.agents.constraints import build_constraints
+        from app.services.agents.constraints import render as render_constraints
+        from app.services.engine.prose import generate_chapter_settings
+
+        chapter = await self.repo.get_chapter(chapter_id)
+        if chapter is None:
+            raise ChapterNotFoundError(f"未找到章节: {chapter_id}")
+        book_id = str(chapter.get("book_id") or "")
+        scenes = await self.repo.list_scenes_by_chapter(chapter_id)
+        fields = ("stage_desc", "goal", "content_desc")
+
+        def gaps(s: dict) -> list[str]:
+            return [k for k in fields if not str((s or {}).get(k) or "").strip()]
+
+        need_chapter = force or not str(chapter.get("summary") or "").strip()
+        need_scenes = [s for s in scenes if gaps(s)]
+        if not need_chapter and not need_scenes:
+            if not scenes:
+                return {"filled": 0, "skipped": "本章未拆场，且章摘要已填（无可补项）"}
+            return {"filled": 0, "skipped": "章摘要与各场设定都已完整"}
+        if not scenes:
+            return {"filled": 0, "skipped": "本章未拆场：补设定需要至少一个场（可先去主笔拆场）"}
+        if not llm_client.available:
+            return {"filled": 0, "skipped": "LLM 未接入（未补）"}
+
+        characters = (await self.repo.list_characters_by_book(book_id)) if book_id else []
+        constraints = (render_constraints(await build_constraints(self.repo, book_id))
+                       if book_id else "")
+        out = await generate_chapter_settings(llm_client, chapter, scenes, characters, constraints)
+        if not out:
+            return {"filled": 0, "error": "模型未返回可用设定（已重试，仍失败）"}
+
+        filled = 0
+        if need_chapter:
+            cs = str(out.get("chapter_summary") or "").strip()
+            if cs:
+                await self.repo.save_chapter({**chapter, "summary": cs})
+                filled += 1
+        gen_list = out.get("scenes") if isinstance(out.get("scenes"), list) else []
+        by_title = {str((g or {}).get("title") or "").strip(): g for g in gen_list}
+        for idx, s in enumerate(scenes):
+            gen = by_title.get(str(s.get("title") or "").strip())
+            if not isinstance(gen, dict) and idx < len(gen_list) and isinstance(gen_list[idx], dict):
+                gen = gen_list[idx]
+            if not isinstance(gen, dict):
+                continue
+            patch: dict = {}
+            for k in fields:
+                cur = str(s.get(k) or "").strip()
+                new = str(gen.get(k) or "").strip()
+                if new and (force or not cur):
+                    patch[k] = new
+            if patch:
+                await self.update_scene(s["id"], patch)
+                filled += len(patch)
+        return {"filled": filled, "chapter_summary": need_chapter,
+                "scenes": len(scenes), "scenes_generated": len(gen_list)}
+
+    async def chapter_inspect(self, chapter_id: str) -> dict:
+        """**章级巡检**（v1.48 · P1）：体检 ∥ 质检 → 评审 → 0-token 裁决 → 自动记账。
+
+        与场景级审稿会的差别：以**章正文**为单位（场是可选细分），角色取全书角色。
+        已知限制：prose_notes 的 scene_id 是必填外键 → 章级巡检暂不落审计记录（P1 待办）。
+        """
+        from app.services.agents.review_meeting import verdict_of
+        from app.services.engine.prose import review_prose, verify_prose
+        from app.services.engine.quality import score_text
+
+        ctx = await self._chapter_context(chapter_id)
+        body = str(ctx["existing"]).strip()
+        if not body:
+            return {"chapter_id": chapter_id, "skipped": "章正文为空（先点『写这一章』）"}
+        if not llm_client.available:
+            return {"chapter_id": chapter_id, "skipped": "LLM 未接入"}
+        book_id = ctx["book_id"]
+        characters = ctx["characters"]
+        prior = style_voice_prior(body, characters)
+        foreshadows = (await self.repo.list_foreshadows(book_id)) if book_id else []
+        beliefs = (await self.repo.list_beliefs(book_id)) if book_id else []
+        world_states = (await self.repo.list_world_states(book_id)) if book_id else []
+
+        review, verify = await asyncio.gather(
+            review_prose(llm_client, ctx["chapter"], body,
+                         characters=characters, voice_prior=prior),
+            verify_prose(llm_client, body, foreshadows, beliefs, world_states,
+                         characters=characters, skip_voice=True),
+        )
+        issues = (review or {}).get("issues") or []
+        voice = (review or {}).get("voice_findings") or []
+        high = len([i for i in issues if str((i or {}).get("severity")) == "high"])
+        opinion = verify or {}
+        risks = list(opinion.get("risks") or [])
+        for v in (voice or []):
+            line = f"口吻：{v.get('char')}「{str(v.get('evidence') or '')[:24]}」{v.get('issue')}"
+            if line not in risks:
+                risks.append(line)
+        score = await score_text(llm_client, body, characters=characters)
+        total = score.get("total")
+        dims = score.get("scores") or {}
+        verdict = verdict_of(total, dims, high, len(risks))
+        written = await self._apply_verify_bookkeeping(
+            book_id, opinion, source_event_id="CHAPTER_INSPECT",
+            scene_no=int(ctx["chapter"].get("order_no") or 0)) if book_id else 0
+        return {
+            "chapter_id": chapter_id,
+            "words": prose_chars(body),
+            "review": {"issues": len(issues), "high": high, "voice": len(voice),
+                       "overall": str((review or {}).get("overall") or "")[:200],
+                       "top": issues[:5]},
+            "verify": {"risks": len(risks),
+                       "foreshadow": len(opinion.get("foreshadow_updates") or []),
+                       "beliefs": len(opinion.get("belief_deltas") or []),
+                       "top_risks": risks[:5]},
+            "score": {"total": total, "dims": dims},
+            "verdict": verdict,
+            "bookkeeping_written": written,
+        }
+
     async def prose_review(self, scene_id: str, text: str) -> dict:
         """体检员：结构化体检报告 → editor note（pending）。"""
         from app.services.engine.prose import review_prose

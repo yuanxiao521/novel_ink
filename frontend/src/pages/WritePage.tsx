@@ -5,7 +5,8 @@ import { ContextBar } from '../components/common/ContextBar';
 import { useDialog } from '../components/common/Dialog';
 import { useWorkspace } from '../context/WorkspaceContext';
 import {
-  chapterDraftStream, fetchChapterProse, listScenes, saveChapterProse,
+  chapterDraftStream, enqueueChapterInspect, fetchChapterProse, generateChapterSettings,
+  listScenes, pollJob, saveChapterProse,
 } from '../api/novel';
 
 /* ==========================================================================
@@ -22,7 +23,10 @@ import {
      4. 保存（落 chapters.prose_md，唯一真源）
    ========================================================================== */
 
-interface SceneRow { id: string; title?: string; goal?: string; final_prose?: string }
+interface SceneRow {
+  id: string; title?: string; goal?: string; final_prose?: string;
+  stage_desc?: string; content_desc?: string;
+}
 
 export function WritePage() {
   const { chapterId = '' } = useParams<{ chapterId: string }>();
@@ -43,6 +47,10 @@ export function WritePage() {
   const [busy, setBusy] = useState(false);
   const [streamChars, setStreamChars] = useState(0);
   const [toast, setToast] = useState('');
+  /** P1：设定补齐 / 章级巡检 */
+  const [settingsBusy, setSettingsBusy] = useState(false);
+  const [inspectBusy, setInspectBusy] = useState(false);
+  const [inspect, setInspect] = useState<Record<string, unknown> | null>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
 
   const flash = (t: string) => { setToast(t); window.setTimeout(() => setToast(''), 2400); };
@@ -69,6 +77,10 @@ export function WritePage() {
   const progress = wordTarget > 0 ? Math.min(100, Math.round((words / wordTarget) * 100)) : 0;
   /** 超目标时不能显示"100%"了事——要如实说超了多少（实测 6636/2500 显示 100% 很误导）。 */
   const overTarget = wordTarget > 0 && words > wordTarget;
+  /** 场设定缺口（舞台/本场目标/内容描述任一为空）——写前该补，否则写手只能自由发挥 */
+  const gapScenes = scenes.filter(
+    (s) => !(s.stage_desc || '').trim() || !(s.goal || '').trim() || !(s.content_desc || '').trim(),
+  ).length;
 
   /** 写这一章：章级流式（分段写满，段间自动承接） */
   const writeChapter = async () => {
@@ -90,6 +102,37 @@ export function WritePage() {
     } finally {
       setBusy(false); setStreamChars(0);
     }
+  };
+
+  /** P1：补全本章设定（只补空字段，不覆盖手写） */
+  const runGenerateSettings = async () => {
+    if (!chapterId || settingsBusy) return;
+    setSettingsBusy(true);
+    try {
+      const r = await generateChapterSettings(chapterId, false);
+      if (r.error) flash(`补设定失败：${r.error}`);
+      else if (r.skipped) flash(r.skipped);
+      else flash(`已补齐 ${r.filled} 项设定（章摘要 ${r.chapter_summary ? '已填' : '未动'} · ${r.scenes ?? 0} 场）`);
+      await load();
+    } catch (e) {
+      flash(`补设定失败：${String(e instanceof Error ? e.message : e)}`);
+    } finally { setSettingsBusy(false); }
+  };
+
+  /** P1：章后巡检（后台队列：体检 ∥ 质检 → 评审 → 裁决 → 记账） */
+  const runInspect = async () => {
+    if (!chapterId || inspectBusy) return;
+    setInspectBusy(true); setInspect(null);
+    try {
+      const { job_id } = await enqueueChapterInspect(chapterId);
+      const st = await pollJob(job_id);
+      if (st.status === 'failed') throw new Error(st.error || '巡检失败');
+      setInspect((st.result ?? {}) as Record<string, unknown>);
+      flash('章级巡检完成（右侧看裁决与明细）');
+      await load();
+    } catch (e) {
+      flash(`巡检失败：${String(e instanceof Error ? e.message : e)}`);
+    } finally { setInspectBusy(false); }
   };
 
   const save = async () => {
@@ -131,6 +174,14 @@ export function WritePage() {
             <button className="ws-btn ws-btn-primary" disabled={busy} onClick={() => void writeChapter()}
                     title="按本章字数目标分段写满（不是写一段），段间自动承接">
               {busy ? (streamChars > 0 ? `写这一章… ${Math.round(streamChars)} 字` : '写这一章…（构思中）') : '✍ 写这一章'}
+            </button>
+            <button className="ws-btn" disabled={settingsBusy || busy} onClick={() => void runGenerateSettings()}
+                    title="主笔补齐本章摘要与各场设定（舞台/本场目标/内容描述）——只补空字段，不覆盖你手写的">
+              {settingsBusy ? '🧩 补设定中…' : `🧩 补全设定${gapScenes > 0 ? `（缺 ${gapScenes} 场）` : ''}`}
+            </button>
+            <button className="ws-btn" disabled={inspectBusy || busy || words === 0} onClick={() => void runInspect()}
+                    title="体检 ∥ 质检 → 评审 → 裁决 → 自动记账（后台跑，刷新不断链）">
+              {inspectBusy ? '🔍 巡检中…' : '🔍 章后巡检'}
             </button>
             <button className="ws-btn" disabled={busy} onClick={() => setEditing((v) => !v)}>
               {editing ? '✓ 完成编辑' : '✎ 编辑'}
@@ -217,6 +268,37 @@ export function WritePage() {
                   「写这一章」就是按这个节奏分段的。
                 </div>
                 {book?.title && <div className="s2-hint" style={{ marginTop: 8 }}>书：{book.title}</div>}
+
+                {inspect && (
+                  <div className="wp-inspect">
+                    <div className="wp-inspect-head">章级巡检</div>
+                    {typeof inspect.skipped === 'string' && <div className="s2-hint">{inspect.skipped}</div>}
+                    {typeof inspect.verdict === 'string' && (
+                      <div className="wp-inspect-verdict">{inspect.verdict}</div>
+                    )}
+                    {(() => {
+                      const sc = (inspect.score ?? {}) as Record<string, unknown>;
+                      const rv = (inspect.review ?? {}) as Record<string, unknown>;
+                      const vf = (inspect.verify ?? {}) as Record<string, unknown>;
+                      const total = typeof sc.total === 'number' ? sc.total : null;
+                      return (
+                        <>
+                          {total !== null && <div className="s2-kv"><span>评审</span><b>{total} 分</b></div>}
+                          <div className="s2-kv"><span>体检</span>
+                            <b>{String(rv.issues ?? 0)} 条（高危 {String(rv.high ?? 0)}）· 口吻 {String(rv.voice ?? 0)}</b>
+                          </div>
+                          <div className="s2-kv"><span>质检</span>
+                            <b>风险 {String(vf.risks ?? 0)} · 伏笔 {String(vf.foreshadow ?? 0)} · 信念 {String(vf.beliefs ?? 0)}</b>
+                          </div>
+                          <div className="s2-kv"><span>记账</span><b>写入 {String(inspect.bookkeeping_written ?? 0)} 条</b></div>
+                          {Array.isArray(vf.top_risks) && (vf.top_risks as string[]).slice(0, 3).map((x, i) => (
+                            <div className="wp-inspect-risk" key={i}>· {String(x)}</div>
+                          ))}
+                        </>
+                      );
+                    })()}
+                  </div>
+                )}
               </div>
             </aside>
           </div>

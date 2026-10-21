@@ -853,6 +853,21 @@
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+/* v1.48 P1：章级巡检结果卡 */
+.wp-inspect {
+  margin-top: 12px;
+  padding: 9px 11px;
+  border: 1px solid var(--border-light);
+  border-left: 3px solid var(--accent-cyan);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+}
+.wp-inspect-head { font-size: 12px; font-weight: 600; color: var(--accent-cyan); margin-bottom: 6px; }
+.wp-inspect-verdict {
+  margin-bottom: 6px; padding: 5px 8px; font-size: 12px; line-height: 1.6;
+  color: var(--accent-gold); border: 1px solid var(--accent-gold); border-radius: var(--radius-md);
+}
+.wp-inspect-risk { font-size: 11.5px; line-height: 1.6; color: var(--text-muted); }
 
 /* 全局张力空态（v1.46）：空的时候不该占掉一整屏高（实测 100px 虚线大空块） */
 /* 全局张力空态（v1.46）：空的时候一行提示即可，别用大空态块占掉一整屏 */

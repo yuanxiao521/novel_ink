@@ -85,7 +85,8 @@ async def enqueue(job_kind: str, payload: dict) -> dict:
               "review_meeting": "run_review_meeting",
               "quality_loop": "run_quality_loop",
               "bookkeeping": "run_bookkeeping",
-              "chapter_bookkeeping": "run_chapter_bookkeeping"}
+              "chapter_bookkeeping": "run_chapter_bookkeeping",
+              "chapter_inspect": "run_chapter_inspect"}
     arq_fn = fn_map.get(job_kind)
     if not arq_fn:
         raise ValueError(f"未知任务类型: {job_kind}（可选 {sorted(fn_map)}）")
@@ -199,24 +200,52 @@ async def queue_health() -> dict:
     必须让作者看得见（T9：静默降级必须反馈）。
     """
     r = await _client()
+    errors: list[str] = []
     try:
         now = int(time.time() * 1000)
-        raw = await r.get(HEARTBEAT_KEY)
-        hb = json.loads(raw) if raw else None
-        age = int((now - int(hb["at"])) / 1000) if isinstance(hb, dict) and hb.get("at") else None
+        # 每个探针独立容错：单个 Redis 异常不能把整个队列状态打成"没有消费者"
+        # （实测踩过：一次瞬时 WRONGTYPE 让横幅误报 "worker 未运行"，而 worker 明明在跑）
+        age = None
+        try:
+            raw = await r.get(HEARTBEAT_KEY)
+            hb = json.loads(raw) if raw else None
+            age = int((now - int(hb["at"])) / 1000) if isinstance(hb, dict) and hb.get("at") else None
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"heartbeat: {type(e).__name__}: {e}"[:120])
         alive = age is not None and age <= _HB_TTL
-        queued = int(await r.llen("arq:queue") or 0)
-        in_progress = len(await r.keys("arq:in-progress:*"))
+
+        queued = 0
+        try:
+            queued = int(await r.llen("arq:queue") or 0)
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"queue_len: {type(e).__name__}: {e}"[:120])
+
+        in_progress = 0
+        try:
+            in_progress = len(await r.keys("arq:in-progress:*"))
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"in_progress: {type(e).__name__}: {e}"[:120])
+
         stuck = 0
-        for k in await r.keys(_PREFIX + "*"):
-            try:
-                s = json.loads(await r.get(k) or "{}")
-            except Exception:  # noqa: BLE001
-                continue
-            if isinstance(s, dict) and str(s.get("status")) == "running":
-                since = int(s.get("running_since") or s.get("created_at") or 0)
-                if since and now - since >= STUCK_SEC * 1000:
-                    stuck += 1
+        try:
+            for k in await r.keys(_PREFIX + "*"):
+                try:
+                    s = json.loads(await r.get(k) or "{}")
+                except Exception:  # noqa: BLE001  单个坏键跳过
+                    continue
+                if isinstance(s, dict) and str(s.get("status")) == "running":
+                    since = int(s.get("running_since") or s.get("created_at") or 0)
+                    if since and now - since >= STUCK_SEC * 1000:
+                        stuck += 1
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"stuck_scan: {type(e).__name__}: {e}"[:120])
+
+        if errors:
+            # 有探针失败 → status=unknown（前端据此提示"状态查询失败"而不是"没有消费者"）
+            return {"alive": alive, "status": "unknown", "heartbeat_age": age,
+                    "heartbeat_ttl": _HB_TTL, "queued": queued,
+                    "in_progress": in_progress, "stuck": stuck,
+                    "error": "；".join(errors)[:300]}
         status = "ok" if (alive and stuck == 0) else ("no-worker" if not alive else "stuck")
         return {"alive": alive, "status": status, "heartbeat_age": age,
                 "heartbeat_ttl": _HB_TTL, "queued": queued,
@@ -341,10 +370,32 @@ async def _do_chapter_bookkeeping(jid: str, chapter_id: str, text: str) -> dict:
     await _set(jid, status="done", result=out)
     return out
 
+async def run_chapter_inspect(ctx: dict, *, job_id: str = "", chapter_id: str) -> dict:
+    """后台：**章级巡检**（v1.48 · P1）——体检 ∥ 质检 → 评审 → 裁决 → 记账。"""
+    jid = job_id or "job-unknown"
+    return await _guard(jid, _do_chapter_inspect(jid, chapter_id))
+
+
+async def _do_chapter_inspect(jid: str, chapter_id: str) -> dict:
+    from app.db.repo import Repo
+    from app.services.service import SimulationService
+
+    svc = SimulationService(Repo())
+    await _stage(jid, "章级巡检：体检 ∥ 质检（读账本）…")
+    out = await svc.chapter_inspect(chapter_id)
+    if out.get("skipped"):
+        await _stage(jid, "跳过：" + str(out["skipped"]))
+    else:
+        await _stage(jid, "评审：%s 分" % str((out.get("score") or {}).get("total")))
+        await _stage(jid, "裁决：" + str(out.get("verdict")))
+        await _stage(jid, "记账：写入 %d 条" % int(out.get("bookkeeping_written") or 0))
+    await _set(jid, status="done", result=out)
+    return out
+
 class WorkerSettings:
     """arq worker 配置：arq app.services.tasks_worker.WorkerSettings"""
     functions = [run_plan_batch, run_review_meeting, run_quality_loop, run_bookkeeping,
-                 run_chapter_bookkeeping]
+                 run_chapter_bookkeeping, run_chapter_inspect]
     redis_settings = None   # 在类体下方赋值（arq RedisSettings）
     max_jobs = 4
     job_timeout = 600      # LLM 长任务放宽

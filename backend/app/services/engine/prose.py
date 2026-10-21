@@ -525,6 +525,93 @@ async def _verify_lite(llm_client: Any, text: str, foreshadows: list[dict],
     report["voice_risks"] = []   # 由调用方（审稿会）合并体检的 voice_findings
     return report
 
+# ---------------------------------------------------------------- 设定补齐 + 章级巡检（v1.48 · P1）
+# 背景：真实书里场景设定的「舞台/本场目标/内容描述」填充率 0/3 —— 写手只能自由发挥，
+# 体检随后必打回（"本场设定栏全空…结尾跳步"）。这里让主笔先补设定再写，而不是硬写。
+
+_SETTINGS_SCHEMA = {
+    "chapter_summary": "str ≤60 字：本章要完成的事",
+    "scenes": [{"title": "str 原样返回场标题",
+                "stage_desc": "str 舞台/环境 ≤40 字",
+                "goal": "str 本场的张力目标 / 结局条件 ≤40 字",
+                "content_desc": "str 本场内容一句话 ≤60 字"}],
+}
+
+_SETTINGS_PROMPT = """你是小说【主笔】，这次**只补设定，不写正文**。
+下面这一章有若干场，部分场缺少设定（舞台 / 本场目标 / 内容描述）。请依据章标题、章摘要、
+场标题与角色卡把缺口补上；**已经填过的字段不要改动**，新补的要与它们保持一致。
+
+【本章】标题：{title}
+摘要：{summary}（空则请你补一条）
+基调：{tone}　字数目标：{word_target}
+
+【角色卡】
+{characters}
+
+【书级约束】
+{constraints}
+
+【场清单（按顺序，已有内容标注在后面）】
+{scenes}
+
+只输出 JSON：{{"chapter_summary": "...", "scenes": [{{"title": "原样返回", "stage_desc": "...",
+"goal": "...", "content_desc": "..."}}]}}
+要求：① scenes 的顺序与数量必须与输入完全一致；② 不要编造新角色、不要写正文；
+③ 补出来的东西要具体可拍（地点/时间/物件/要发生什么），不要写"推动剧情"这种空话。"""
+
+
+def _validate_settings(raw: object) -> str | None:
+    """0-token 校验（返回 None = 通过；返回字符串 = 错误描述，拼回 prompt 重生成）。"""
+    if not isinstance(raw, dict):
+        return "顶层必须是 JSON 对象"
+    scenes = raw.get("scenes")
+    if not isinstance(scenes, list) or not scenes:
+        return "scenes 必须是非空数组"
+    for i, s in enumerate(scenes):
+        if not isinstance(s, dict):
+            return f"scenes[{i}] 必须是对象"
+    return None
+
+
+def settings_prompt(chapter: dict, scenes: list[dict], characters: list[dict] | None = None,
+                    constraints: str = "") -> str:
+    """装配「补设定」prompt（0-token 组装）。"""
+    lines = []
+    for i, s in enumerate(scenes or [], start=1):
+        have = []
+        for k, label in (("stage_desc", "舞台"), ("goal", "目标"), ("content_desc", "内容")):
+            v = str((s or {}).get(k) or "").strip()
+            if v:
+                have.append(f"{label}：{v}")
+        suffix = ("（已有 → " + "；".join(have) + "）") if have else "（全空，请补齐）"
+        lines.append(f"{i}. {str((s or {}).get('title') or '（未命名场）')}{suffix}")
+    return _SETTINGS_PROMPT.format(
+        title=chapter.get("title") or "（未命名章）",
+        summary=str(chapter.get("summary") or "").strip() or "（空，请补）",
+        tone=chapter.get("tone") or "（未定）",
+        word_target=chapter.get("word_target") or "（未定）",
+        characters=_characters_block(characters or []),
+        constraints=constraints or "（无）",
+        scenes=chr(10).join(lines) or "（本章未拆场）",
+    )
+
+
+async def generate_chapter_settings(llm_client: Any, chapter: dict, scenes: list[dict],
+                                   characters: list[dict] | None = None,
+                                   constraints: str = "") -> dict | None:
+    """让主笔补章摘要 + 各场设定（**只补缺口，不动已填**由调用方负责）。
+
+    无 LLM / 校验重试仍失败 → None（调用方明确回报，不静默造假）。"""
+    if not llm_client.available or not scenes:
+        return None
+    prompt = settings_prompt(chapter, scenes, characters, constraints)
+    try:
+        raw = await validate_and_retry(llm_client, prompt, _SETTINGS_SCHEMA, _validate_settings)
+    except ValueError:
+        return None
+    return raw if isinstance(raw, dict) else None
+
+
 # ---------------------------------------------------------------- 章级直写（v1.46 · 直写链路）
 # 产品方向 v2：**章是最小可写单位，场是可选的细分**。
 # 原来只写「场」且 prompt 写死 150-220 字 → 一场=一段，全书至今 286 字、长不出一章。

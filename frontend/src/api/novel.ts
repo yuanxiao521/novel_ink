@@ -1240,6 +1240,18 @@ export async function saveChapterProse(
   return send('PUT', `/api/v1/chapters/${chapterId}/prose`, { text });
 }
 
+/** 补齐章摘要 + 各场设定（只补空字段，不覆盖作者手写）。 */
+export async function generateChapterSettings(
+  chapterId: string, force = false,
+): Promise<{ filled: number; skipped?: string; error?: string; scenes?: number; chapter_summary?: boolean; scenes_generated?: number }> {
+  return send('POST', `/api/v1/chapters/${chapterId}/settings/generate`, { force });
+}
+
+/** 章级巡检（体检 ∥ 质检 → 评审 → 裁决 → 记账）：后台队列，返回 job_id 供轮询。 */
+export async function enqueueChapterInspect(chapterId: string): Promise<{ job_id: string; kind: string; status: string }> {
+  return send('POST', `/api/v1/chapters/${chapterId}/inspect`, {});
+}
+
 /** 章级记账 + 复检（手动重跑；正常保存时会自动入队）。 */
 export async function chapterBookkeeping(
   chapterId: string, text: string,

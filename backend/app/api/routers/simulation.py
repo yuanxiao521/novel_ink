@@ -380,6 +380,37 @@ async def chapter_bookkeeping(chapter_id: str, body: ProseTextIn,
     return await svc.chapter_bookkeeping(chapter_id, body.text)
 
 
+# ---------------------------------------------------------------- P1：设定补齐 + 章级巡检（v1.48）
+class SettingsGenIn(models.BaseModel):
+    """补设定入参：force=True 连已填字段一起覆盖（默认只补空）。"""
+    force: bool = False
+
+
+@router.post("/chapters/{chapter_id}/settings/generate")
+async def generate_chapter_settings(chapter_id: str, body: SettingsGenIn,
+                                   svc: SimulationService = Depends(get_service)):
+    """补齐章摘要 + 各场设定（舞台 / 本场目标 / 内容描述）——**只补空字段，不覆盖作者手写**。
+
+    动机：真实书场景设定填充率 0/3，写手只能自由发挥，体检随后必打回。
+    同步返回（单次 LLM，约 10-20s）+ 填写摘要，前端据此如实提示"补了几项"。
+    """
+    return await svc.ensure_chapter_settings(chapter_id, force=body.force)
+
+
+@router.post("/chapters/{chapter_id}/inspect")
+async def chapter_inspect(chapter_id: str, svc: SimulationService = Depends(get_service)):
+    """**章级巡检**（v1.48 · P1）：体检 ∥ 质检 → 评审 → 裁决 → 记账，**后台队列执行**。
+
+    60-90s 的长任务 → 入队（11ms 返回 job_id），进度与结果走 GET /jobs/{job_id}。
+    """
+    chapter = await svc.repo.get_chapter(chapter_id)
+    if chapter is None:
+        raise HTTPException(status_code=404, detail=f"未找到章节: {chapter_id}")
+    from app.services import tasks_worker as tw
+
+    return await tw.enqueue("chapter_inspect", {"chapter_id": chapter_id})
+
+
 @router.post("/scenes/{scene_id}/prose/review")
 async def prose_review(scene_id: str, body: ProseTextIn,
                        svc: SimulationService = Depends(get_service)):

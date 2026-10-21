@@ -35,9 +35,11 @@ export function DegradedBanner() {
   // B32：LLM 不可用（模型名错 / 账号异常 / 额度）同样是降级 —— 正文与角色演绎会静默走确定性回退，必须可见
   const llmBad = Boolean(llm && llm.configured && !llm.ok);
   // B51：后台队列没有消费者 —— 排批/审稿会/质量回环会一直排队，前端原来只能等到超时才知道
-  const queueBad = Boolean(q && q.alive === false);
+  const queueBad = Boolean(q && q.alive === false && q.status !== 'unknown');
+  /** 状态查询本身失败（Redis 异常）≠ 没有消费者 —— 别误报「请重启 worker」（实测踩过 WRONGTYPE 误报） */
+  const queueUnknown = Boolean(q && q.status === 'unknown');
   const queueStuck = Boolean(q && q.alive !== false && (q.stuck ?? 0) > 0);
-  if (dismissed || (!dbBad && !llmBad && !queueBad && !queueStuck)) return null;
+  if (dismissed || (!dbBad && !llmBad && !queueBad && !queueStuck && !queueUnknown)) return null;
   return (
     <div className="degraded-banner" role="alert">
       <span className="degraded-dot" />
@@ -50,7 +52,14 @@ export function DegradedBanner() {
             {d?.last_reason ? ` · ${d.last_reason.slice(0, 80)}` : ''}
           </>
         )}
-        {(dbBad || llmBad) && (queueBad || queueStuck) ? ' ｜ ' : ''}
+        {(dbBad || llmBad) && (queueBad || queueStuck || queueUnknown) ? ' ｜ ' : ''}
+        {queueUnknown && (
+          <>
+            队列状态查询失败（Redis 异常，worker 可能仍在运行）：{String(q?.error || '').slice(0, 80)}
+            {' '}—— 若排批/审稿会确实一直排队，再重启 worker
+          </>
+        )}
+        {(queueUnknown) && (queueBad || queueStuck) ? ' ｜ ' : ''}
         {queueBad && (
           <>
             后台队列没有消费者（worker 未运行）

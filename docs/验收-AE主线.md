@@ -21,6 +21,7 @@
 | G | **写手素材治理**（账本筛选/去重/脏名字闸门 + 场景缺口显式标注）+ **正文 token 流式** + 脏缓冲保护 | v1.44 |
 | H | **队列活性可见**（`/health.queue` 心跳）+ worker 防抖监督 + 启动自动清扫僵尸任务 | v1.45 |
 | I | **直写链路**：章成为最小可写单位（`chapters.prose_md` + 章级分段写满 + `/write` 主线视图） | v1.46 |
+| J | **P1 收口**：章级编排按场推进 + 设定兜底生成 + 章级一致性巡检（体检∥质检→评审→裁决→记账） | v1.47 / v1.48 |
 
 ---
 
@@ -313,6 +314,27 @@ curl -s "http://127.0.0.1:8001/api/v1/books/$B/export?fmt=md" | head -8
 
 # ④ 全书体检能读到章正文（scenes_checked 含章级直写单元）
 curl -s "http://127.0.0.1:8001/api/v1/books/$B/health-report" | python -c "import json,sys; d=json.load(sys.stdin); print(d['voice']['scenes_checked'], d['structure']['score'])"
+```
+
+### 3.14 补设定 + 章级巡检（v1.48 · P1 收口）
+
+```bash
+B=book-14b4b312; CH=chapter-c08f2b6b
+
+# ① 补设定（只补空字段，不覆盖作者手写）
+curl -s -X POST "http://127.0.0.1:8001/api/v1/chapters/$CH/settings/generate" \
+  -H "Content-Type: application/json" -d "{\"force\": false}"
+# 期望：{filled: N, chapter_summary: bool, scenes: 3, scenes_generated: 3}
+# 实测：filled=3（3 场 content_desc）、chapter_summary=false（已有摘要未动）、14s
+
+# ② 章级巡检（后台队列：体检 ∥ 质检 → 评审 → 裁决 → 记账）
+JOB=$(curl -s -X POST "http://127.0.0.1:8001/api/v1/chapters/$CH/inspect" | python -c "import json,sys; print(json.load(sys.stdin)['job_id'])")
+curl -s "http://127.0.0.1:8001/api/v1/jobs/$JOB"
+# 期望 result 含 verdict / score.total / review.high / verify.risks / bookkeeping_written
+# 实测（6636 字）：134.6s · 78 分 · 裁决「有 1 条高危问题 → 建议润色后再保存」· 记账 16 条
+
+# ③ 前端：写作页动作栏应有「🧩 补全设定」「🔍 章后巡检」，右栏出现「章级巡检」卡
+node scripts/ui-spec.mjs   # ⑫ 已断言按钮存在
 ```
 
 ## 4. 存量验收（S1–S4 / A2 / A3，仍在跑）
