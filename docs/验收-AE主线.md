@@ -682,6 +682,32 @@ curl -s "http://127.0.0.1:8001/api/v1/chapters/chapter-c08f2b6b/prior"
 ②卷表空 → 读路径派生回退（`derived=true`）且**不写库**；③卷边界变 → 概要只标 `stale`（内容保留），重算后清除。
 **连锁点**：建章/删章/改章号/骨架落库（append|replace）/改卷配置 —— 全部会重算归属。
 
+### 3.26 分卷 UI（v1.60 · 骨架树按卷分组 + 编辑器）
+
+```bash
+B=<book_id>
+# ① 卷列表（真源 book_volumes，含每卷章数）
+curl -s "http://127.0.0.1:8001/api/v1/books/$B/volumes"
+
+# ② 保存分卷（整表替换；返回 sync 与 digests_marked_stale）
+cat > /tmp/vols.json <<'JSON'
+{"volumes": [
+  {"from": 1, "to": 2, "title": "零里雨夜", "arc_goal": "逃出零里"},
+  {"from": 3, "to": 4, "title": "界墙", "arc_goal": "进第一里"}
+]}
+JSON
+curl -s -X PUT "http://127.0.0.1:8001/api/v1/books/$B/volumes" \
+  -H "Content-Type: application/json" --data-binary @/tmp/vols.json
+# 期望 {volumes:[{no,title,from,to}], sync:{assigned:4,unassigned:[]}, digests_marked_stale:N}
+
+# ③ 前端：主笔页骨架树出现卷头（第 N 卷 卷名 · 第 a–b 章 · 卷目标），章挂在卷下；
+#    工具栏「分卷（N）」可编辑卷名/区间或「按每 8 章重分」后保存
+node scripts/shot.mjs --url="/maestro?book=$B"
+```
+
+**边界**：卷表为空时骨架树退回平铺（不报错）；保存分卷只把旧卷概要标 `stale`（不删内容）。
+**已知未接**：主笔**预览卡**里还没按卷分组（`planPreview.volumes` 已可用，UI 待做）。
+
 ## 4. 存量验收（S1–S4 / A2 / A3，仍在跑）
 
 ```powershell

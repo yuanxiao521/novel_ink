@@ -373,6 +373,47 @@ export async function regenerateBookDigest(
     "POST", `/api/v1/books/${bookId}/digest/generate`, { scope, volume_no: volumeNo });
 }
 
+/* ---------- v1.60 分卷（卷实体） ---------- */
+
+export interface BookVolumeRow {
+  id: string;
+  book_id: string;
+  no: number;
+  title: string;
+  range_from: number;
+  range_to: number;
+  arc_goal?: string;
+  climax?: string;
+  /** 本卷章数（接口算的） */
+  chapters?: number;
+  /** true = 卷表为空，按 volume_size 派生（未落库） */
+  derived?: boolean;
+  range?: number[];
+}
+
+/** 分卷列表（真源是 book_volumes 表；空时派生回退）。 */
+export async function fetchBookVolumes(bookId: string): Promise<BookVolumeRow[]> {
+  const r = await getJson<{ volumes: BookVolumeRow[] }>(
+    `${API_BASE}/api/v1/books/${bookId}/volumes`);
+  return r.volumes ?? [];
+}
+
+/** 保存分卷（整表替换；校验递增不重叠）。 */
+export async function setBookVolumes(
+  bookId: string,
+  volumes: Array<{
+    no?: number; from: number; to: number; title?: string;
+    arc_goal?: string; climax?: string;
+  }>,
+): Promise<{
+  volumes: BookVolumeRow[];
+  sync?: { assigned: number; unassigned: number[] };
+  digests_marked_stale?: number;
+}> {
+  return send(
+    "PUT", `/api/v1/books/${bookId}/volumes`, { volumes });
+}
+
 /** 全局脉络 + 骨架体检（0-token，零 LLM）。 */
 export async function fetchBookBrief(bookId: string): Promise<BookBrief> {
   return getJson<BookBrief>(`${API_BASE}/api/v1/books/${bookId}/brief`);

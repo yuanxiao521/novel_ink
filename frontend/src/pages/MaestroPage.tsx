@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Sidebar } from '../components/backoffice/Sidebar';
 import { ContextBar } from '../components/common/ContextBar';
@@ -13,6 +13,8 @@ import {
   createAgentTask,
   fetchBookBrief,
   fetchBookTree,
+  fetchBookVolumes,
+  setBookVolumes,
   fetchMaterialUsage,
   fetchRehearsalPlan,
   fetchSceneDetail,
@@ -39,7 +41,7 @@ import {
 } from '../api/novel';
 import type {
   BookTree, BookMemoryMeta, InspirationCard, MaterialUsage, MemoryTopic,
-  BeatItem, RehearsalPlan, SceneDetail, ScenePatchItem,
+  BeatItem, BookVolumeRow, RehearsalPlan, SceneDetail, ScenePatchItem,
 } from '../api/novel';
 
 /* ---------- 类型 ---------- */
@@ -74,8 +76,18 @@ interface ResearchNote {
   hits: Array<{ kind: string; title: string; text: string }>;
 }
 
+interface PlanVolume {
+  title?: string;
+  from_seq?: number;
+  to_seq?: number;
+  arc_goal?: string;
+  climax?: string;
+}
+
 interface PlanPreview {
   worldview?: { premise?: string; rules_text?: string; background?: string };
+  /** v1.60：主笔给的卷规划（卷名/章区间/卷目标/卷末高潮） */
+  volumes?: PlanVolume[];
   chapters?: Array<{ seq?: number; title?: string; tone?: string; scenes?: unknown[] }>;
   foreshadow_plan?: unknown[];
   ending_options?: string[];
@@ -271,6 +283,11 @@ export function MaestroPage() {
   const [sceneEdits, setSceneEdits] = useState<ScenePatchItem[]>([]);
   /** v1.55：每场的 beats 文本（一行一条 `hard|文本|锚点1,锚点2`），与 sceneEdits 同序 */
   const [sceneBeatsText, setSceneBeatsText] = useState<string[]>([]);
+  /** v1.60：分卷（真源 book_volumes；这里只是展示/编辑用缓存） */
+  const [volumes, setVolumes] = useState<BookVolumeRow[]>([]);
+  const [volEdit, setVolEdit] = useState(false);
+  const [volBusy, setVolBusy] = useState(false);
+  const [volDraft, setVolDraft] = useState<Array<{ no: number; title: string; from: number; to: number }>>([]);
   const [sceneSaving, setSceneSaving] = useState(false);
 
   // 主笔"正在干什么"的具体动作文本（v1.39）：agentState 是粗状态，activity 是细文案
@@ -293,6 +310,12 @@ export function MaestroPage() {
         setTree(t);
       } catch {
         setTree(null);
+      }
+      // v1.60：分卷（真源 book_volumes）——首屏就要拿到，否则骨架树没法按卷分组
+      try {
+        setVolumes(await fetchBookVolumes(bookId));
+      } catch {
+        setVolumes([]);
       }
       try {
         const cards = await listInspirations(bookId);
@@ -500,6 +523,45 @@ export function MaestroPage() {
 
   // A4 分批交付：默认把本批**追加**到书末（不动已有章节与正文）；
   // 需要推翻重排时走 mode=replace，必须先经作者确认（后端已有正文还会再拦一道 409 · B33）。
+  /** v1.60：分卷编辑（卷名/边界）——真源是 book_volumes，改完重同步章归属 */
+  const openVolEditor = () => {
+    setVolDraft(volumes.map((v) => ({ no: v.no, title: v.title || "",
+                                    from: v.range_from, to: v.range_to })));
+    setVolEdit(true);
+  };
+  const redistributeVolumes = () => {
+    const total = (tree?.chapters ?? []).length;
+    if (!total) { briefFlash("先有章节再分卷"); return; }
+    const size = 8;
+    const rows: Array<{ no: number; title: string; from: number; to: number }> = [];
+    let frm = 1;
+    while (frm <= total) {
+      const to = Math.min(total, frm + size - 1);
+      rows.push({ no: rows.length + 1, title: "", from: frm, to });
+      frm = to + 1;
+    }
+    setVolDraft(rows);
+    briefFlash("已按每 " + size + " 章重分 " + rows.length + " 卷（记得保存）");
+  };
+  const saveVolumes = async () => {
+    if (volBusy || !bookId) return;
+    setVolBusy(true);
+    try {
+      const r = await setBookVolumes(bookId, volDraft.map((v) => ({
+        no: v.no, from: Number(v.from) || 0, to: Number(v.to) || 0, title: v.title,
+      })));
+      setVolEdit(false);
+      setVolumes(r.volumes || []);
+      await reload();
+      briefFlash("分卷已保存：" + (r.volumes || []).length + " 卷"
+        + (r.digests_marked_stale ? "，" + r.digests_marked_stale + " 条卷概要已标待重算" : ""));
+    } catch (e) {
+      briefFlash("保存分卷失败：" + String(e instanceof Error ? e.message : e));
+    } finally {
+      setVolBusy(false);
+    }
+  };
+
   /** v1.50：读全局脉络 + 骨架体检（0-token，零 LLM）。
    *  这份数据同时也会被注入主笔感知（chief_perceive），所以页面上看到的就是主笔看到的。 */
   const openBrief = async () => {
@@ -629,6 +691,15 @@ export function MaestroPage() {
   const briefFlash = (t: string) => { setFlash(t); setTimeout(() => setFlash(''), 1500); };
   const reload = async () => {
     try { const t = await fetchBookTree(bookId); setTree(t); } catch { /* ignore */ }
+    try { setVolumes(await fetchBookVolumes(bookId)); } catch { setVolumes([]); }
+  };
+
+  /** 章号 → 所属卷（按卷表 range；无卷表时返回 null，界面就不显示卷头） */
+  const volumeOfChapter = (chapterNo: number): BookVolumeRow | null => {
+    for (const v of volumes) {
+      if (v.range_from <= chapterNo && chapterNo <= v.range_to) return v;
+    }
+    return null;
   };
 
   /* ---------- 章节场景编辑器（场景级部分修改 · 整体保存） ---------- */
@@ -939,6 +1010,10 @@ export function MaestroPage() {
                   >
                     {(tree?.chapters ?? []).some((c) => outlineExpanded[c.id] ?? true) ? "全部折叠" : "全部展开"}
                   </button>
+                  <button className="btn-text" onClick={() => openVolEditor()} disabled={!bookId || volBusy}
+                          title="编辑分卷（卷名/章区间）；卷边界变了只把旧概要标待重算，不删内容">
+                    {volEdit ? "分卷编辑中…" : "分卷" + (volumes.length ? "（" + volumes.length + "）" : "")}
+                  </button>
                   <button
                     className="btn-text"
                     onClick={() => void openBrief()}
@@ -1106,6 +1181,35 @@ export function MaestroPage() {
                     );
                   })()}
 
+                  {/* v1.60 分卷编辑（卷名/边界；真源 book_volumes，保存后重算章归属） */}
+                  {volEdit && (
+                    <div className="card-edit-form vol-editor" style={{ margin: 16, padding: 12 }}>
+                      <div className="vol-editor-title">
+                        分卷 —— 卷是戏剧单位（不是每 8 章一刀）；保存后会重算章归属，旧卷概要只标待重算
+                      </div>
+                      {volDraft.map((v, i) => (
+                        <div className="vol-edit-row" key={i}>
+                          <span className="vol-edit-no">第 {v.no} 卷</span>
+                          <input className="char-edit-input" placeholder="卷名（如 零里雨夜）"
+                                 value={v.title}
+                                 onChange={(ev) => setVolDraft((prev) => prev.map((x, j) => (j === i ? { ...x, title: ev.target.value } : x)))} />
+                          <input className="char-edit-input vol-edit-range" type="number" value={v.from}
+                                 onChange={(ev) => setVolDraft((prev) => prev.map((x, j) => (j === i ? { ...x, from: Number(ev.target.value) || 0 } : x)))} />
+                          <span className="vol-edit-dash">–</span>
+                          <input className="char-edit-input vol-edit-range" type="number" value={v.to}
+                                 onChange={(ev) => setVolDraft((prev) => prev.map((x, j) => (j === i ? { ...x, to: Number(ev.target.value) || 0 } : x)))} />
+                        </div>
+                      ))}
+                      <div className="card-footer">
+                        <button className="btn-adopt" onClick={redistributeVolumes}>按每 8 章重分</button>
+                        <button className="btn-adopt" onClick={() => setVolEdit(false)}>取消</button>
+                        <button className="btn-adopt primary" onClick={() => void saveVolumes()} disabled={volBusy}>
+                          {volBusy ? "保存中…" : "✓ 保存分卷"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                   {!tree || (tree.chapters ?? []).length === 0 ? (
                     <div style={{ padding: 16 }}>
                       <EmptyState
@@ -1121,8 +1225,23 @@ export function MaestroPage() {
                       {(tree?.chapters ?? []).map((ch, idx) => {
                         const expanded = outlineExpanded[ch.id] ?? true;
                         const stat = chapterStat(ch.id);
+                        // v1.60：按卷分组显示（卷表为空时 volumeOfChapter 返回 null，就退回平铺）
+                        const vol = volumeOfChapter(idx + 1);
+                        const prevVol = idx > 0 ? volumeOfChapter(idx) : null;
+                        const showVolHead = !!vol && (!prevVol || prevVol.no !== vol.no);
                         return (
-                          <div className="outline-chapter" key={ch.id}>
+                          <Fragment key={ch.id}>
+                          {showVolHead && (
+                            <div className="outline-volume">
+                              <span className="vol-no">第 {vol!.no} 卷</span>
+                              <span className="vol-title">{vol!.title || "（未命名卷）"}</span>
+                              <span className="vol-range">第 {vol!.range_from}–{vol!.range_to} 章</span>
+                              {vol!.arc_goal ? (
+                                <span className="vol-arc" title={vol!.arc_goal}>{vol!.arc_goal}</span>
+                              ) : null}
+                            </div>
+                          )}
+                          <div className="outline-chapter">
                             <div
                               className={`outline-row chapter ${activeChapter === ch.id ? 'active' : ''} ${selKind === 'chapter' && selId === ch.id ? 'selected' : ''}`}
                               onClick={() => { setActiveChapter(ch.id); setSelKind('chapter'); setSelId(ch.id); setDraft(null); }}
@@ -1184,6 +1303,7 @@ export function MaestroPage() {
                               )}
                             </div>
                           </div>
+                          </Fragment>
                         );
                       })}
                     </div>
