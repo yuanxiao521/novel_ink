@@ -30,6 +30,9 @@ class Chapter(TimestampMixin, Base):
     # ---- 章级制作单（v1.50 / 0020）：主笔裁决"这一章怎么生产" ----
     mode: Mapped[str] = mapped_column(String(16), default="draft")         # draft/emerge/hybrid
     production_json: Mapped[str] = mapped_column(Text, default="{}")       # must_rehearse/beats/hook/word_split
+    # v1.58 前情概要（结构化 JSON：events/state_changes/knowledge/hook/open_questions…），
+    # 由章后后台任务生成；写手 prompt 只吃结构化字段，人看 summary_md
+    digest_json: Mapped[str] = mapped_column(Text, default="{}")
 
     book: Mapped["Book"] = relationship(back_populates="chapters")
     scenes: Mapped[list["Scene"]] = relationship(back_populates="chapter", cascade="all, delete-orphan")

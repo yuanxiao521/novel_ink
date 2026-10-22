@@ -625,6 +625,37 @@ curl -s "http://127.0.0.1:8001/api/v1/scenes/<scene_id>" | grep -o "beats_status
 **语义边界**：①只报**已推演过**的场（没演的场不算"未达成"）；②`beats_status` 跟着**场景**走——
 sim 只是快照，换一次推演不该丢结论；③导演选目标只认"还没发生的 hard beat id"，选错作废不污染 sim。
 
+### 3.24 前情压缩（v1.58 · 结构化前情概要）
+
+```bash
+B=book-14b4b312; CH=chapter-c08f2b6b
+
+# ① 触发章级前情压缩（后台；卷末会自动重算本卷概要）
+JOB=$(curl -s -X POST "http://127.0.0.1:8001/api/v1/chapters/$CH/digest/generate" | python -c "import json,sys;print(json.load(sys.stdin)['job_id'])")
+curl -s "http://127.0.0.1:8001/api/v1/jobs/$JOB"
+# 期望 stages: 前情压缩 → 概要完成（N 事件 / M 状态迁移 / 冲突 K 条）→（卷末）重算第 1 卷
+# 实测（6636 字章）：6 事件 / 6 状态迁移 / 1 条冲突；卷级 digest 2027 字节
+
+# ② 读前情（写作页面板数据源：全书 / 本卷 / 最近两章 + 冲突）
+curl -s "http://127.0.0.1:8001/api/v1/chapters/$CH/prior"
+# 期望 {book:{arc..}, volume:{arc,characters[{knows,does_not_know,holds}]}, recent:[...],
+#        conflicts:[{chapter_no,type,detail}], volume_no, volume_range, volumes, text}
+
+# ③ 微调卷边界（主笔/作者）：默认 8 章一卷；给 volumes 则以它为准
+curl -s -X PUT "http://127.0.0.1:8001/api/v1/books/$B/volumes" \
+  -H "Content-Type: application/json" -d '{"volume_size": 6}'
+curl -s -X PUT "http://127.0.0.1:8001/api/v1/books/$B/volumes" \
+  -H "Content-Type: application/json" -d '{"volumes": [{"from":1,"to":3},{"from":4,"to":8}]}'
+# 边界必须递增不重叠，否则 400
+
+# ④ 重算卷级 / 全书级
+curl -s -X POST "http://127.0.0.1:8001/api/v1/books/$B/digest/generate" -d '{"scope":"volume","volume_no":0}'
+curl -s -X POST "http://127.0.0.1:8001/api/v1/books/$B/digest/generate" -d '{"scope":"book"}'
+```
+
+**注入预算**：全书 320 / 本卷 420 / 最近两章 400 字，总预算 1100 字；超了**按层截断**（越近越不能砍）。
+**冲突只报警不改写**：`conflicts` 进 `prior` 接口 → 写作页红条提示「需你裁定」；系统不自动改历史。
+
 ## 4. 存量验收（S1–S4 / A2 / A3，仍在跑）
 
 ```powershell

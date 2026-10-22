@@ -18,7 +18,7 @@ from app.config import settings
 from app.db.base import Base
 from app.errors import RepoError
 from app.db.engine import get_session_factory
-from app.db.models import AgentMessage, AgentTask, Belief, Book, BookMemory, ChatHistory, Chapter, Character, Foreshadow, InspirationCard, ProseAnnotation, ProseNote, Scene, Simulation, WorldState
+from app.db.models import AgentMessage, AgentTask, Belief, Book, BookDigest, BookMemory, ChatHistory, Chapter, Character, Foreshadow, InspirationCard, ProseAnnotation, ProseNote, Scene, Simulation, WorldState
 from app.schemas.models import CharacterCard, SimulationState
 
 logger = logging.getLogger(__name__)
@@ -271,6 +271,9 @@ class Repo:
                 "cover_init": r.cover_init, "chapter_count": r.chapter_count,
                 "synopsis": r.synopsis, "worldview_json": r.worldview_json,
                 "world_rules_json": r.world_rules_json,
+                # v1.58：卷配置（默认 8 章一卷；volumes_json 非空时优先 = 主笔/作者微调）
+                "volume_size": int(getattr(r, "volume_size", 8) or 8),
+                "volumes_json": getattr(r, "volumes_json", "") or "[]",
             }
 
         if not self.use_db:
@@ -300,6 +303,54 @@ class Repo:
             pass
 
     # ------------------------------------------------------------------
+    # book_digests（前情概要 · 卷级/全书级，v1.58）
+    # ------------------------------------------------------------------
+    async def save_book_digest(self, data: dict) -> None:
+        await self._upsert(BookDigest, data)
+
+    async def get_book_digest(self, book_id: str, level: str,
+                              range_from: int = 0) -> Optional[dict]:
+        async def _q(session: AsyncSession):
+            stmt = select(BookDigest).where(
+                BookDigest.book_id == book_id, BookDigest.level == level)
+            if range_from:
+                stmt = stmt.where(BookDigest.range_from == int(range_from))
+            stmt = stmt.order_by(BookDigest.range_from.desc()).limit(1)
+            r = (await session.execute(stmt)).scalars().first()
+            return self._digest_dict(r) if r else None
+
+        if not self.use_db:
+            for v in self._mem.values():
+                if (isinstance(v, dict) and v.get("book_id") == book_id
+                        and v.get("level") == level
+                        and (not range_from or v.get("range_from") == range_from)):
+                    return v
+            return None
+        return await self._query_or_mem(_q, None)
+
+    async def list_book_digests(self, book_id: str, level: str = "") -> list[dict]:
+        async def _q(session: AsyncSession):
+            stmt = select(BookDigest).where(BookDigest.book_id == book_id)
+            if level:
+                stmt = stmt.where(BookDigest.level == level)
+            stmt = stmt.order_by(BookDigest.range_from)
+            rows = (await session.execute(stmt)).scalars().all()
+            return [self._digest_dict(r) for r in rows]
+
+        if not self.use_db:
+            return [v for v in self._mem.values()
+                    if isinstance(v, dict) and v.get("book_id") == book_id
+                    and "range_from" in v and (not level or v.get("level") == level)]
+        return await self._query_or_mem(_q, [])
+
+    @staticmethod
+    def _digest_dict(r: BookDigest) -> dict:
+        return {"id": r.id, "book_id": r.book_id, "level": r.level,
+                "range_from": r.range_from, "range_to": r.range_to,
+                "digest_json": r.digest_json or "{}", "summary_md": r.summary_md or "",
+                "updated_at": r.updated_at.isoformat() if r.updated_at else ""}
+
+    # ------------------------------------------------------------------
     # chapters（第二层）
     # ------------------------------------------------------------------
     async def list_chapters_by_book(self, book_id: str) -> list[dict]:
@@ -322,6 +373,7 @@ class Repo:
                 "prose_md": r.prose_md or "",
                 "mode": getattr(r, "mode", "") or "draft",
                 "production_json": getattr(r, "production_json", "") or "{}",
+                "digest_json": getattr(r, "digest_json", "") or "{}",
                 "updated_at": r.updated_at.isoformat() if r.updated_at else "",
             } for r in rows]
 
@@ -339,6 +391,7 @@ class Repo:
                 "prose_md": r.prose_md or "",
                 "mode": getattr(r, "mode", "") or "draft",
                 "production_json": getattr(r, "production_json", "") or "{}",
+                "digest_json": getattr(r, "digest_json", "") or "{}",
                 "updated_at": r.updated_at.isoformat() if r.updated_at else "",
             }
 

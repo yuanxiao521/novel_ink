@@ -87,7 +87,10 @@ async def enqueue(job_kind: str, payload: dict) -> dict:
               "bookkeeping": "run_bookkeeping",
               "chapter_bookkeeping": "run_chapter_bookkeeping",
               "chapter_inspect": "run_chapter_inspect",
-              "book_reindex": "run_book_reindex"}
+              "book_reindex": "run_book_reindex",
+              "chapter_digest": "run_chapter_digest",
+              "volume_digest": "run_volume_digest",
+              "book_digest": "run_book_digest"}
     arq_fn = fn_map.get(job_kind)
     if not arq_fn:
         raise ValueError(f"未知任务类型: {job_kind}（可选 {sorted(fn_map)}）")
@@ -424,10 +427,90 @@ async def _do_book_reindex(jid: str, book_id: str) -> dict:
     return out
 
 
+async def _book_of(svc, chapter_id: str) -> str:
+    ch = await svc.repo.get_chapter(chapter_id) or {}
+    return str(ch.get("book_id") or "")
+
+
+async def run_chapter_digest(ctx: dict, *, job_id: str = "", chapter_id: str) -> dict:
+    """后台：**章级前情概要**（v1.58）——正文压成结构化 digest + 冲突检测。
+
+    若该章正好是卷末，顺手重算本卷概要：新增一章只影响"本章 + 所在卷"，不需要全量重算。
+    """
+    jid = job_id or "job-unknown"
+    return await _guard(jid, _do_chapter_digest(jid, chapter_id))
+
+
+async def _do_chapter_digest(jid: str, chapter_id: str) -> dict:
+    from app.db.repo import Repo
+    from app.services.service import SimulationService
+
+    svc = SimulationService(Repo())
+    await _stage(jid, "前情压缩：读正文 → 结构化概要…")
+    out = await svc.generate_chapter_digest(chapter_id)
+    if out.get("skipped"):
+        await _stage(jid, "跳过：" + str(out["skipped"]))
+    elif out.get("error"):
+        await _stage(jid, "失败：" + str(out["error"]))
+    else:
+        d = out.get("digest") or {}
+        await _stage(jid, "概要完成：%d 事件 / %d 状态迁移 / 冲突 %d 条" % (
+            len(d.get("events") or []), len(d.get("state_changes") or []),
+            len(out.get("conflicts") or [])))
+        vol = out.get("volume") or {}
+        no = int(out.get("chapter_no") or 0)
+        if vol and no == int(vol.get("to") or 0):
+            book_id = await _book_of(svc, chapter_id)
+            await _stage(jid, "卷末：重算第 %d 卷概要…" % int(vol.get("no") or 0))
+            out["volume_digest"] = await svc.generate_volume_digest(
+                book_id, int(vol.get("no") or 0))
+    await _set(jid, status="done", result=out)
+    return out
+
+
+async def run_volume_digest(ctx: dict, *, job_id: str = "", book_id: str,
+                            volume_no: int = 0) -> dict:
+    """后台：**卷级前情概要**（volume_no=0 = 所有卷都重算）。"""
+    jid = job_id or "job-unknown"
+    return await _guard(jid, _do_volume_digest(jid, book_id, volume_no))
+
+
+async def _do_volume_digest(jid: str, book_id: str, volume_no: int) -> dict:
+    from app.db.repo import Repo
+    from app.services.service import SimulationService
+
+    svc = SimulationService(Repo())
+    await _stage(jid, "卷级压缩：合并本卷各章概要…")
+    out = await svc.generate_volume_digest(book_id, int(volume_no or 0))
+    done = out.get("volumes") or []
+    await _stage(jid, "卷级完成：%d 卷" % len([x for x in done if not x.get("skipped")]))
+    await _set(jid, status="done", result=out)
+    return out
+
+
+async def run_book_digest(ctx: dict, *, job_id: str = "", book_id: str) -> dict:
+    """后台：**全书级前情概要**（各卷概要 → 一条全书概要）。"""
+    jid = job_id or "job-unknown"
+    return await _guard(jid, _do_book_digest(jid, book_id))
+
+
+async def _do_book_digest(jid: str, book_id: str) -> dict:
+    from app.db.repo import Repo
+    from app.services.service import SimulationService
+
+    svc = SimulationService(Repo())
+    await _stage(jid, "全书压缩：合并各卷概要…")
+    out = await svc.generate_book_digest(book_id)
+    await _stage(jid, "全书概要完成" if not out.get("skipped") else "跳过：" + str(out.get("skipped")))
+    await _set(jid, status="done", result=out)
+    return out
+
+
 class WorkerSettings:
     """arq worker 配置：arq app.services.tasks_worker.WorkerSettings"""
     functions = [run_plan_batch, run_review_meeting, run_quality_loop, run_bookkeeping,
-                 run_chapter_bookkeeping, run_chapter_inspect, run_book_reindex]
+                 run_chapter_bookkeeping, run_chapter_inspect, run_book_reindex,
+                 run_chapter_digest, run_volume_digest, run_book_digest]
     redis_settings = None   # 在类体下方赋值（arq RedisSettings）
     max_jobs = 4
     job_timeout = 600      # LLM 长任务放宽

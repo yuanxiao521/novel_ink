@@ -306,6 +306,71 @@ export async function fetchChapterProductionPlan(
     `${API_BASE}/api/v1/chapters/${chapterId}/production-plan`);
 }
 
+/* ---------- v1.58 前情压缩（分层概要） ---------- */
+
+export interface ChapterDigest {
+  chapter_no: number;
+  one_line: string;
+  events: Array<{ who: string; did: string; where?: string; consequence?: string }>;
+  state_changes: Array<{ target: string; from: string; to: string }>;
+  knowledge: Array<{ who: string; learned: string; how?: string }>;
+  facts_established: string[];
+  foreshadow_touched: Array<{ text: string; action: string }>;
+  hook: string;
+  open_questions: string[];
+  new_entities: Array<{ name: string; kind: string; note?: string }>;
+  summary_md: string;
+  conflicts: Array<{ type?: string; detail?: string }>;
+}
+
+export interface VolumeDigest {
+  volume_no?: number;
+  range?: number[];
+  arc?: string;
+  characters?: Array<{
+    name: string; where?: string; condition?: string;
+    knows?: string[]; does_not_know?: string[]; holds?: string[]; stance?: string;
+  }>;
+  rules?: string[];
+  long_foreshadows?: Array<{ text: string; status: string }>;
+  turning_points?: string[];
+  ending_state?: string;
+  summary_md?: string;
+}
+
+export interface ChapterPrior {
+  chapter_id: string;
+  chapter_no: number;
+  book: VolumeDigest;
+  volume: VolumeDigest;
+  recent: ChapterDigest[];
+  conflicts: Array<{ chapter_no?: number; type?: string; detail?: string }>;
+  volume_no: number;
+  volume_range: number[];
+  volumes: Array<{ no: number; from: number; to: number }>;
+  has_any: boolean;
+  text: string;
+}
+
+/** 本章的前情素材（全书 / 本卷 / 最近两章 + 冲突）—— 写作页「前情概要」面板。 */
+export async function fetchChapterPrior(chapterId: string): Promise<ChapterPrior> {
+  return getJson<ChapterPrior>(`${API_BASE}/api/v1/chapters/${chapterId}/prior`);
+}
+
+/** 重算本章前情概要（后台队列）。 */
+export async function regenerateChapterDigest(chapterId: string): Promise<{ job_id: string; status: string }> {
+  return send<{ job_id: string; status: string }>(
+    "POST", `/api/v1/chapters/${chapterId}/digest/generate`);
+}
+
+/** 重算卷级（scope=volume）或全书级（scope=book）前情概要（后台队列）。 */
+export async function regenerateBookDigest(
+  bookId: string, scope: "volume" | "book" = "volume", volumeNo = 0,
+): Promise<{ job_id: string; status: string }> {
+  return send<{ job_id: string; status: string }>(
+    "POST", `/api/v1/books/${bookId}/digest/generate`, { scope, volume_no: volumeNo });
+}
+
 /** 全局脉络 + 骨架体检（0-token，零 LLM）。 */
 export async function fetchBookBrief(bookId: string): Promise<BookBrief> {
   return getJson<BookBrief>(`${API_BASE}/api/v1/books/${bookId}/brief`);

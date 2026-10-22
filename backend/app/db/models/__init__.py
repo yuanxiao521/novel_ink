@@ -3,6 +3,7 @@ from app.db.models.agent_task import AgentMessage, AgentTask
 from app.db.models.annotation import ProseAnnotation
 from app.db.models.belief import Belief
 from app.db.models.book import Book
+from app.db.models.book_digest import BookDigest
 from app.db.models.chat_history import ChatHistory
 from app.db.models.chapter import Chapter
 from app.db.models.character import Character
@@ -16,7 +17,7 @@ from app.db.models.simulation import Simulation
 from app.db.models.world_state import WorldState
 
 __all__ = [
-    "Belief", "Book", "BookMemory", "ChatHistory", "Chapter", "Foreshadow", "InspirationCard",
+    "Belief", "Book", "BookDigest", "BookMemory", "ChatHistory", "Chapter", "Foreshadow", "InspirationCard",
     "MemoryChunk",
     "AgentMessage", "AgentTask",
     "ProseNote", "ProseAnnotation", "Scene", "Character", "Simulation", "WorldState",

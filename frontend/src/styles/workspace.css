@@ -1017,5 +1017,31 @@
   border-left: 3px solid var(--accent-gold); background: var(--bg-panel); border-radius: var(--radius-md); }
 .wp-beat-row b { font-size: 11px; color: var(--text-secondary); font-weight: 600; }
 .wp-beat { font-size: 11px; line-height: 1.5; color: var(--accent-gold); }
+/* v1.58 前情概要面板（冲突/本卷弧线/人物状态/最近章） */
+.wp-prior-conflict { margin: 4px 0; padding: 5px 8px; font-size: 11px; line-height: 1.6;
+  color: var(--accent-warn); border: 1px solid var(--accent-warn); border-radius: var(--radius-md); }
+.wp-prior-sec { display: flex; flex-direction: column; gap: 1px; padding: 4px 0; font-size: 11px;
+  color: var(--text-secondary); border-bottom: 1px dashed var(--border-light); }
+.wp-prior-sec b { color: var(--accent-cyan); font-weight: 600; }
+.wp-prior-sec em { color: var(--accent-gold); font-style: normal; }
+.wp-prior-char { display: flex; flex-wrap: wrap; gap: 3px; padding: 3px 0; font-size: 11px;
+  color: var(--text-secondary); }
+.wp-prior-char b { color: var(--text-primary); font-weight: 600; }
+.wp-prior-char em { color: var(--accent-warn); font-style: normal; }
+/* v1.58：前情面板独立 class（避免与记忆面板 .wp-mem-* 撞车） */
+.wp-prior-toggle { margin-left: 8px; padding: 1px 7px; font-family: inherit; font-size: 10.5px;
+  cursor: pointer; color: var(--text-secondary); background: transparent;
+  border: 1px solid var(--border-light); border-radius: var(--radius-md); }
+.wp-prior-toggle:hover { border-color: var(--accent-primary); color: var(--accent-primary); }
+.wp-prior-line { display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  margin: 6px 0 2px; font-size: 11.5px; color: var(--text-secondary); }
+.wp-prior-mode { padding: 1px 7px; font-size: 10.5px; border-radius: var(--radius-pill);
+  border: 1px solid var(--accent-cyan); color: var(--accent-cyan); }
+.wp-prior-body { margin-top: 6px; max-height: 200px; overflow: auto; padding: 8px 9px;
+  border: 1px solid var(--border-light); border-radius: var(--radius-md); background: var(--bg-panel); }
+.wp-prior-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.wp-prior-actions .ws-btn { padding: 3px 9px; font-size: 11px; white-space: nowrap; }
+
+
 
 

@@ -34,6 +34,34 @@ from app.services.llm.client import client as llm_client  # 模块级引用：�
 logger = logging.getLogger(__name__)
 
 
+def _parse_json_list(raw: object) -> list:
+    """把 JSON 数组字符串解析成 list（坏数据一律当空）。"""
+    if isinstance(raw, list):
+        return list(raw)
+    try:
+        data = json.loads(str(raw or "[]"))
+    except Exception:  # noqa: BLE001
+        return []
+    return data if isinstance(data, list) else []
+
+
+def _validate_chapter_digest(raw: object) -> str | None:
+    """0-token 校验：前情概要至少要有 one_line 或 events（其余字段可空但会被规范化）。"""
+    if not isinstance(raw, dict):
+        return "顶层必须是 JSON 对象"
+    if not str(raw.get("one_line") or "").strip() and not raw.get("events"):
+        return "one_line 与 events 至少要有一个"
+    return None
+
+
+def _validate_volume_digest(raw: object) -> str | None:
+    if not isinstance(raw, dict):
+        return "顶层必须是 JSON 对象"
+    if not str(raw.get("arc") or "").strip() and not raw.get("characters"):
+        return "arc 与 characters 至少要有一个"
+    return None
+
+
 def _parse_json_obj(raw: object) -> dict:
     """把 JSON 对象字符串解析成 dict（坏数据一律当空，不抛）。"""
     if isinstance(raw, dict):
@@ -1576,6 +1604,15 @@ class SimulationService:
         except Exception as e:  # noqa: BLE001  检索失败不能挡住写作
             logger.warning("[recall] 装配失败 chapter=%s：%s", chapter_id, e)
 
+        # v1.58 · 前情压缩：全书 / 本卷 / 最近两章（有结构、有预算，替代"只有上一章结尾"）。
+        prior_text = ""
+        prior_bundle: dict = {}
+        try:
+            prior_bundle = await self.chapter_prior(chapter_id)
+            prior_text = str(prior_bundle.get("text") or "")
+        except Exception as e:  # noqa: BLE001  前情读不到不能挡住写作
+            logger.warning("[digest] 前情装配失败 chapter=%s：%s", chapter_id, e)
+
         # v1.53 · 角色分层：次要/背景角色不进回合，但写手要知道"他们在场"（一笔带过，不抢戏）。
         background_text = ""
         try:
@@ -1601,6 +1638,8 @@ class SimulationService:
                 "rehearsed_text": rehearsal_text,
                 # v1.53：在场背景角色（不进回合，写手可一笔带过）
                 "background_text": background_text,
+                # v1.58：分层前情概要（prompt 用 prior_text，前端用 prior）
+                "prior_text": prior_text, "prior": prior_bundle,
                 "memory": memory, "constraints": constraints, "world_states": world_states,
                 "existing": existing, "scenes_text": scenes_text, "word_target": target,
                 # v1.47：把场清单原样带出，供分段编排按"场功能"推进
@@ -1646,8 +1685,20 @@ class SimulationService:
             except Exception as e:  # noqa: BLE001  索引旧了不影响正文，但要说出来
                 logger.warning("[rag] 记忆索引入队失败 %s：%s", chapter_id, e)
                 reindex = "failed"
+        # v1.58：正文变了 → 前情概要要重算（后台；卷末会顺手重算卷级概要）
+        digest = "skip"
+        if body and not unchanged:
+            try:
+                from app.services.tasks_worker import enqueue as job_enqueue
+
+                await job_enqueue("chapter_digest", {"chapter_id": chapter_id})
+                digest = "queued"
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[digest] 前情压缩入队失败 %s：%s", chapter_id, e)
+                digest = "failed"
         return {"chapter_id": chapter_id, "saved": True, "words": prose_chars(body),
-                "unchanged": unchanged, "bookkeeping": bookkeeping, "reindex": reindex}
+                "unchanged": unchanged, "bookkeeping": bookkeeping, "reindex": reindex,
+                "digest": digest}
 
     async def chapter_bookkeeping(self, chapter_id: str, text: str) -> dict:
         """**章级记账 + 复检**（v1.46 · P0 闭环）：章正文对照账本 → 写伏笔/信念/世界状态。
@@ -1710,6 +1761,7 @@ class SimulationService:
                 chapter=ctx["chapter"], characters=ctx["characters"],
                 world_states=ctx["world_states"], constraints=ctx["constraints"],
                 memory=ctx["memory"], scenes=ctx["scenes_text"], written=written,
+                prior=ctx.get("prior_text") or "",
                 recall=ctx.get("recall_text") or "",
                 rehearsed=ctx.get("rehearsed_text") or "",
                 background=ctx.get("background_text") or "",
@@ -1844,6 +1896,224 @@ class SimulationService:
                 logger.warning("[rag] 补设定后记忆索引入队失败 %s：%s", chapter_id, e)
         return {"filled": filled, "chapter_summary": need_chapter,
                 "scenes": len(scenes), "scenes_generated": len(gen_list)}
+
+    # ---------------------------------------------------------------- 前情压缩（v1.58）
+    async def _book_volume_bounds(self, book_id: str,
+                                  chapters: list[dict] | None = None) -> list[dict]:
+        """卷边界：books.volumes_json（主笔/作者微调）优先，否则按 volume_size 均分。"""
+        from app.services.engine.digest import volume_bounds
+
+        book = await self.repo.get_book(book_id) or {}
+        rows = chapters if chapters is not None else await self.repo.list_chapters_by_book(book_id)
+        custom = _parse_json_list(book.get("volumes_json"))
+        return volume_bounds(len(rows or []), int(book.get("volume_size") or 8), custom)
+
+    async def generate_chapter_digest(self, chapter_id: str) -> dict:
+        """章级前情概要（后台任务）：正文 → 结构化 digest + 冲突检测。
+
+        为什么只喂正文**尾部**：压缩看的是"这一章改变了什么"，尾部足以覆盖结果；
+        带全文既贵又会诱发模型复述过程。
+        """
+        from app.services.engine.digest import (
+            CHAPTER_DIGEST_SCHEMA, chapter_digest_prompt, detect_conflicts,
+            normalize_chapter_digest, render_volume_digest, volume_of,
+        )
+        from app.services.engine.schema_retry import validate_and_retry
+
+        chapter = await self.repo.get_chapter(chapter_id)
+        if chapter is None:
+            raise ChapterNotFoundError(f"未找到章节: {chapter_id}")
+        book_id = str(chapter.get("book_id") or "")
+        no = int(chapter.get("order_no") or 0)
+        scenes = await self.repo.list_scenes_by_chapter(chapter_id)
+        body = chapter_body(chapter, scenes)
+        if not str(body or "").strip():
+            return {"chapter_id": chapter_id, "skipped": "章正文为空（先写正文再压缩前情）"}
+        if not llm_client.available:
+            return {"chapter_id": chapter_id, "skipped": "LLM 未接入（未生成前情概要）"}
+
+        bounds = await self._book_volume_bounds(book_id)
+        vol = volume_of(no, bounds)
+        vol_digest: dict = {}
+        if vol:
+            row = await self.repo.get_book_digest(book_id, "volume", int(vol["from"]))
+            if row:
+                vol_digest = _parse_json_obj(row.get("digest_json"))
+
+        raw = await validate_and_retry(
+            llm_client, chapter_digest_prompt(chapter=chapter, body=body,
+                                              prior=render_volume_digest(vol_digest)),
+            CHAPTER_DIGEST_SCHEMA, _validate_chapter_digest)
+        if not isinstance(raw, dict):
+            return {"chapter_id": chapter_id, "error": "模型未返回可用前情概要（已重试）"}
+        digest = normalize_chapter_digest(raw, chapter_no=no)
+        if not (digest.get("one_line") or digest.get("events")):
+            return {"chapter_id": chapter_id, "error": "模型输出缺关键字段（one_line/events 皆空）"}
+        conflicts = list(digest.get("conflicts") or [])
+        conflicts += detect_conflicts(digest, vol_digest)
+        await self.repo.save_chapter({**chapter, "digest_json": json.dumps(digest, ensure_ascii=False)})
+        return {"chapter_id": chapter_id, "chapter_no": no, "digest": digest,
+                "conflicts": conflicts, "volume": vol}
+
+    async def generate_volume_digest(self, book_id: str, volume_no: int = 0) -> dict:
+        """卷级前情概要：本卷各章 digest → 一条卷级 digest（不读正文）。"""
+        from app.services.engine.digest import (
+            VOLUME_DIGEST_SCHEMA, normalize_volume_digest, render_volume_digest,
+            volume_digest_prompt, volume_of,
+        )
+        from app.services.engine.schema_retry import validate_and_retry
+
+        chapters = await self.repo.list_chapters_by_book(book_id)
+        bounds = await self._book_volume_bounds(book_id, chapters)
+        if not bounds:
+            return {"book_id": book_id, "skipped": "这本书还没有章节"}
+        targets = ([b for b in bounds if int(b["no"]) == int(volume_no)] if volume_no
+                   else bounds)
+        if not targets:
+            return {"book_id": book_id, "skipped": f"没有第 {volume_no} 卷"}
+        if not llm_client.available:
+            return {"book_id": book_id, "skipped": "LLM 未接入"}
+
+        done: list[dict] = []
+        for vol in targets:
+            in_range = [c for c in chapters
+                        if vol["from"] <= int(c.get("order_no") or 0) <= vol["to"]]
+            digests = []
+            for c in in_range:
+                d = _parse_json_obj(c.get("digest_json"))
+                if d.get("one_line") or d.get("events"):
+                    d.setdefault("chapter_no", int(c.get("order_no") or 0))
+                    digests.append(d)
+            if not digests:
+                done.append({"volume_no": vol["no"], "skipped": "本卷还没有章级概要"})
+                continue
+            prev = await self.repo.get_book_digest(
+                book_id, "volume", int(bounds[bounds.index(vol) - 1]["from"])) \
+                if bounds.index(vol) > 0 else None
+            raw = await validate_and_retry(
+                llm_client,
+                volume_digest_prompt(volume_no=vol["no"], range_from=vol["from"],
+                                     range_to=vol["to"], chapters=digests,
+                                     prior=render_volume_digest(_parse_json_obj((prev or {}).get("digest_json")))),
+                VOLUME_DIGEST_SCHEMA, _validate_volume_digest)
+            if not isinstance(raw, dict):
+                done.append({"volume_no": vol["no"], "error": "模型未返回可用卷级概要"})
+                continue
+            vd = normalize_volume_digest(raw, volume_no=vol["no"],
+                                         range_from=vol["from"], range_to=vol["to"])
+            await self.repo.save_book_digest({
+                "id": f"vol-{book_id}-{vol['from']}-{vol['to']}", "book_id": book_id,
+                "level": "volume", "range_from": vol["from"], "range_to": vol["to"],
+                "digest_json": json.dumps(vd, ensure_ascii=False),
+                "summary_md": str(vd.get("summary_md") or ""),
+            })
+            done.append({"volume_no": vol["no"], "range": [vol["from"], vol["to"]]})
+        return {"book_id": book_id, "volumes": done}
+
+    async def generate_book_digest(self, book_id: str) -> dict:
+        """全书级前情概要：各卷 digest → 一条全书 digest（卷数少时等价于合并）。"""
+        from app.services.engine.digest import (
+            VOLUME_DIGEST_SCHEMA, normalize_volume_digest, volume_digest_prompt,
+        )
+        from app.services.engine.schema_retry import validate_and_retry
+
+        rows = await self.repo.list_book_digests(book_id, "volume")
+        vols = [_parse_json_obj(r.get("digest_json")) for r in rows]
+        vols = [v for v in vols if v.get("arc") or v.get("characters")]
+        if not vols:
+            return {"book_id": book_id, "skipped": "还没有卷级概要（先生成卷级）"}
+        if not llm_client.available:
+            return {"book_id": book_id, "skipped": "LLM 未接入"}
+        chapters = await self.repo.list_chapters_by_book(book_id)
+        raw = await validate_and_retry(
+            llm_client,
+            volume_digest_prompt(volume_no=0, range_from=1,
+                                 range_to=len(chapters), chapters=vols),
+            VOLUME_DIGEST_SCHEMA, _validate_volume_digest)
+        if not isinstance(raw, dict):
+            return {"book_id": book_id, "error": "模型未返回可用全书概要"}
+        bd = normalize_volume_digest(raw, volume_no=0, range_from=1, range_to=len(chapters))
+        await self.repo.save_book_digest({
+            "id": f"book-{book_id}", "book_id": book_id, "level": "book",
+            "range_from": 1, "range_to": len(chapters),
+            "digest_json": json.dumps(bd, ensure_ascii=False),
+            "summary_md": str(bd.get("summary_md") or ""),
+        })
+        return {"book_id": book_id, "volumes": len(vols), "digest": bd}
+
+    async def set_volume_config(self, book_id: str, *, volume_size: int | None = None,
+                                volumes: list[dict] | None = None) -> dict:
+        """微调卷边界（v1.58）：主笔排骨架时可改，作者也能改。
+
+        volume_size：默认每几章一卷；volumes：显式边界 [{from,to}]（给了就以它为准）。
+        """
+        from app.services.engine.digest import volume_bounds
+
+        book = await self.repo.get_book(book_id)
+        if book is None:
+            raise BookNotFoundError(f"未找到书籍: {book_id}")
+        data: dict = {**book, "id": book_id}
+        if volume_size is not None:
+            size = int(volume_size)
+            if size < 1 or size > 50:
+                raise InvalidActionError("volume_size 需在 1~50 之间")
+            data["volume_size"] = size
+        if volumes is not None:
+            rows = [{"no": i + 1, "from": int(v.get("from") or 0), "to": int(v.get("to") or 0)}
+                    for i, v in enumerate(volumes) if isinstance(v, dict)]
+            prev_to = 0
+            for r in rows:
+                if r["from"] <= prev_to or r["to"] < r["from"]:
+                    raise InvalidActionError("卷边界必须递增且不重叠（from > 上一卷 to，to ≥ from）")
+                prev_to = r["to"]
+            data["volumes_json"] = json.dumps(rows, ensure_ascii=False)
+        await self.repo.save_book(data)
+        chapters = await self.repo.list_chapters_by_book(book_id)
+        return {"book_id": book_id, "volume_size": int(data.get("volume_size") or 8),
+                "bounds": volume_bounds(len(chapters),
+                                        int(data.get("volume_size") or 8),
+                                        _parse_json_list(data.get("volumes_json")))}
+
+    async def chapter_prior(self, chapter_id: str) -> dict:
+        """本章的前情素材（全书 / 本卷 / 最近两章 + 冲突），给注入与 UI 共用。"""
+        from app.services.engine.digest import render_prior_bundle, volume_of
+
+        chapter = await self.repo.get_chapter(chapter_id)
+        if chapter is None:
+            raise ChapterNotFoundError(f"未找到章节: {chapter_id}")
+        book_id = str(chapter.get("book_id") or "")
+        no = int(chapter.get("order_no") or 0)
+        chapters = await self.repo.list_chapters_by_book(book_id)
+        bounds = await self._book_volume_bounds(book_id, chapters)
+        vol = volume_of(no, bounds)
+        book_row = await self.repo.get_book_digest(book_id, "book")
+        vol_row = (await self.repo.get_book_digest(book_id, "volume", int(vol["from"]))
+                   if vol else None)
+        previous = [c for c in chapters if 0 < int(c.get("order_no") or 0) < no][-2:]
+        recent = [_parse_json_obj(c.get("digest_json")) for c in reversed(previous)]
+        # 冲突两类：①**本章自己的概要**发现的（作者该修，立即报警）；
+        # ②最近章概要里记下的（可能还没修，延续提醒）。
+        conflicts: list[dict] = []
+        own = _parse_json_obj(chapter.get("digest_json"))
+        for c in (own.get("conflicts") or []):
+            conflicts.append({"chapter_no": no, "own": True, **c})
+        for d in recent:
+            for c in (d.get("conflicts") or []):
+                conflicts.append({"chapter_no": int(d.get("chapter_no") or 0), **c})
+        bundle = {
+            "book": _parse_json_obj((book_row or {}).get("digest_json")),
+            "volume": _parse_json_obj((vol_row or {}).get("digest_json")),
+            "recent": recent,
+            "conflicts": conflicts[:6],
+            "volume_no": int(vol["no"]) if vol else 0,
+            "volume_range": [int(vol["from"]), int(vol["to"])] if vol else [],
+            "volumes": bounds,
+            "has_any": bool(book_row or vol_row or any(recent)),
+        }
+        bundle["text"] = render_prior_bundle(bundle)
+        bundle["chapter_id"] = chapter_id
+        bundle["chapter_no"] = no
+        return bundle
 
     @staticmethod
     def _chapter_beats_summary(scenes: list[dict]) -> dict:

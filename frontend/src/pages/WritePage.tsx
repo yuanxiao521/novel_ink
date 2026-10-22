@@ -9,9 +9,11 @@ import {
   fetchChapterRecall, generateChapterSettings, listScenes, pollJob, reindexBookMemory,
   saveChapterProse,
 } from '../api/novel';
-import { fetchChapterProductionPlan } from '../api/novel';
+import {
+  fetchChapterPrior, fetchChapterProductionPlan, regenerateChapterDigest,
+} from '../api/novel';
 import type {
-  ChapterProductionPlan, ChapterRecall, MemoryStats, RecallItem,
+  ChapterPrior, ChapterProductionPlan, ChapterRecall, MemoryStats, RecallItem,
 } from '../api/novel';
 
 /* ==========================================================================
@@ -68,6 +70,10 @@ export function WritePage() {
   const [mode, setMode] = useState("draft");
   /** v1.52：生产路径裁决（还差几场推演 / 下一步去哪） */
   const [prod, setProd] = useState<ChapterProductionPlan | null>(null);
+  /** v1.58：分层前情概要（全书 / 本卷 / 最近两章 + 冲突） */
+  const [prior, setPrior] = useState<ChapterPrior | null>(null);
+  const [priorOpen, setPriorOpen] = useState(false);
+  const [priorBusy, setPriorBusy] = useState(false);
   const [savedText, setSavedText] = useState('');
   const [scenes, setScenes] = useState<SceneRow[]>([]);
   const [editing, setEditing] = useState(false);
@@ -115,6 +121,7 @@ export function WritePage() {
         setProd(plan);
         if (plan.mode) setMode(plan.mode);
       } catch { setProd(null); }
+      try { setPrior(await fetchChapterPrior(chapterId)); } catch { setPrior(null); }
       setText(d.prose_md || d.prose || '');
       setSavedText(d.prose_md || d.prose || '');
     } catch { /* 保持现状 */ }
@@ -186,6 +193,21 @@ export function WritePage() {
     } catch (e) {
       flash(`巡检失败：${String(e instanceof Error ? e.message : e)}`);
     } finally { setInspectBusy(false); }
+  };
+
+  /** v1.58：重算本章前情概要（后台队列；生成完点「刷新」看结果） */
+  const reloadPrior = async () => {
+    try { setPrior(await fetchChapterPrior(chapterId)); } catch { /* 保留现状 */ }
+  };
+  const rebuildPrior = async () => {
+    if (priorBusy || !chapterId) return;
+    setPriorBusy(true);
+    try {
+      await regenerateChapterDigest(chapterId);
+      flash("前情概要已排队（后台生成约十几秒，完成后点「刷新」）");
+    } catch (e) {
+      flash("重算失败：" + (e instanceof Error ? e.message : String(e)));
+    } finally { setPriorBusy(false); }
   };
 
   /** v1.49：重新检索（改完摘要/设定后，想立刻看写手会读到什么） */
@@ -348,6 +370,73 @@ export function WritePage() {
               ))}
 
               {/* v1.49 · 记忆：写手这次会读到什么（前情/角色/世界观/伏笔） */}
+              {/* v1.58：前情概要（分层压缩：全书 / 本卷 / 最近两章 + 冲突） */}
+              <div className="s2-info-title" style={{ marginTop: 12 }}>
+                前情概要
+                <button className="wp-prior-toggle" onClick={() => setPriorOpen((v) => !v)}>
+                  {priorOpen ? "收起" : "展开"}
+                </button>
+              </div>
+              {prior === null && <div className="s2-hint">前情概要读不到（不影响写作）</div>}
+              {prior !== null && !prior.has_any && (
+                <div className="s2-hint">还没有前情概要：保存正文后会自动生成（也可点下面「重算前情」）。</div>
+              )}
+              {prior !== null && prior.has_any && (
+                <>
+                  <div className="wp-prior-line">
+                    <span className="wp-prior-mode">
+                      {prior.volume_no ? `第 ${prior.volume_no} 卷` : "未分卷"}
+                    </span>
+                    <span>
+                      {prior.volume_range.length === 2
+                        ? `第 ${prior.volume_range[0]}–${prior.volume_range[1]} 章` : ""}
+                      {prior.recent.length ? ` · 最近 ${prior.recent.length} 章` : ""}
+                    </span>
+                  </div>
+                  {prior.conflicts.length > 0 && (
+                    <div className="wp-prior-conflict">
+                      ⚠ 与既有前情冲突 {prior.conflicts.length} 条（需你裁定，系统不自动改）
+                      {prior.conflicts.slice(0, 2).map((c, i) => (
+                        <div key={i}>· {c.detail}</div>
+                      ))}
+                    </div>
+                  )}
+                  {priorOpen && (
+                    <div className="wp-prior-body">
+                      {prior.volume.arc && (
+                        <div className="wp-prior-sec"><b>本卷弧线</b><span>{prior.volume.arc}</span></div>
+                      )}
+                      {(prior.volume.characters ?? []).slice(0, 4).map((c, i) => (
+                        <div className="wp-prior-char" key={i}>
+                          <b>{c.name}</b>
+                          {c.where ? ` · ${c.where}` : ""}
+                          {c.holds && c.holds.length > 0 ? `｜持有：${c.holds.join("、")}` : ""}
+                          {c.does_not_know && c.does_not_know.length > 0
+                            ? <em>｜不知道：{c.does_not_know.join("、")}</em> : null}
+                        </div>
+                      ))}
+                      {prior.recent.slice(0, 2).map((d, i) => (
+                        <div className="wp-prior-sec" key={`r${i}`}>
+                          <b>第 {d.chapter_no} 章</b><span>{d.one_line}</span>
+                          {d.hook ? <em>钩子：{d.hook}</em> : null}
+                        </div>
+                      ))}
+                      {prior.book.arc && (
+                        <div className="wp-prior-sec"><b>全书</b><span>{prior.book.arc}</span></div>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
+              <div className="wp-prior-actions">
+                <button className="ws-btn" disabled={priorBusy || busy} onClick={() => void rebuildPrior()}>
+                  {priorBusy ? "排队中…" : "↻ 重算前情"}
+                </button>
+                <button className="ws-btn" disabled={busy} onClick={() => void reloadPrior()}>
+                  ⟳ 刷新
+                </button>
+              </div>
+
               {/* v1.55：本场必然事件（主笔定的硬约束）——作者必须看得见，否则就是暗规则 */}
               {(() => {
                 const rows = scenes

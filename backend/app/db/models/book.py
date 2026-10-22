@@ -32,6 +32,9 @@ class Book(TimestampMixin, Base):
     synopsis: Mapped[str] = mapped_column(Text, default="")          # 一句话总纲/创作方向
     worldview_json: Mapped[str] = mapped_column(Text, default="{}")  # 世界观文本（premise/rules_text/background）
     world_rules_json: Mapped[str] = mapped_column(Text, default="[]")  # 结构化 WorldRule[]（LLM 解析产物）
+    # ---- 前情压缩（v1.58 / 0022）----
+    volume_size: Mapped[int] = mapped_column(default=8)               # 默认每 8 章一卷
+    volumes_json: Mapped[str] = mapped_column(Text, default="[]")     # 主笔/作者微调的卷边界 [{no,from,to}]
 
     chapters: Mapped[list["Chapter"]] = relationship(
         back_populates="book", cascade="all, delete-orphan"

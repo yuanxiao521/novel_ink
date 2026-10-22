@@ -284,6 +284,54 @@ class ProductionIn(models.BaseModel):
     production: dict = {}
 
 
+@router.get("/chapters/{chapter_id}/prior")
+async def chapter_prior(chapter_id: str, svc: SimulationService = Depends(get_service)):
+    """本章的前情素材（v1.58）：全书 / 本卷 / 最近两章 + 冲突清单（写作页「前情」面板）。"""
+    return await svc.chapter_prior(chapter_id)
+
+
+class DigestGenIn(models.BaseModel):
+    """前情压缩入参：scope=volume 时 volume_no>0 只重算该卷。"""
+    scope: str = "chapter"
+    volume_no: int = 0
+
+
+@router.post("/chapters/{chapter_id}/digest/generate")
+async def chapter_digest_generate(chapter_id: str,
+                                  svc: SimulationService = Depends(get_service)):
+    """重算本章前情概要（后台队列）。"""
+    from app.services import tasks_worker as tw
+
+    return await tw.enqueue("chapter_digest", {"chapter_id": chapter_id})
+
+
+@router.post("/books/{book_id}/digest/generate")
+async def book_digest_generate(book_id: str, body: DigestGenIn,
+                               svc: SimulationService = Depends(get_service)):
+    """重算卷级（scope=volume，volume_no=0 表示全部）或全书级（scope=book）前情概要。"""
+    from app.services import tasks_worker as tw
+
+    scope = (body.scope or "volume").strip().lower()
+    if scope == "book":
+        return await tw.enqueue("book_digest", {"book_id": book_id})
+    return await tw.enqueue("volume_digest",
+                            {"book_id": book_id, "volume_no": int(body.volume_no or 0)})
+
+
+class VolumeCfgIn(models.BaseModel):
+    """卷配置微调（v1.58）：volume_size 或显式 volumes 边界。"""
+    volume_size: int | None = None
+    volumes: list[dict] | None = None
+
+
+@router.put("/books/{book_id}/volumes")
+async def set_volume_config(book_id: str, body: VolumeCfgIn,
+                            svc: SimulationService = Depends(get_service)):
+    """微调卷边界（默认 8 章一卷；主笔/作者可改）。"""
+    return await svc.set_volume_config(book_id, volume_size=body.volume_size,
+                                       volumes=body.volumes)
+
+
 @router.get("/chapters/{chapter_id}/production-plan")
 async def chapter_production_plan(chapter_id: str,
                                   svc: SimulationService = Depends(get_service)):
