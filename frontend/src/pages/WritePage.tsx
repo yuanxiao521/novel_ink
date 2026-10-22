@@ -58,9 +58,19 @@ interface SceneRow {
 }
 
 export function WritePage() {
-  const { chapterId = '' } = useParams<{ chapterId: string }>();
+  const { chapterId: routeChapterId = '' } = useParams<{ chapterId: string }>();
   const nav = useNavigate();
-  const { book, chapters } = useWorkspace();
+  const { book, chapters, chapterId: wsChapterId } = useWorkspace();
+  /**
+   * v1.64：章级写作页以前**只能**从「校对成书」里点进来（/write/:chapterId），侧栏没有入口，
+   * 作者反馈「找不到 /write，跟正文协作不是一个地方吗」——同一个侧栏项高亮，却是两个页面。
+   * 现在 /write 无 id 也能打开：回落到上下文里的当前章 → 第一章，URL 再 replace 成规范形式。
+   */
+  const chapterId = routeChapterId || wsChapterId || chapters[0]?.id || '';
+  useEffect(() => {
+    if (routeChapterId || !chapterId) return;
+    nav('/write/' + chapterId + (book ? '?book=' + book.id : ''), { replace: true });
+  }, [routeChapterId, chapterId, book, nav]);
   /** 全书章进度（v1.47 主线视图）：作者一进来就知道"写到第几章了" */
   const chapterIdx = chapters.findIndex((c) => c.id === chapterId);
   const { showConfirm } = useDialog();
@@ -289,6 +299,25 @@ export function WritePage() {
     } finally { setBusy(false); }
   };
 
+  // v1.64：这本书还没有章节时给明确出口（以前会停在「未命名章 0 字」的死态）
+  if (!chapterId) {
+    return (
+      <div className="app-shell">
+        <Sidebar active="studio" />
+        <div className="main-col">
+          <ContextBar step="write" />
+          <div className="s2-page">
+            <div className="ws-empty" style={{ flex: 1 }}>
+              <div className="ws-empty-title">这本书还没有章节</div>
+              <div className="ws-empty-desc">先去「主笔创作」排骨架（或加一章），再回来写正文。</div>
+              <button className="ws-btn ws-btn-primary" onClick={() => nav('/maestro')}>去主笔创作</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="app-shell">
       <Sidebar active="studio" />
@@ -381,6 +410,13 @@ export function WritePage() {
                     title="稿本历史：每次保存覆盖前的正文都有一版，可恢复">
               🕘 稿本
             </button>
+            {/* v1.64：章级写作与场景精修是两个页面（以前从章页没法回到场景级） */}
+            {scenes.length > 0 && (
+              <button className="ws-btn" onClick={() => nav('/studio/' + scenes[0].id)}
+                      title="逐场精修：写手初稿 / 审稿会 / 精修工具 + 责编对话">
+                🖊 场景精修
+              </button>
+            )}
             <button className="ws-btn" disabled={busy} onClick={() => setEditing((v) => !v)}>
               {editing ? '✓ 完成编辑' : '✎ 编辑'}
             </button>

@@ -76,6 +76,9 @@ export function App() {
               <Route path="/studio" element={<SceneEntry kind="studio" />} />
               <Route path="/studio/:sceneId" element={<StudioPage />} />
               {/* v1.46 直写链路：章级写作主线（章是最小可写单位，场是可选细分） */}
+              {/* v1.64：/write 无 id 也能进（落到当前章/第一章）——以前只有 /write/:chapterId，
+                  从侧栏点「正文协作」若目标是 /write 会被 * 兜底跳回首页（实测落点 "/?book=…"） */}
+              <Route path="/write" element={<WritePage />} />
               <Route path="/write/:chapterId" element={<WritePage />} />
               <Route path="/proofread" element={<ProofreadPage />} />
         <Route path="/characters" element={<CharactersPage />} />

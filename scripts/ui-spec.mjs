@@ -521,6 +521,26 @@ try {
       && (menu.items || []).length >= 5
       && (menu.items || []).every((x) => Number(x.h) <= 34),
     JSON.stringify(menu));
+
+  // ⑱ 章级写作页必须有入口（v1.64 · 作者：「找不到 /write，跟正文协作不是一个地方吗」）
+  //    事实：以前只有 /write/:chapterId，直接开 /write 会被 * 兜底跳回首页，
+  //    侧栏也没有入口 → 章级写作页只能从「校对成书」里点进去。
+  //    永久回归：①/write 无 id 能落到具体章 ②侧栏「正文协作」href 指向 /write/ ③章页有场景精修入口。
+  await goto(WEB + "/dashboard?book=" + host.book.id, 7000);
+  const navW = JSON.parse((await ev("(async () => {"
+    + "const items = Array.from(document.querySelectorAll('.nav-item'));"
+    + "const t = items.find((x) => (x.textContent || '').indexOf('正文协作') >= 0);"
+    + "return JSON.stringify({ href: t ? t.getAttribute('href') : null, items: items.length });"
+    + "})()")) || "{}");
+  await goto(WEB + "/write?book=" + host.book.id, 7000);
+  const wr2 = JSON.parse((await ev("JSON.stringify({"
+    + "path: location.pathname, title: (document.querySelector('.s2-title') || {}).textContent || '',"
+    + "btns: Array.from(document.querySelectorAll('.s2-actions .ws-btn')).map((b) => b.textContent.trim()) })")) || "{}");
+  step("⑱ 章级写作页可直达：/write 自动落到当前章 + 侧栏「正文协作」指向它 + 页内有场景精修入口",
+    !navW.err && String(navW.href || "").indexOf("/write/") === 0
+      && !wr2.err && String(wr2.path).indexOf("/write/chapter-") === 0
+      && (wr2.btns || []).some((b) => String(b).indexOf("场景精修") >= 0),
+    JSON.stringify({ nav: navW, write: wr2 }));
 } catch (e) {
   step("UI 剧本异常", false, String(e));
 } finally {

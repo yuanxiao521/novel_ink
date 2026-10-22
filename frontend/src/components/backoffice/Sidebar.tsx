@@ -36,7 +36,8 @@ export function Sidebar({ active }: { active: SidebarKey }) {
 
   const stepTo = (key: StepKey): string => {
     if (key === 'director') return ws.sceneId ? `/director/${ws.sceneId}` : '/director';
-    if (key === 'studio') return ws.sceneId ? `/studio/${ws.sceneId}` : '/studio';
+    // v1.64：正文协作默认进**章级写作页**（章是最小写作单位；场景精修在页内一键切换）。
+    if (key === 'studio') return ws.chapterId ? `/write/${ws.chapterId}` : (ws.sceneId ? `/studio/${ws.sceneId}` : '/write');
     if (key === 'dashboard') return ws.bookId ? `/dashboard?book=${ws.bookId}` : '/dashboard';
     if (key === 'proofread') return ws.bookId ? `/proofread?book=${ws.bookId}` : '/proofread';
     return '/maestro';

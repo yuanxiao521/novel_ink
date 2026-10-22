@@ -44,7 +44,7 @@ const REFINE_TOOLS: Array<{ tool: string; label: string; hint: string }> = [
 ];
 export function StudioPage() {
   const { sceneId: routeSceneId } = useParams<{ sceneId: string }>();
-  const { sceneId: ctxSceneId } = useWorkspace();
+  const { sceneId: ctxSceneId, bookId } = useWorkspace();
   const sceneId = routeSceneId || ctxSceneId;
   const nav = useNavigate();
   const { showConfirm } = useDialog();
@@ -240,6 +240,13 @@ export function StudioPage() {
           {words} 字 · {paras.length} 段 · {annotations.length} 条批注（待处理 {openAnns.length}）
           {dirty && <b className="s2-dirty" title="编辑区有未保存改动：写手/采纳候选会覆盖它"> · 未保存</b>}
         </span>
+        {/* v1.64：场景精修 → 章级写作页（两个页面互跳，作者不用记 URL） */}
+        {scene?.chapter_id && (
+          <button className="ws-btn" onClick={() => nav('/write/' + scene.chapter_id + (bookId ? '?book=' + bookId : ''))}
+                  title="回到章级写作页（整章正文 + 记忆/前情/稿本）">
+            ✍ 写这一章
+          </button>
+        )}
         <span className="s2-src">
           当前生效：<b>{notes[0] ? `${KIND_LABEL[notes[0].kind] ?? notes[0].kind} · ${STATUS_LABEL[notes[0].status] ?? notes[0].status}` : '尚无记录'}</b>
           {pendingCount > 0 && ` · 待审 ${pendingCount} 条`}
