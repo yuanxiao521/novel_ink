@@ -18,9 +18,12 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Callable, Optional, TypedDict
 
 from langgraph.graph import END, START, StateGraph
+
+logger = logging.getLogger(__name__)
 from langgraph.config import get_stream_writer
 
 from app.schemas import models
@@ -242,6 +245,13 @@ def build_graph(plan_cfg: PlanCfg, decide_fn: DecideFn, converge_fn: ConvergeFn,
                 k = e.payload.get("kind", "")
                 act_summary.append(f"[{k}] {name}：{t}")
             stage = (sim.world.env_conds or [""])[0] if sim.world.env_conds else ""
+            # v1.56：本回合"在场但没轮到行动"的角色——不写他们会凭空消失，全写又抢戏。
+            # 给成文者一句提示：可以写他们在场/一个反应，但不要给台词与决策。
+            acting = set(sim.scratch.get("round_order") or sim.action_order or [])
+            silent = [sim.characters[c].name for c in (sim.scratch.get("cast_all") or [])
+                      if c in sim.characters and c not in acting]
+            silent_line = (("在场但本回合没有行动（可写他们在场或一个反应，不要给台词与决策）："
+                            + "、".join(silent) + "\n") if silent else "")
             prompt = (
                 "你是小说实时旁白生成器（成文者）。根据本回合角色行为，写一段（180-280字）" 
                 "有画面感的中文小说正文，把角色的行动与台词交织成连贯叙述：\n"
@@ -251,7 +261,8 @@ def build_graph(plan_cfg: PlanCfg, decide_fn: DecideFn, converge_fn: ConvergeFn,
                 "· 第三人称叙述，对话用引号嵌在叙述里，不要每句都以角色名开头；\n"
                 "· 不得改变事实与角色原意，不得让角色说事件外的话。\n"
                 f"舞台：{stage or '（无）'}\n"
-                "行为：\n" + "\n".join(act_summary)
+                + silent_line
+                + "行为：\n" + "\n".join(act_summary)
             )
             parts = []
             async for token in llm_client.chat_stream(prompt):

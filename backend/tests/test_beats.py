@@ -304,6 +304,30 @@ def test_put_scene_with_only_beats_keeps_other_fields(client):
     assert scene["content_desc"] == "霍岸拦查"
     assert scene["beats"][0]["level"] == "hard"
 
+# ---------------------------------------------------------------- B59：step 必须用场景 plan_cfg
+@pytest.mark.asyncio
+async def test_sim_plan_cfg_reads_scene_beats():
+    """B59 回归：step/stream_step 组装的 PlanCfg 必须带上场景的 beats（否则闸门形同虚设）。"""
+    from app.db.repo import Repo
+    from app.schemas.models import SimulationState, WorldState
+    from app.services.engine.director import PlanCfg
+    from app.services.service import SimulationService
+
+    repo = Repo(use_db=False)
+    svc = SimulationService(repo)
+    await repo.save_book({"id": "b9", "title": "T", "genre": "g", "status": "planned",
+                          "cover_init": "T", "synopsis": ""})
+    await repo.save_chapter({"id": "c9", "book_id": "b9", "title": "第 1 章", "summary": "",
+                             "order_no": 1, "tone": "action", "word_target": 1000})
+    sid = (await svc.create_scene("c9", {"title": "场一"}))["id"]
+    await svc.update_scene(sid, {"beats": [{"text": "X 发生", "level": "hard",
+                                           "anchors": ["甲"]}]})
+    sim = SimulationState(scenario="t", scene_id=sid, world=WorldState(scene_id=sid, title="t"))
+    cfg = await svc._sim_plan_cfg(sim, PlanCfg())
+    assert cfg.beats and cfg.beats[0]["text"] == "X 发生"
+    assert cfg.beats[0]["level"] == "hard"
+
+
 
 
 

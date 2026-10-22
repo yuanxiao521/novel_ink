@@ -2688,15 +2688,30 @@ class SimulationService:
         except Exception as e:  # noqa: BLE001
             logger.warning("[service] 注入世界规则失败（忽略）：%s", e)
 
+    async def _sim_plan_cfg(self, sim: models.SimulationState, static_cfg: PlanCfg) -> PlanCfg:
+        """step/stream_step 用的导演 PlanCfg（B59）。
+
+        为什么必须从场景读：`plan_cfg_json` 里放着主笔写的 **beats（必然事件）** 与
+        作者/主笔配的 goal_pressure、expose_target。此前 step 直接 `_scene_plan_cfg("{}")`
+        → **推演阶段这些配置全部失效**（beats 收束闸门永远看不到硬约束 = 形同虚设）。
+        """
+        raw = "{}"
+        try:
+            scene = await self.repo.get_scene(sim.scene_id) if sim.scene_id else None
+            raw = str((scene or {}).get("plan_cfg_json") or "{}")
+        except Exception as e:  # noqa: BLE001  读不到就退回静态配置，不挡推演
+            logger.warning("[service] 读场景 plan_cfg 失败（用静态默认）：%s", e)
+        cfg = _scene_plan_cfg(static_cfg=static_cfg, plan_cfg_json=raw)
+        cfg.ending_options = list(sim.director.ending_options)   # 快照里的是权威
+        return cfg
+
     # ---------------------------------------------------------------- step 回合
     async def step(self, sim_id: str, n: int = 1) -> models.SimulationState:
         sim = await self._load_sim(sim_id)
         spec = scenarios.load_scenario(sim.scenario)  # 按 sim 的场景，而非全局默认
         static_cfg = spec["plan_cfg"] if isinstance(spec["plan_cfg"], PlanCfg) else PlanCfg()
-        # 导演 PlanCfg：sim 快照里的数据库配置优先（复用 sim.world.facts 同源），
-        # 工程内 PlanCfg 不随快照持久化 → 每次按场景默认加载（DB 配置已融入 seed/装配）
-        plan_cfg = _scene_plan_cfg(static_cfg=static_cfg, plan_cfg_json="{}")
-        plan_cfg.ending_options = list(sim.director.ending_options)  # 快照里的是权威
+        # 导演 PlanCfg：**从 sim 所属场景的 plan_cfg_json 读**（B59：beats/goal_pressure 必须生效）
+        plan_cfg = await self._sim_plan_cfg(sim, static_cfg)
         graph = self._graph(plan_cfg, spec["decide_fn"], spec["converge_fn"])
         for _ in range(n):
             # 终止：真正完结（收束/超上限）才停；举手(pending)是暂停，accept 后可继续
@@ -2725,8 +2740,7 @@ class SimulationService:
         sim = await self._load_sim(sim_id)
         spec = scenarios.load_scenario(sim.scenario)
         static_cfg = spec["plan_cfg"] if isinstance(spec["plan_cfg"], PlanCfg) else PlanCfg()
-        plan_cfg = _scene_plan_cfg(static_cfg=static_cfg, plan_cfg_json="{}")
-        plan_cfg.ending_options = list(sim.director.ending_options)
+        plan_cfg = await self._sim_plan_cfg(sim, static_cfg)
         graph = self._graph(plan_cfg, spec["decide_fn"], spec["converge_fn"])
 
         if sim.ended or sim.director.converged:

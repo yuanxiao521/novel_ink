@@ -557,6 +557,41 @@ curl -s "http://127.0.0.1:8001/api/v1/chapters/$CH/scenes"
 **回归要点**：`PUT /scenes/{id}` 用 `exclude_unset`（不是 `exclude_none`）——
 只传 beats 时绝不清空标题/舞台/目标/内容；beats 合并进 `plan_cfg_json` 时保留其它导演配置。
 
+### 3.22 收束闸门 live 验证（v1.56）
+
+```bash
+# 用 seed 的「雨夜书房」场景（它有真的 converge_fn，才会真的收束）
+# 造一个**永远不可能达成**的 hard beat，观察闸门：拦两次 → 第三次放行并如实标记
+cd backend && PYTHONPATH=. ../.venv/Scripts/python.exe - <<PY
+import asyncio, json, time
+from app.db.repo import Repo
+from app.services.service import SimulationService
+async def main():
+    repo, svc = Repo(), SimulationService(Repo())
+    ch = (await repo.list_chapters_by_book("book-rain"))[0]
+    sc = (await svc.list_scenes(ch["id"]))[0]
+    await svc.update_scene(sc["id"], {"beats": [{"text": "两人穿越到平行世界",
+        "level": "hard", "anchors": ["平行世界", "穿越"]}]})
+    r = await svc.start(book_id="book-rain", chapter_id=ch["id"], scene_id=sc["id"], resume=False)
+    for i in range(12):
+        await svc.step(r["sim_id"], 1)
+        sim = await svc._load_sim(r["sim_id"])
+        print(sim.world.turn, sim.director.converged, sim.ended,
+              sim.scratch.get("beats_retry"), (sim.scratch.get("beats_status") or {}).get("ok"))
+        if sim.ended: break
+    await svc.update_scene(sc["id"], {"beats": []})   # 还原
+asyncio.run(main())
+PY
+# 实测（2026-10-21）：turn1-5 未收束；turn6 收束被拦；turn7 retry=1；turn8 retry=2；
+#   turn9 converged=true & ended=true & exhausted=true，
+#   beats_status={"missed":["两人穿越到平行世界"],"ok":false,"retries":2}
+#   全程 9 回合 / 435s（真 LLM）
+```
+
+**这条验收为什么必须 live**：v1.54 的闸门纯函数有单测，但 `step()` 当时用的是空 `plan_cfg_json`
+（B59）→ 真跑时 `beats` 恒为空、闸门永远不触发；B60 又让"真拦下"那一刻崩掉。
+**只有真跑一遍才会同时暴露"接线断了"和"拦下就崩"**。
+
 ## 4. 存量验收（S1–S4 / A2 / A3，仍在跑）
 
 ```powershell
