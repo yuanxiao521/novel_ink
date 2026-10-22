@@ -1729,6 +1729,15 @@ class SimulationService:
         book_id = str(chapter.get("book_id") or "")
         body = (text or "").strip()
         unchanged = str(chapter.get("prose_md") or "").strip() == body
+        # v1.61：覆盖前先把**旧正文**存成版本（append-only）。
+        # 这是"保存即覆盖"唯一的后悔药：没有它，一次坏写（B58 那类）就真丢了。
+        # 首次保存（旧文为空）不存空版本 —— 历史里只留"真有内容的稿"。
+        prev_prose = str(chapter.get("prose_md") or "")
+        if not unchanged and prev_prose.strip():
+            try:
+                await self.repo.save_chapter_revision(chapter_id, prev_prose, source="author")
+            except Exception as e:  # noqa: BLE001  版本失败不能挡保存
+                logger.warning("[revisions] 旧正文存版本失败 chapter=%s：%s", chapter_id, e)
         if not await self.repo.save_chapter_prose(chapter_id, body):
             raise ChapterNotFoundError(f"未找到章节: {chapter_id}")
 
@@ -2231,6 +2240,34 @@ class SimulationService:
             await self.repo.save_book_digest({**d, "id": d["id"], "stale": True})
             n += 1
         return n
+
+    async def list_chapter_revisions(self, chapter_id: str) -> list[dict]:
+        """稿本历史（version 倒序，不含正文全文）。"""
+        return await self.repo.list_chapter_revisions(chapter_id)
+
+    async def get_chapter_revision(self, chapter_id: str, version: int) -> dict:
+        """取某一版的完整正文。"""
+        rev = await self.repo.get_chapter_revision(chapter_id, version)
+        if rev is None:
+            raise ChapterNotFoundError(f"未找到版本: 第 {version} 版")
+        return rev
+
+    async def restore_chapter_revision(self, chapter_id: str, version: int) -> dict:
+        """恢复到某一版：把历史正文写回 prose_md，并**追加一条 restore 版本**。
+
+        为什么不指针回拨：恢复本身也是一次修改，必须留历史 —— 否则"恢复到第 3 版"
+        之后，第 4 版的内容就凭空消失了。
+        """
+        rev = await self.get_chapter_revision(chapter_id, version)
+        body = str(rev.get("prose_md") or "")
+        chapter = await self.repo.get_chapter(chapter_id)
+        if chapter is None:
+            raise ChapterNotFoundError(f"未找到章节: {chapter_id}")
+        await self.repo.save_chapter_prose(chapter_id, body)
+        new_version = await self.repo.save_chapter_revision(
+            chapter_id, body, source=f"restore:{int(version)}")
+        return {"chapter_id": chapter_id, "restored_from": int(version),
+                "chars": len(body), "new_version": new_version}
 
     async def chapter_prior(self, chapter_id: str) -> dict:
         """本章的前情素材（全书 / 本卷 / 最近两章 + 冲突），给注入与 UI 共用。"""

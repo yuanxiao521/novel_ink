@@ -284,6 +284,36 @@ class ProductionIn(models.BaseModel):
     production: dict = {}
 
 
+@router.get("/chapters/{chapter_id}/revisions")
+async def list_chapter_revisions(chapter_id: str,
+                                  svc: SimulationService = Depends(get_service)):
+    """稿本历史（version 倒序，不含正文全文）。"""
+    return await svc.list_chapter_revisions(chapter_id)
+
+
+@router.get("/chapters/{chapter_id}/revisions/{version}")
+async def get_chapter_revision(chapter_id: str, version: int,
+                               svc: SimulationService = Depends(get_service)):
+    """取某一版的完整正文。"""
+    return await svc.get_chapter_revision(chapter_id, version)
+
+
+class RevisionRestoreIn(models.BaseModel):
+    """恢复到某一版（v1.61）：会追加一条 restore 版本，历史不断。"""
+    confirm: bool = False
+
+
+@router.post("/chapters/{chapter_id}/revisions/{version}/restore")
+async def restore_chapter_revision(chapter_id: str, version: int,
+                                   body: RevisionRestoreIn,
+                                   svc: SimulationService = Depends(get_service)):
+    """恢复正文到某一版（覆盖当前版；恢复动作本身也留版本）。"""
+    if not body.confirm:
+        raise HTTPException(status_code=409,
+                            detail="恢复会覆盖当前正文，需要显式 confirm=true")
+    return await svc.restore_chapter_revision(chapter_id, version)
+
+
 @router.get("/chapters/{chapter_id}/prior")
 async def chapter_prior(chapter_id: str, svc: SimulationService = Depends(get_service)):
     """本章的前情素材（v1.58）：全书 / 本卷 / 最近两章 + 冲突清单（写作页「前情」面板）。"""

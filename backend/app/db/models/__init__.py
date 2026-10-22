@@ -7,6 +7,7 @@ from app.db.models.book_digest import BookDigest
 from app.db.models.book_volume import BookVolume
 from app.db.models.chat_history import ChatHistory
 from app.db.models.chapter import Chapter
+from app.db.models.chapter_revision import ChapterRevision
 from app.db.models.character import Character
 from app.db.models.foreshadow import Foreshadow
 from app.db.models.inspiration_card import InspirationCard
@@ -18,7 +19,7 @@ from app.db.models.simulation import Simulation
 from app.db.models.world_state import WorldState
 
 __all__ = [
-    "Belief", "Book", "BookDigest", "BookVolume", "BookMemory", "ChatHistory", "Chapter", "Foreshadow", "InspirationCard",
+    "Belief", "Book", "BookDigest", "BookVolume", "BookMemory", "ChapterRevision", "ChatHistory", "Chapter", "Foreshadow", "InspirationCard",
     "MemoryChunk",
     "AgentMessage", "AgentTask",
     "ProseNote", "ProseAnnotation", "Scene", "Character", "Simulation", "WorldState",

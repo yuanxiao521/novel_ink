@@ -10,6 +10,7 @@ from app.db.base import Base, TimestampMixin
 
 if TYPE_CHECKING:
     from app.db.models.book import Book
+    from app.db.models.chapter_revision import ChapterRevision
     from app.db.models.scene import Scene
 
 
@@ -35,6 +36,10 @@ class Chapter(TimestampMixin, Base):
     digest_json: Mapped[str] = mapped_column(Text, default="{}")
     # v1.59：所属卷（**派生缓存**：只由 sync_volume_assignments 写；真源是 book_volumes.range）
     volume_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # v1.61：正文版本（append-only；见 chapter_revision.py）
+    revisions: Mapped[list["ChapterRevision"]] = relationship(
+        back_populates="chapter", cascade="all, delete-orphan"
+    )
 
     book: Mapped["Book"] = relationship(back_populates="chapters")
     scenes: Mapped[list["Scene"]] = relationship(back_populates="chapter", cascade="all, delete-orphan")

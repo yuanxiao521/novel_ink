@@ -18,7 +18,7 @@ from app.config import settings
 from app.db.base import Base
 from app.errors import RepoError
 from app.db.engine import get_session_factory
-from app.db.models import AgentMessage, AgentTask, Belief, Book, BookDigest, BookMemory, BookVolume, ChatHistory, Chapter, Character, Foreshadow, InspirationCard, ProseAnnotation, ProseNote, Scene, Simulation, WorldState
+from app.db.models import AgentMessage, AgentTask, Belief, Book, BookDigest, BookMemory, BookVolume, ChapterRevision, ChatHistory, Chapter, Character, Foreshadow, InspirationCard, ProseAnnotation, ProseNote, Scene, Simulation, WorldState
 from app.schemas.models import CharacterCard, SimulationState
 
 logger = logging.getLogger(__name__)
@@ -390,6 +390,71 @@ class Repo:
                 "stale": bool(getattr(r, "stale", False)),
                 "digest_json": r.digest_json or "{}", "summary_md": r.summary_md or "",
                 "updated_at": r.updated_at.isoformat() if r.updated_at else ""}
+
+    # ------------------------------------------------------------------
+    # chapter_revisions（正文版本 · append-only，v1.61）
+    # ------------------------------------------------------------------
+    async def list_chapter_revisions(self, chapter_id: str) -> list[dict]:
+        """版本列表（version 倒序；不含正文全文，省流量）。"""
+        async def _q(session: AsyncSession):
+            stmt = (select(ChapterRevision).where(ChapterRevision.chapter_id == chapter_id)
+                    .order_by(ChapterRevision.version.desc()))
+            rows = (await session.execute(stmt)).scalars().all()
+            return [{"id": r.id, "chapter_id": r.chapter_id, "version": r.version,
+                     "chars": len(r.prose_md or ""), "source": r.source or "author",
+                     "created_at": r.created_at.isoformat() if r.created_at else ""}
+                    for r in rows]
+
+        if not self.use_db:
+            key = f"rev:{chapter_id}"
+            rows = self._mem.get(key) or []
+            return [{"id": r["id"], "chapter_id": r["chapter_id"], "version": r["version"],
+                     "chars": len(r.get("prose_md") or ""), "source": r.get("source") or "author",
+                     "created_at": r.get("created_at", "")} for r in rows]
+        return await self._query_or_mem(_q, [])
+
+    async def next_chapter_revision_version(self, chapter_id: str) -> int:
+        async def _q(session: AsyncSession):
+            stmt = select(func.max(ChapterRevision.version)).where(
+                ChapterRevision.chapter_id == chapter_id)
+            return int((await session.execute(stmt)).scalar() or 0) + 1
+
+        if not self.use_db:
+            key = f"rev:{chapter_id}"
+            rows = self._mem.get(key) or []
+            return max((int(r["version"]) for r in rows), default=0) + 1
+        return await self._query_or_mem(_q, 1)
+
+    async def save_chapter_revision(self, chapter_id: str, prose_md: str,
+                                    source: str = "author") -> int:
+        """追加一条版本（append-only）；返回 version。"""
+        version = await self.next_chapter_revision_version(chapter_id)
+        rid = f"rev-{chapter_id}-{version}"
+        data = {"id": rid, "chapter_id": chapter_id, "version": version,
+                "prose_md": prose_md, "source": source or "author"}
+        await self._upsert(ChapterRevision, data)
+        if not self.use_db:
+            key = f"rev:{chapter_id}"
+            self._mem[key] = (self._mem.get(key) or []) + [data]
+        return version
+
+    async def get_chapter_revision(self, chapter_id: str, version: int) -> Optional[dict]:
+        async def _q(session: AsyncSession):
+            stmt = select(ChapterRevision).where(
+                ChapterRevision.chapter_id == chapter_id,
+                ChapterRevision.version == int(version))
+            r = (await session.execute(stmt)).scalars().first()
+            return {"id": r.id, "chapter_id": r.chapter_id, "version": r.version,
+                    "prose_md": r.prose_md or "", "source": r.source or "author",
+                    "created_at": r.created_at.isoformat() if r.created_at else ""} if r else None
+
+        if not self.use_db:
+            rows = self._mem.get(f"rev:{chapter_id}") or []
+            for r in rows:
+                if int(r["version"]) == int(version):
+                    return dict(r)
+            return None
+        return await self._query_or_mem(_q, None)
 
     # ------------------------------------------------------------------
     # chapters（第二层）

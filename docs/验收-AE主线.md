@@ -708,6 +708,31 @@ node scripts/shot.mjs --url="/maestro?book=$B"
 **边界**：卷表为空时骨架树退回平铺（不报错）；保存分卷只把旧卷概要标 `stale`（不删内容）。
 **已知未接**：主笔**预览卡**里还没按卷分组（`planPreview.volumes` 已可用，UI 待做）。
 
+### 3.27 正文版本（稿本历史 + 恢复，v1.61）
+
+```bash
+CH=chapter-c08f2b6b
+
+# ① 保存两版不同正文（每次覆盖前旧文自动进版本链）
+curl -s -X PUT "http://127.0.0.1:8001/api/v1/chapters/$CH/prose" \
+  -H "Content-Type: application/json" -d '{"text":"第二版"}'
+# ② 稿本历史（倒序）
+curl -s "http://127.0.0.1:8001/api/v1/chapters/$CH/revisions"
+# 期望 [{version:2,source:"author",chars:…},{version:1,…}]
+
+# ③ 恢复（必须显式 confirm；恢复本身也追加一条 restore 版本）
+curl -s -X POST "http://127.0.0.1:8001/api/v1/chapters/$CH/revisions/1/restore" \
+  -H "Content-Type: application/json" -d '{"confirm":true}'
+# 期望 {restored_from:1, chars:N, new_version:3}
+
+# ④ 不带 confirm → 409（恢复会覆盖当前版，必须显式确认）
+curl -s -X POST "http://127.0.0.1:8001/api/v1/chapters/$CH/revisions/1/restore" -d '{}'
+# 期望 409
+```
+
+**真数据 E2E（6636 字真章）**：覆盖保存 240 字测试稿 → 版本链 [v1=6940 原文, v2=240] →
+恢复 v1 → 正文写回 6940 字 + 追加 v3(restore:1) —— 历史连续，原稿无损。
+
 ## 4. 存量验收（S1–S4 / A2 / A3，仍在跑）
 
 ```powershell

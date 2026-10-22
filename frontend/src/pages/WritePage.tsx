@@ -10,10 +10,12 @@ import {
   saveChapterProse,
 } from '../api/novel';
 import {
-  fetchChapterPrior, fetchChapterProductionPlan, regenerateChapterDigest,
+  fetchChapterPrior, fetchChapterProductionPlan, fetchChapterRevisions,
+  regenerateChapterDigest, restoreChapterRevision,
 } from '../api/novel';
 import type {
-  ChapterPrior, ChapterProductionPlan, ChapterRecall, MemoryStats, RecallItem,
+  ChapterPrior, ChapterProductionPlan, ChapterRecall, ChapterRevisionMeta,
+  MemoryStats, RecallItem,
 } from '../api/novel';
 
 /* ==========================================================================
@@ -74,6 +76,10 @@ export function WritePage() {
   const [prior, setPrior] = useState<ChapterPrior | null>(null);
   const [priorOpen, setPriorOpen] = useState(false);
   const [priorBusy, setPriorBusy] = useState(false);
+  /** v1.61：稿本历史（正文版本；恢复有确认） */
+  const [revOpen, setRevOpen] = useState(false);
+  const [revList, setRevList] = useState<ChapterRevisionMeta[]>([]);
+  const [revBusy, setRevBusy] = useState(false);
   const [savedText, setSavedText] = useState('');
   const [scenes, setScenes] = useState<SceneRow[]>([]);
   const [editing, setEditing] = useState(false);
@@ -210,6 +216,35 @@ export function WritePage() {
     } finally { setPriorBusy(false); }
   };
 
+  /** v1.61：稿本历史 + 恢复（恢复=写回旧文并追加一条 restore 版本，历史不断） */
+  const openRevisions = async () => {
+    if (revBusy || !chapterId) return;
+    setRevBusy(true);
+    try {
+      setRevList(await fetchChapterRevisions(chapterId));
+      setRevOpen(true);
+    } catch (e) {
+      flash("读稿本历史失败：" + (e instanceof Error ? e.message : String(e)));
+    } finally { setRevBusy(false); }
+  };
+  const restoreRevision = async (version: number) => {
+    if (revBusy) return;
+    const ok = await showConfirm(
+      `恢复到第 ${version} 版？`,
+      "当前正文会被覆盖（恢复动作本身也会存成一条新版本，可以再恢复回来）。",
+      true);
+    if (!ok) return;
+    setRevBusy(true);
+    try {
+      const r = await restoreChapterRevision(chapterId, version);
+      flash(`已恢复到第 ${r.restored_from} 版（${r.chars} 字，存为第 ${r.new_version} 版）`);
+      await load();                     // 刷新正文与字数
+      setRevList(await fetchChapterRevisions(chapterId));
+    } catch (e) {
+      flash("恢复失败：" + (e instanceof Error ? e.message : String(e)));
+    } finally { setRevBusy(false); }
+  };
+
   /** v1.49：重新检索（改完摘要/设定后，想立刻看写手会读到什么） */
   const refreshRecall = async () => {
     if (memBusy) return;
@@ -259,6 +294,35 @@ export function WritePage() {
         <ContextBar step="write" />
         <div className="s2-page">
           {toast && <div className="s2-toast">{toast}</div>}
+
+          {/* v1.61：稿本历史（正文版本）——保存即覆盖的唯一后悔药 */}
+          {revOpen && (
+            <div className="wp-rev-mask" onClick={() => setRevOpen(false)}>
+              <div className="wp-rev-modal" onClick={(e) => e.stopPropagation()}>
+                <div className="wp-rev-head">
+                  <b>稿本历史</b>
+                  <span className="wp-rev-sub">每次保存覆盖前的正文都有一版；恢复会把旧文写回并存一条新版本</span>
+                  <button className="wp-rev-x" onClick={() => setRevOpen(false)}>✕</button>
+                </div>
+                {revList.length === 0 ? (
+                  <div className="wp-rev-empty">还没有历史版本（保存过一次正文后就会出现）。</div>
+                ) : (
+                  <div className="wp-rev-list">
+                    {revList.map((r) => (
+                      <div className="wp-rev-row" key={r.version}>
+                        <span className="v">第 {r.version} 版</span>
+                        <span className="src">{r.source === "restore" ? "恢复产生" : r.source === "author" ? "保存" : r.source}</span>
+                        <span className="chars">{r.chars} 字</span>
+                        <span className="time">{(r.created_at || "").slice(5, 16).replace("T", " ")}</span>
+                        <button className="wp-rev-restore" disabled={revBusy}
+                                onClick={() => void restoreRevision(r.version)}>恢复到这版</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           <header className="s2-head">
             <span className="s2-title">{title || '未命名章'}</span>
@@ -310,6 +374,10 @@ export function WritePage() {
             <button className="ws-btn" disabled={inspectBusy || busy || words === 0} onClick={() => void runInspect()}
                     title="体检 ∥ 质检 → 评审 → 裁决 → 自动记账（后台跑，刷新不断链）">
               {inspectBusy ? '🔍 巡检中…' : '🔍 章后巡检'}
+            </button>
+            <button className="ws-btn" onClick={() => void openRevisions()} disabled={revBusy}
+                    title="稿本历史：每次保存覆盖前的正文都有一版，可恢复">
+              🕘 稿本
             </button>
             <button className="ws-btn" disabled={busy} onClick={() => setEditing((v) => !v)}>
               {editing ? '✓ 完成编辑' : '✎ 编辑'}

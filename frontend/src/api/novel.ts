@@ -414,6 +414,45 @@ export async function setBookVolumes(
     "PUT", `/api/v1/books/${bookId}/volumes`, { volumes });
 }
 
+/* ---------- v1.61 正文版本（稿本历史） ---------- */
+
+export interface ChapterRevisionMeta {
+  id: string;
+  chapter_id: string;
+  version: number;
+  chars: number;
+  source: string;
+  created_at: string;
+}
+
+/** 稿本历史（version 倒序，不含正文全文）。 */
+export async function fetchChapterRevisions(chapterId: string): Promise<ChapterRevisionMeta[]> {
+  return getJson<ChapterRevisionMeta[]>(
+    `${API_BASE}/api/v1/chapters/${chapterId}/revisions`);
+}
+
+export interface ChapterRevisionFull extends ChapterRevisionMeta {
+  prose_md: string;
+}
+
+/** 取某一版的完整正文。 */
+export async function fetchChapterRevision(
+  chapterId: string, version: number,
+): Promise<ChapterRevisionFull> {
+  return getJson<ChapterRevisionFull>(
+    `${API_BASE}/api/v1/chapters/${chapterId}/revisions/${version}`);
+}
+
+/** 恢复到某一版（覆盖当前正文；恢复动作本身也留一条新版本）。 */
+export async function restoreChapterRevision(
+  chapterId: string, version: number,
+): Promise<{ chapter_id: string; restored_from: number; chars: number; new_version: number }> {
+  return send(
+    "POST", `/api/v1/chapters/${chapterId}/revisions/${version}/restore`,
+    { confirm: true },
+  );
+}
+
 /** 全局脉络 + 骨架体检（0-token，零 LLM）。 */
 export async function fetchBookBrief(bookId: string): Promise<BookBrief> {
   return getJson<BookBrief>(`${API_BASE}/api/v1/books/${bookId}/brief`);
