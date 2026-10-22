@@ -41,6 +41,8 @@ class PlanCfg:
     env_pressure_lines: list[str] = field(default_factory=list)      # 张力高时注入的环境压
     raise_after_turn: int = 3                                         # 满该回合数后举手演示
     ending_options: list[str] = field(default_factory=list)          # 显式结局集合(§6.3)
+    # v1.54 场级必然事件（主笔定：hard 不可取消 / soft 只作倾向；见 engine/beats.py）
+    beats: list[dict] = field(default_factory=list)
 
 
 class DirectorEngine:
@@ -393,6 +395,16 @@ class DirectorEngine:
             lines.append(f"<{ev.source.value}·{ev.actor}> {ev.payload.get('text', '') or ev.payload}")
         return "\n".join(lines)
 
+    def _beats_part(self) -> str:
+        """v1.54：把场级必然事件写进导演 prompt（hard 不可取消，soft 只作倾向）。"""
+        from app.services.engine.beats import beats_block
+
+        block = beats_block(list(getattr(self.cfg, "beats", []) or []), where="本场")
+        if not block:
+            return ""
+        return (block + "\n（这些是**事实级约束**：你可以决定它们怎么发生、什么顺序、由谁触发，"
+                "但不能取消、不能换成别的结论。本回合至少朝其中一件推进。）\n\n")
+
     def _llm_plan_prompt(self) -> str:
         return (
             "请基于以下剧情全局视角，作为导演给出软引导。\n"
@@ -405,7 +417,7 @@ class DirectorEngine:
             " - goal_adjusts：调整某个角色目标权重，必须附剧情内因(reason)——"
             "目标是果、事件是因，不能反过来。\n"
             "stage_prompt 用一句中文提示让谁先接话；若出现多走向都合理的分叉点，"
-            "可给出 raise_request。\n\n全局视角：\n" + self._global_view()
+            "可给出 raise_request。\n\n" + self._beats_part() + "全局视角：\n" + self._global_view()
         )
 
     # ----------------------------------------------------------------- 内部小工具

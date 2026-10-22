@@ -66,6 +66,8 @@ def _preview(text: str, n: int = 60) -> str:
 
 def _scene_plan_cfg(plan_cfg_json: str, static_cfg: PlanCfg) -> PlanCfg:
     """融合 DB 场景配置（优先）与静态回退：缺哪个补哪个。"""
+    from app.services.engine.beats import parse_beats
+
     db = json.loads(plan_cfg_json or "{}")
     return PlanCfg(
         secret_fact_ids=list(db.get("secret_fact_ids") or static_cfg.secret_fact_ids),
@@ -74,6 +76,8 @@ def _scene_plan_cfg(plan_cfg_json: str, static_cfg: PlanCfg) -> PlanCfg:
         env_pressure_lines=list(db.get("env_pressure_lines") or static_cfg.env_pressure_lines),
         raise_after_turn=db.get("raise_after_turn") or static_cfg.raise_after_turn,
         ending_options=list(db.get("ending_options") or static_cfg.ending_options),
+        # v1.54：场级必然事件（主笔写进 plan_cfg_json.beats；坏数据 parse_beats 会跳过）
+        beats=parse_beats(db.get("beats") or static_cfg.beats),
     )
 
 
@@ -883,6 +887,8 @@ class SimulationService:
         if book is None:
             raise SceneNotFoundError(f"未找到书: {book_id}")
 
+        from app.services.engine.beats import parse_beats
+
         mode = "replace" if str(mode or "").lower() == "replace" else "append"
         chapters = plan.get("chapters") or []
         if not chapters:
@@ -937,11 +943,16 @@ class SimulationService:
             scenes = ch.get("scenes") or []
             for j, sc in enumerate(scenes):
                 sc_title = sc.get("title", f"场景{j + 1}")
+                # v1.54：主笔写下的场级必然事件（hard/soft + 锚点）落进 plan_cfg_json，
+                # 供导演 prompt 注入 + 收束时 0-token 校验（见 engine/beats.py）
+                scene_beats = parse_beats(sc.get("beats") or [])
                 r = await self.create_scene(cid, {
                     "title": sc_title,
                     "stage_desc": sc.get("stage_desc", ""),
                     "goal": sc.get("goal", ""),
                     "content_desc": sc.get("content_desc", ""),
+                    "plan_cfg_json": json.dumps({"beats": scene_beats}, ensure_ascii=False)
+                    if scene_beats else "{}",
                     "cursor_pos": j + 1,
                     "initial_facts_json": json.dumps(
                         [{"id": f"F-{k:03d}", "text": t, "kind": "env", "visible_to": []}
@@ -2596,6 +2607,11 @@ class SimulationService:
             sim.world.env_conds = [stage_desc]
         sim.director.ending_options = list(plan_cfg.ending_options)
         sim.action_order = [c for c in sim.characters]
+        sim.scratch["cast_all"] = list(sim.action_order)   # v1.54：节流的完整名单（每回合从它挑）
+        # v1.54：节流要用到档位与主角名单（CharacterCard 里没有这两个信息，放 scratch）
+        sim.scratch["cast_tiers"] = {r["id"]: r.get("role_tier") or "minor" for r in roster}
+        sim.scratch["protagonists"] = [r["id"] for r in roster
+                                       if (r.get("role_tier") == "protagonist")]
         # 空世界标记（characters 与 facts 皆空）：前端据此显示"配置上场角色"引导
         if not sim.characters and not sim.world.facts:
             sim.scratch["empty_world"] = True

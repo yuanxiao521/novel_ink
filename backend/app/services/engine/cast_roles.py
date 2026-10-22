@@ -233,3 +233,45 @@ def default_cast(characters: list[dict], *, related_text: str = "",
         "notes": ["角色还没分档，默认先取与前文最相关的 %d 位（建议去人物页补档位）" % len(fallback)],
     }
 
+# ---------------------------------------------------------------- 回合节流（v1.54）
+MAX_ACTORS_PER_TURN = 3   # 每回合最多几个人"行动"（其余静默反应，不产生台词与决策）
+
+
+def throttle_order(roster: Iterable[str], *, tiers: dict[str, str] | None = None,
+                   protagonists: Iterable[str] | None = None,
+                   priority: Iterable[str] | None = None,
+                   limit: int = MAX_ACTORS_PER_TURN) -> list[str]:
+    """每回合的行动名单（纯函数，0-token）。
+
+    规则：**主角固定在场**（视角人物，每回合都该有反应），其余按 priority（导演排的主动权顺序）
+    补位到 limit 人；不在名单里的角色本回合"静默"——不思考、不发言、不决策。
+    为什么必须节流：不节流就是"所有人每回合都演"，既群像开会、张力摊薄，也成本线性涨。
+    """
+    names = [str(x) for x in (roster or []) if str(x)]
+    if not names:
+        return []
+    limit = max(1, int(limit or MAX_ACTORS_PER_TURN))
+    prot = [str(x) for x in (protagonists or []) if str(x) in names]
+    chosen: list[str] = prot[:limit]
+    pool: list[str] = []
+    for c in (priority or []):
+        cid = str(c)
+        if cid in names and cid not in chosen and cid not in pool:
+            pool.append(cid)
+    for cid in names:
+        if cid not in chosen and cid not in pool:
+            pool.append(cid)
+    for cid in pool:
+        if len(chosen) >= limit:
+            break
+        chosen.append(cid)
+    out = [cid for cid in names if cid in chosen]   # 保持出场顺序稳定（可复现）
+    return out or names[:limit]
+
+
+def silent_cast(roster: Iterable[str], order: Iterable[str]) -> list[str]:
+    """本回合静默的角色（用于给写手/前端说明"其他人在场但没轮到"）。"""
+    acting = {str(x) for x in (order or [])}
+    return [str(x) for x in (roster or []) if str(x) not in acting]
+
+

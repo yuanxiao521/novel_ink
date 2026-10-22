@@ -501,6 +501,39 @@ curl -s -X POST "http://127.0.0.1:8001/api/v1/sims" \
 **存量兜底**：迁移默认 `minor`（不猜谁是主角），没分档时按相关度取前 5 并提示"建议补档位"，
 **绝不给空 cast**（导演台会空转）。前端：人物页名后带档位徽标、详情页「档位」下拉可改、「⚖ 补档位」预览→应用。
 
+### 3.20 场级必然事件 beats + 回合节流（v1.54 · 0-token 判定）
+
+```bash
+# ① 场景配置里应能看到主笔写下的 beats（hard/soft + 锚点）
+docker exec -i novel-ink-db psql -U postgres -d novel -tAc \
+  "select id, plan_cfg_json from scenes where plan_cfg_json like '%beats%' limit 3"
+
+# ② 起一个 sim，跑 1 回合，看节流是否生效（5 名上场角色 → 只 3 人行动）
+cd backend && PYTHONPATH=. ../.venv/Scripts/python.exe - <<PY
+import asyncio
+from app.db.repo import Repo
+from app.services.service import SimulationService
+async def main():
+    svc = SimulationService(Repo())
+    r = await svc.start(book_id="book-14b4b312", chapter_id="chapter-c08f2b6b",
+                        scene_id="scene-8308b5c0", resume=False)
+    print("cast:", (r.get("cast") or {}).get("cast_names"))
+    async for _ in svc.stream_step(r["sim_id"]):
+        pass
+    sim = await svc._load_sim(r["sim_id"])
+    print("round_order:", sim.scratch.get("round_order"))     # 期望 <=3 且含主角
+    print("beats_status:", sim.scratch.get("beats_status"))    # 收敛时才写
+asyncio.run(main())
+PY
+# 实测：cast 5 人 → round_order 3 人（含主角林澈）
+```
+
+**判定规则**：只判 `hard`；锚点共现（≥2 个锚点需命中 2 个），**宁可漏报不假报**；
+未达成 → 收束闸门拦下（`converged=False` + stage_prompt 追加提示），**最多再推 2 回合**，
+用完则 `exhausted=True` 允许带缺陷收束并如实标记 `beats_status`。
+**回合节流**：每回合最多 3 人行动（`MAX_ACTORS_PER_TURN`），主角固定在场，其余按导演主动权顺序补位；
+不在名单的角色本回合不思考、不发言、不决策。
+
 ## 4. 存量验收（S1–S4 / A2 / A3，仍在跑）
 
 ```powershell

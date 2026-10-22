@@ -60,6 +60,30 @@ def llm_status() -> dict[str, Any]:
     }
 
 
+def _strip_fence(text: object) -> str:
+    """剥掉模型爱加的 Markdown 代码围栏，取出真正的 JSON。
+
+    实测（v1.54）：导演软引导返回 "```json\\n{...}\\n```" → json.loads 直接抛 →
+    整条导演 LLM 引导被判定失败退回确定性策略（表现为"导演永远在回退"，很难发现）。
+    这里只做最小清洗：去围栏 + 截取第一个 {/[ 到最后一个 }/] 之间。
+    """
+    body = str(text or "").strip()
+    if body.startswith("```"):
+        lines = body.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        body = "\\n".join(lines).strip()
+    if body and body[0] not in "{[" :
+        starts = [i for i in (body.find("{"), body.find("[")) if i >= 0]
+        body = body[min(starts):] if starts else body
+    if body and body[-1] not in "}]":
+        ends = [i for i in (body.rfind("}"), body.rfind("]")) if i >= 0]
+        body = body[: max(ends) + 1] if ends else body
+    return body.strip()
+
+
 class LLMClient:
     """极简 OpenAI 兼容客户端：只覆盖本系统需要的 /chat/completions 端点。"""
 
@@ -136,7 +160,7 @@ class LLMClient:
 
         if json_schema is not None:
             try:
-                parsed = json.loads(content)
+                parsed = json.loads(_strip_fence(content))
             except Exception as e:  # noqa: BLE001
                 _note_failure(model, 200, f"JSON 解析失败：{e}；原文前 120 字：{str(content)[:120]}")
                 return None

@@ -130,6 +130,18 @@ def build_graph(plan_cfg: PlanCfg, decide_fn: DecideFn, converge_fn: ConvergeFn,
         sim.world.turn += 1
         if not sim.action_order:
             director.choose_action_order(state.get("last_main_actor"))
+            sim.scratch["cast_all"] = list(sim.action_order)
+        # v1.54 回合节流：每回合最多 3 人行动（主角固定在场），其余静默反应。
+        # 放在 director_plan 里算：character_phase 只读 round_order，其它逻辑仍拿完整 action_order。
+        from app.services.engine.cast_roles import throttle_order
+
+        roster = list(sim.scratch.get("cast_all") or sim.action_order)
+        sim.scratch["round_order"] = throttle_order(
+            roster,
+            tiers=sim.scratch.get("cast_tiers") or {},
+            protagonists=sim.scratch.get("protagonists") or [],
+            priority=list(sim.action_order),
+        )
         director.measure_tension()
         await director.plan()  # LLM 软引导；LLM 不可用/返回空时内部回退确定性 fallback_plan
         _apply_guidance(sim, world)
@@ -150,7 +162,7 @@ def build_graph(plan_cfg: PlanCfg, decide_fn: DecideFn, converge_fn: ConvergeFn,
         char_eng = CharacterEngine(sim)
         world = WorldEngine(sim)
         writer = get_stream_writer()
-        order = list(sim.action_order)
+        order = list(sim.scratch.get("round_order") or sim.action_order)   # v1.54：本回合行动名单
         if last := state.get("last_main_actor"):
             if last in order and len(order) > 1:
                 order = [c for c in order if c != last] + [last]
@@ -207,7 +219,8 @@ def build_graph(plan_cfg: PlanCfg, decide_fn: DecideFn, converge_fn: ConvergeFn,
 
     def refresh_world(state: NovoState) -> dict:
         sim = state["sim"]
-        for ev in sim.events[-len(sim.action_order):]:
+        acting = sim.scratch.get("round_order") or sim.action_order
+        for ev in sim.events[-len(acting):]:
             if ev.payload.get("kind") == "conflict":
                 sim.director.last_conflict_turn = sim.world.turn
         return {}
@@ -262,6 +275,23 @@ def build_graph(plan_cfg: PlanCfg, decide_fn: DecideFn, converge_fn: ConvergeFn,
         # 注意：举手(raise_pending) 只是暂停，不是完结 → 不置 ended（否则 accept 后无法继续 step）。
         # ended 仅表示真正收束/超上限。
         await DirectorEngine(sim, plan_cfg).check_converged(converge_fn)
+
+        # ---- v1.54 收束闸门：hard beats 未达成时最多再推 2 回合 ----
+        # 作者已拍板：允许"带缺陷收束"（不阻塞写作），但必须先给它两次补救机会，
+        # 且**每次都留痕**（beats_status / beats_retry）——不偷偷改结论、也不无限循环。
+        beats = list(getattr(plan_cfg, "beats", []) or [])
+        if sim.director.converged and beats:
+            from app.services.engine.beats import apply_beats_gate
+
+            before = int(sim.scratch.get("beats_retry") or 0)
+            status = apply_beats_gate(sim, beats) or {}
+            if status.get("missed") and not status.get("exhausted"):
+                writer({"kind": "beats_retry", "turn": sim.world.turn,
+                        "retries": int(sim.scratch.get("beats_retry") or 0),
+                        "missed": status.get("missed_texts") or []})
+                logger.info("[beats] 收束被拦下（第 %d 次）：还差 %s", before + 1,
+                            status.get("missed_texts"))
+
         if sim.director.converged or sim.world.turn >= max_turns:
             sim.ended = True
         return {}
