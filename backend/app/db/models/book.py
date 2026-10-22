@@ -10,6 +10,7 @@ from app.db.base import Base, TimestampMixin
 
 if TYPE_CHECKING:
     from app.db.models.belief import Belief
+    from app.db.models.book_volume import BookVolume
     from app.db.models.chat_history import ChatHistory
     from app.db.models.chapter import Chapter
     from app.db.models.character import Character
@@ -33,10 +34,15 @@ class Book(TimestampMixin, Base):
     worldview_json: Mapped[str] = mapped_column(Text, default="{}")  # 世界观文本（premise/rules_text/background）
     world_rules_json: Mapped[str] = mapped_column(Text, default="[]")  # 结构化 WorldRule[]（LLM 解析产物）
     # ---- 前情压缩（v1.58 / 0022）----
-    volume_size: Mapped[int] = mapped_column(default=8)               # 默认每 8 章一卷
+    # v1.59：卷实体化后，volume_size 仅作**回退**（老书/主笔未给卷时按它均分）
+    volume_size: Mapped[int] = mapped_column(default=8)               # 回退：默认每 8 章一卷
     volumes_json: Mapped[str] = mapped_column(Text, default="[]")     # 主笔/作者微调的卷边界 [{no,from,to}]
 
     chapters: Mapped[list["Chapter"]] = relationship(
+        back_populates="book", cascade="all, delete-orphan"
+    )
+    # v1.59：卷（结构唯一真源；range 决定章归属）
+    volumes: Mapped[list["BookVolume"]] = relationship(
         back_populates="book", cascade="all, delete-orphan"
     )
     characters: Mapped[list["Character"]] = relationship(

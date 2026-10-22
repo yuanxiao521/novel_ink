@@ -1,7 +1,7 @@
 """Chapter ORM：章节（第二层）。"""
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from sqlalchemy import ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -33,6 +33,8 @@ class Chapter(TimestampMixin, Base):
     # v1.58 前情概要（结构化 JSON：events/state_changes/knowledge/hook/open_questions…），
     # 由章后后台任务生成；写手 prompt 只吃结构化字段，人看 summary_md
     digest_json: Mapped[str] = mapped_column(Text, default="{}")
+    # v1.59：所属卷（**派生缓存**：只由 sync_volume_assignments 写；真源是 book_volumes.range）
+    volume_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
     book: Mapped["Book"] = relationship(back_populates="chapters")
     scenes: Mapped[list["Scene"]] = relationship(back_populates="chapter", cascade="all, delete-orphan")

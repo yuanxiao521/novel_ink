@@ -803,14 +803,34 @@ class SimulationService:
             existing = await self.repo.list_chapters_by_book(book_id)
             data["order_no"] = max((int(c.get("order_no") or 0) for c in existing), default=0) + 1
         await self.repo.save_chapter(data)
+        # v1.59：新增章可能落进某卷 range → 归属同步（幂等；失败不影响建章）
+        try:
+            await self.sync_volume_assignments(book_id)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[volume] 归属同步失败 book=%s：%s", book_id, e)
         return {"id": cid}
 
     async def update_chapter(self, chapter_id: str, data: dict) -> dict:
         await self.repo.save_chapter({**data, "id": chapter_id})
+        # 章号/章序可能改了 → 归属重算
+        if "order_no" in data:
+            try:
+                ch = await self.repo.get_chapter(chapter_id) or {}
+                await self.sync_volume_assignments(str(ch.get("book_id") or ""))
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[volume] 归属同步失败 chapter=%s：%s", chapter_id, e)
         return {"id": chapter_id}
 
     async def delete_chapter(self, chapter_id: str) -> None:
+        ch = await self.repo.get_chapter(chapter_id) or {}
+        book_id = str(ch.get("book_id") or "")
         await self.repo.delete_chapter(chapter_id)
+        # v1.59：删章后卷归属要重算（否则 volume_id 指向已删章的位置）
+        if book_id:
+            try:
+                await self.sync_volume_assignments(book_id)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[volume] 归属同步失败 book=%s：%s", book_id, e)
 
     async def create_scene(self, chapter_id: str, data: dict) -> dict:
         sid = data.get("id") or f"scene-{uuid.uuid4().hex[:8]}"
@@ -1079,6 +1099,55 @@ class SimulationService:
             })
             f_count += 1
 
+        # 4) 分卷（v1.59）：主笔给了 volumes 就落卷表；没给则按 volume_size 兜底物化一次。
+        #    稳定性：整本重排时整表替换；续批只补"本批章所在、且还不存在的卷"，合并后重写编号。
+        vols_out: list[dict] = []
+        try:
+            plan_vols = [v for v in (plan.get("volumes") or []) if isinstance(v, dict)]
+            existing_vols = await self.repo.list_book_volumes(book_id)
+            total_ch = (base_order + len(chapters)) if mode == "append" else len(chapters)
+            rows: list[dict] = []
+            if plan_vols and (first_batch or mode == "replace" or not existing_vols):
+                for i, v in enumerate(plan_vols):
+                    try:
+                        frm, to = int(v.get("from_seq") or 0), int(v.get("to_seq") or 0)
+                    except (TypeError, ValueError):
+                        continue
+                    if frm <= 0 or to < frm:
+                        continue
+                    rows.append({"no": i + 1, "from": frm, "to": min(to, total_ch),
+                                 "title": str(v.get("title") or ""),
+                                 "arc_goal": str(v.get("arc_goal") or ""),
+                                 "climax": str(v.get("climax") or "")})
+            elif existing_vols and plan_vols:
+                rows = [{"no": int(e.get("no") or 0), "from": int(e.get("range_from") or 0),
+                         "to": int(e.get("range_to") or 0), "title": str(e.get("title") or ""),
+                         "arc_goal": str(e.get("arc_goal") or ""),
+                         "climax": str(e.get("climax") or "")} for e in existing_vols]
+                known = {r["from"] for r in rows}
+                for v in plan_vols:
+                    try:
+                        frm, to = int(v.get("from_seq") or 0), int(v.get("to_seq") or 0)
+                    except (TypeError, ValueError):
+                        continue
+                    if frm <= 0 or to < frm or frm in known:
+                        continue
+                    rows.append({"no": 0, "from": frm, "to": min(to, total_ch),
+                                 "title": str(v.get("title") or ""),
+                                 "arc_goal": str(v.get("arc_goal") or ""),
+                                 "climax": str(v.get("climax") or "")})
+                rows.sort(key=lambda r: r["from"])
+                for i, r in enumerate(rows):
+                    r["no"] = i + 1
+            if rows:
+                await self.set_volume_config(book_id, volumes=rows)
+            elif not existing_vols and total_ch > 0:
+                await self.set_volume_config(book_id)   # 按 volume_size 物化兜底
+            await self.sync_volume_assignments(book_id)
+            vols_out = await self.repo.list_book_volumes(book_id)
+        except Exception as e:  # noqa: BLE001  分卷失败不能回滚已落库的骨架
+            logger.warning("[volume] 骨架落库时分卷失败 book=%s：%s", book_id, e)
+
         return {
             "book_id": book_id,
             "mode": mode,
@@ -1088,6 +1157,7 @@ class SimulationService:
             "foreshadows": f_count,
             "rules": len(world_rules),
             "replaced_chapters": replaced,
+            "volumes": len(vols_out),
             "total_chapters": (base_order + len(chapters)) if mode == "append" else len(chapters),
             "kept_prose_scenes": stats["scenes"] if mode == "append" else 0,
         }
@@ -1900,13 +1970,50 @@ class SimulationService:
     # ---------------------------------------------------------------- 前情压缩（v1.58）
     async def _book_volume_bounds(self, book_id: str,
                                   chapters: list[dict] | None = None) -> list[dict]:
-        """卷边界：books.volumes_json（主笔/作者微调）优先，否则按 volume_size 均分。"""
+        """卷边界（v1.59）：**book_volumes 表是唯一真源**；表空时按 volume_size 派生（只读回退，不写库）。
+
+        返回 [{no, from, to, id?, title?, derived?}]，`derived=True` 表示是回退出来的。
+        """
         from app.services.engine.digest import volume_bounds
 
+        rows = await self.repo.list_book_volumes(book_id)
+        if rows:
+            return [{"no": int(r.get("no") or 0), "from": int(r.get("range_from") or 0),
+                     "to": int(r.get("range_to") or 0), "id": str(r.get("id") or ""),
+                     "title": str(r.get("title") or ""), "derived": False} for r in rows]
         book = await self.repo.get_book(book_id) or {}
-        rows = chapters if chapters is not None else await self.repo.list_chapters_by_book(book_id)
+        chs = chapters if chapters is not None else await self.repo.list_chapters_by_book(book_id)
         custom = _parse_json_list(book.get("volumes_json"))
-        return volume_bounds(len(rows or []), int(book.get("volume_size") or 8), custom)
+        return [{**b, "id": "", "title": "", "derived": True} for b in
+                volume_bounds(len(chs or []), int(book.get("volume_size") or 8), custom)]
+
+    async def sync_volume_assignments(self, book_id: str) -> dict:
+        """把 chapters.volume_id 对齐到卷表 range（v1.59 · 幂等 + 自愈）。
+
+        稳定性要点：
+          - **只由这里写** volume_id（其他路径一律不写），避免两套真相；
+          - 章序变了（增删/重排）调用它即可收敛，重复调用无副作用；
+          - 落在任何卷之外的章 → volume_id=None（**不猜归属**），并在返回里列出来。
+        """
+        volumes = await self.repo.list_book_volumes(book_id)
+        chapters = await self.repo.list_chapters_by_book(book_id)
+        assigned = 0
+        unassigned: list[int] = []
+        for ch in chapters:
+            no = int(ch.get("order_no") or 0)
+            target = ""
+            for v in volumes:
+                if int(v.get("range_from") or 0) <= no <= int(v.get("range_to") or 0):
+                    target = str(v.get("id") or "")
+                    break
+            if target:
+                assigned += 1
+            elif no > 0:
+                unassigned.append(no)
+            if str(ch.get("volume_id") or "") != target:
+                await self.repo.save_chapter({**ch, "volume_id": target or None})
+        return {"book_id": book_id, "volumes": len(volumes), "chapters": len(chapters),
+                "assigned": assigned, "unassigned": unassigned}
 
     async def generate_chapter_digest(self, chapter_id: str) -> dict:
         """章级前情概要（后台任务）：正文 → 结构化 digest + 冲突检测。
@@ -2001,11 +2108,16 @@ class SimulationService:
                 continue
             vd = normalize_volume_digest(raw, volume_no=vol["no"],
                                          range_from=vol["from"], range_to=vol["to"])
+            # v1.59：卷级概要挂到卷 id 上（range 同时保留，便于边界变更后核对），并清 stale。
+            # 注意 id 用 vd- 前缀：内存态把所有实体放在同一个 dict 里，不能与卷行 id(vol-) 撞车。
             await self.repo.save_book_digest({
-                "id": f"vol-{book_id}-{vol['from']}-{vol['to']}", "book_id": book_id,
-                "level": "volume", "range_from": vol["from"], "range_to": vol["to"],
+                "id": f"vd-{book_id}-{vol['no']}",
+                "book_id": book_id, "level": "volume",
+                "volume_id": str(vol.get("id") or ""),
+                "range_from": vol["from"], "range_to": vol["to"],
                 "digest_json": json.dumps(vd, ensure_ascii=False),
                 "summary_md": str(vd.get("summary_md") or ""),
+                "stale": False,
             })
             done.append({"volume_no": vol["no"], "range": [vol["from"], vol["to"]]})
         return {"book_id": book_id, "volumes": done}
@@ -2052,27 +2164,73 @@ class SimulationService:
         book = await self.repo.get_book(book_id)
         if book is None:
             raise BookNotFoundError(f"未找到书籍: {book_id}")
-        data: dict = {**book, "id": book_id}
-        if volume_size is not None:
-            size = int(volume_size)
-            if size < 1 or size > 50:
-                raise InvalidActionError("volume_size 需在 1~50 之间")
-            data["volume_size"] = size
+        chapters = await self.repo.list_chapters_by_book(book_id)
+        total = len(chapters)
+
+        # 目标卷结构：给了 volumes 就用它；否则按 volume_size 均分
         if volumes is not None:
-            rows = [{"no": i + 1, "from": int(v.get("from") or 0), "to": int(v.get("to") or 0)}
+            rows = [{"no": i + 1, "from": int(v.get("from") or 0), "to": int(v.get("to") or 0),
+                     "title": str(v.get("title") or ""),
+                     "arc_goal": str(v.get("arc_goal") or ""),
+                     "climax": str(v.get("climax") or "")}
                     for i, v in enumerate(volumes) if isinstance(v, dict)]
             prev_to = 0
             for r in rows:
                 if r["from"] <= prev_to or r["to"] < r["from"]:
                     raise InvalidActionError("卷边界必须递增且不重叠（from > 上一卷 to，to ≥ from）")
                 prev_to = r["to"]
-            data["volumes_json"] = json.dumps(rows, ensure_ascii=False)
-        await self.repo.save_book(data)
+        else:
+            size = int(volume_size if volume_size is not None
+                       else (book.get("volume_size") or 8))
+            if size < 1 or size > 50:
+                raise InvalidActionError("volume_size 需在 1~50 之间")
+            await self.repo.save_book({**book, "id": book_id, "volume_size": size})
+            rows = [{**b, "title": "", "arc_goal": "", "climax": ""}
+                    for b in volume_bounds(total, size)]
+
+        # 整本替换卷结构（幂等：先清后建 + 同步归属 + 旧概要标 stale）
+        await self.repo.clear_book_volumes(book_id)
+        for r in rows:
+            await self.repo.save_book_volume({
+                "id": f"vol-{book_id}-{r['no']}", "book_id": book_id, "no": int(r["no"]),
+                "title": str(r.get("title") or ""),
+                "range_from": int(r["from"]), "range_to": int(r["to"]),
+                "arc_goal": str(r.get("arc_goal") or ""),
+                "climax": str(r.get("climax") or ""),
+            })
+        synced = await self.sync_volume_assignments(book_id)
+        stale = await self._mark_volume_digests_stale(book_id)
+        vols = await self.repo.list_book_volumes(book_id)
+        return {"book_id": book_id, "volume_size": int(book.get("volume_size") or 8),
+                "volumes": [{"no": v["no"], "title": v["title"], "from": v["range_from"],
+                             "to": v["range_to"]} for v in vols],
+                "bounds": await self._book_volume_bounds(book_id, chapters),
+                "sync": synced, "digests_marked_stale": stale}
+
+    async def list_book_volumes(self, book_id: str) -> list[dict]:
+        """分卷列表（v1.59）：表为空时给出**派生**回退（derived=true，不写库）。"""
+        rows = await self.repo.list_book_volumes(book_id)
         chapters = await self.repo.list_chapters_by_book(book_id)
-        return {"book_id": book_id, "volume_size": int(data.get("volume_size") or 8),
-                "bounds": volume_bounds(len(chapters),
-                                        int(data.get("volume_size") or 8),
-                                        _parse_json_list(data.get("volumes_json")))}
+        if rows:
+            counts: dict[str, int] = {}
+            for ch in chapters:
+                vid = str(ch.get("volume_id") or "")
+                if vid:
+                    counts[vid] = counts.get(vid, 0) + 1
+            return [{**r, "chapters": counts.get(str(r["id"]), 0), "derived": False,
+                     "range": [r["range_from"], r["range_to"]]} for r in rows]
+        bounds = await self._book_volume_bounds(book_id, chapters)
+        return [{**b, "chapters": max(0, b["to"] - b["from"] + 1)} for b in bounds]
+
+    async def _mark_volume_digests_stale(self, book_id: str) -> int:
+        """卷边界变了 → 旧卷级/全书级概要标 stale（**不删内容**，提示待重算）。"""
+        n = 0
+        for d in await self.repo.list_book_digests(book_id):
+            if d.get("stale"):
+                continue
+            await self.repo.save_book_digest({**d, "id": d["id"], "stale": True})
+            n += 1
+        return n
 
     async def chapter_prior(self, chapter_id: str) -> dict:
         """本章的前情素材（全书 / 本卷 / 最近两章 + 冲突），给注入与 UI 共用。"""
@@ -2106,8 +2264,11 @@ class SimulationService:
             "recent": recent,
             "conflicts": conflicts[:6],
             "volume_no": int(vol["no"]) if vol else 0,
+            "volume_title": str((vol or {}).get("title") or ""),
             "volume_range": [int(vol["from"]), int(vol["to"])] if vol else [],
             "volumes": bounds,
+            # v1.59：卷概要若因卷边界/章序变化而陈旧 → UI 提示"待重算"（不静默用旧数据）
+            "volume_digest_stale": bool((vol_row or {}).get("stale")),
             "has_any": bool(book_row or vol_row or any(recent)),
         }
         bundle["text"] = render_prior_bundle(bundle)

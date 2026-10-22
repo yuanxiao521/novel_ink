@@ -385,7 +385,9 @@ export function WritePage() {
                 <>
                   <div className="wp-prior-line">
                     <span className="wp-prior-mode">
-                      {prior.volume_no ? `第 ${prior.volume_no} 卷` : "未分卷"}
+                      {prior.volume_no
+                        ? `第 ${prior.volume_no} 卷${prior.volume_title ? `《${prior.volume_title}》` : ""}`
+                        : "未分卷"}
                     </span>
                     <span>
                       {prior.volume_range.length === 2
@@ -393,6 +395,11 @@ export function WritePage() {
                       {prior.recent.length ? ` · 最近 ${prior.recent.length} 章` : ""}
                     </span>
                   </div>
+                  {prior.volume_digest_stale && (
+                    <div className="wp-prior-conflict" style={{ color: "var(--accent-cyan)", borderColor: "var(--accent-cyan)" }}>
+                      卷概要待重算：卷边界或章序变过，当前显示的是旧概要（点「重算前情」）
+                    </div>
+                  )}
                   {prior.conflicts.length > 0 && (
                     <div className="wp-prior-conflict">
                       ⚠ 与既有前情冲突 {prior.conflicts.length} 条（需你裁定，系统不自动改）

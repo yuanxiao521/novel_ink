@@ -346,6 +346,8 @@ export interface ChapterPrior {
   recent: ChapterDigest[];
   conflicts: Array<{ chapter_no?: number; type?: string; detail?: string }>;
   volume_no: number;
+  volume_title?: string;
+  volume_digest_stale?: boolean;
   volume_range: number[];
   volumes: Array<{ no: number; from: number; to: number }>;
   has_any: boolean;

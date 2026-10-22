@@ -656,6 +656,32 @@ curl -s -X POST "http://127.0.0.1:8001/api/v1/books/$B/digest/generate" -d '{"sc
 **注入预算**：全书 320 / 本卷 420 / 最近两章 400 字，总预算 1100 字；超了**按层截断**（越近越不能砍）。
 **冲突只报警不改写**：`conflicts` 进 `prior` 接口 → 写作页红条提示「需你裁定」；系统不自动改历史。
 
+### 3.25 卷实体化（v1.59 · 表 + 归属同步 + 陈旧标记）
+
+```bash
+B=book-14b4b312
+
+# ① 卷表（迁移回填后应已有行；老书无行时读路径派生回退）
+curl -s "http://127.0.0.1:8001/api/v1/books/$B/volumes"
+# 期望 {volumes:[{id,no,title,range_from,range_to,arc_goal,chapters,derived,range}]}
+
+# ② 改卷边界（写卷表 → 重同步章归属 → 旧概要标 stale，不删内容）
+cat > /tmp/vc.json <<'JSON'
+{"volumes": [{"from": 1, "to": 1, "title": "零里雨夜", "arc_goal": "逃出零里"}]}
+JSON
+curl -s -X PUT "http://127.0.0.1:8001/api/v1/books/$B/volumes" \
+  -H "Content-Type: application/json" --data-binary @/tmp/vc.json
+# 期望 {volumes:[…], sync:{assigned:N,unassigned:[]}, digests_marked_stale:M}
+
+# ③ 前情接口带卷名与陈旧标记
+curl -s "http://127.0.0.1:8001/api/v1/chapters/chapter-c08f2b6b/prior"
+# 期望 {volume_no, volume_title, volume_digest_stale, volumes:[{no,from,to}]}
+```
+
+**稳定性三条（单测钉死）**：①章归属只有 `sync_volume_assignments` 一个写者、幂等、卷外章不猜归属；
+②卷表空 → 读路径派生回退（`derived=true`）且**不写库**；③卷边界变 → 概要只标 `stale`（内容保留），重算后清除。
+**连锁点**：建章/删章/改章号/骨架落库（append|replace）/改卷配置 —— 全部会重算归属。
+
 ## 4. 存量验收（S1–S4 / A2 / A3，仍在跑）
 
 ```powershell

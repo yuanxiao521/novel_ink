@@ -324,6 +324,13 @@ class VolumeCfgIn(models.BaseModel):
     volumes: list[dict] | None = None
 
 
+@router.get("/books/{book_id}/volumes")
+async def list_book_volumes(book_id: str, svc: SimulationService = Depends(get_service)):
+    """分卷列表（v1.59）：真源是 book_volumes 表；附每卷章数与是否存在章归属。"""
+    vols = await svc.list_book_volumes(book_id)
+    return {"book_id": book_id, "volumes": vols}
+
+
 @router.put("/books/{book_id}/volumes")
 async def set_volume_config(book_id: str, body: VolumeCfgIn,
                             svc: SimulationService = Depends(get_service)):

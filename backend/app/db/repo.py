@@ -18,7 +18,7 @@ from app.config import settings
 from app.db.base import Base
 from app.errors import RepoError
 from app.db.engine import get_session_factory
-from app.db.models import AgentMessage, AgentTask, Belief, Book, BookDigest, BookMemory, ChatHistory, Chapter, Character, Foreshadow, InspirationCard, ProseAnnotation, ProseNote, Scene, Simulation, WorldState
+from app.db.models import AgentMessage, AgentTask, Belief, Book, BookDigest, BookMemory, BookVolume, ChatHistory, Chapter, Character, Foreshadow, InspirationCard, ProseAnnotation, ProseNote, Scene, Simulation, WorldState
 from app.schemas.models import CharacterCard, SimulationState
 
 logger = logging.getLogger(__name__)
@@ -303,6 +303,44 @@ class Repo:
             pass
 
     # ------------------------------------------------------------------
+    # book_volumes（卷 · 结构唯一真源，v1.59）
+    # ------------------------------------------------------------------
+    async def list_book_volumes(self, book_id: str) -> list[dict]:
+        async def _q(session: AsyncSession):
+            stmt = (select(BookVolume).where(BookVolume.book_id == book_id)
+                    .order_by(BookVolume.range_from))
+            rows = (await session.execute(stmt)).scalars().all()
+            return [self._volume_dict(r) for r in rows]
+
+        if not self.use_db:
+            rows = [v for v in self._mem.values()
+                    if isinstance(v, dict) and v.get("book_id") == book_id
+                    and "range_from" in v and "no" in v]
+            return sorted(rows, key=lambda r: r.get("range_from") or 0)
+        return await self._query_or_mem(_q, [])
+
+    async def save_book_volume(self, data: dict) -> None:
+        await self._upsert(BookVolume, data)
+
+    async def delete_book_volume(self, volume_id: str) -> None:
+        await self._delete_row(BookVolume, volume_id)
+
+    async def clear_book_volumes(self, book_id: str) -> int:
+        """整本卷结构替换前清空（重排卷边界用）。"""
+        rows = await self.list_book_volumes(book_id)
+        for r in rows:
+            await self.delete_book_volume(str(r["id"]))
+        return len(rows)
+
+    @staticmethod
+    def _volume_dict(r: BookVolume) -> dict:
+        return {"id": r.id, "book_id": r.book_id, "no": int(r.no or 0),
+                "title": r.title or "", "range_from": int(r.range_from or 0),
+                "range_to": int(r.range_to or 0), "arc_goal": r.arc_goal or "",
+                "climax": r.climax or "",
+                "updated_at": r.updated_at.isoformat() if r.updated_at else ""}
+
+    # ------------------------------------------------------------------
     # book_digests（前情概要 · 卷级/全书级，v1.58）
     # ------------------------------------------------------------------
     async def save_book_digest(self, data: dict) -> None:
@@ -347,6 +385,9 @@ class Repo:
     def _digest_dict(r: BookDigest) -> dict:
         return {"id": r.id, "book_id": r.book_id, "level": r.level,
                 "range_from": r.range_from, "range_to": r.range_to,
+                # v1.59：关联卷 + 陈旧标记（卷边界/章序变了就标 stale，不删内容）
+                "volume_id": getattr(r, "volume_id", None),
+                "stale": bool(getattr(r, "stale", False)),
                 "digest_json": r.digest_json or "{}", "summary_md": r.summary_md or "",
                 "updated_at": r.updated_at.isoformat() if r.updated_at else ""}
 
@@ -374,6 +415,7 @@ class Repo:
                 "mode": getattr(r, "mode", "") or "draft",
                 "production_json": getattr(r, "production_json", "") or "{}",
                 "digest_json": getattr(r, "digest_json", "") or "{}",
+                "volume_id": getattr(r, "volume_id", None),
                 "updated_at": r.updated_at.isoformat() if r.updated_at else "",
             } for r in rows]
 
@@ -392,6 +434,7 @@ class Repo:
                 "mode": getattr(r, "mode", "") or "draft",
                 "production_json": getattr(r, "production_json", "") or "{}",
                 "digest_json": getattr(r, "digest_json", "") or "{}",
+                "volume_id": getattr(r, "volume_id", None),
                 "updated_at": r.updated_at.isoformat() if r.updated_at else "",
             }
 

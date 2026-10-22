@@ -7,7 +7,9 @@
 """
 from __future__ import annotations
 
-from sqlalchemy import ForeignKey, Integer, String, Text
+from typing import Optional
+
+from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin
@@ -22,5 +24,9 @@ class BookDigest(TimestampMixin, Base):
     level: Mapped[str] = mapped_column(String(16), nullable=False)   # volume | book
     range_from: Mapped[int] = mapped_column(Integer, default=0)
     range_to: Mapped[int] = mapped_column(Integer, default=0)
+    # v1.59：卷级概要挂到卷 id 上（range 保留，便于边界变更后核对）
+    volume_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # v1.59：陈旧标记 —— 卷边界/章序变了只标 stale（不删内容），读取时提示"待重算"
+    stale: Mapped[bool] = mapped_column(Boolean, default=False)
     digest_json: Mapped[str] = mapped_column(Text, default="{}")
     summary_md: Mapped[str] = mapped_column(Text, default="")

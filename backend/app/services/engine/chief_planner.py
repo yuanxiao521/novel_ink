@@ -50,6 +50,13 @@ PLAN_SCHEMA = {
         "text": "str", "type": "plot|character|theme|world",
         "buried_scene": "str 场景标题", "expected_close_scene": "str 场景标题",
     }],
+    "volumes": [{
+        "title": "str 卷名（如「零里雨夜」）",
+        "from_seq": "int 本卷起始章号（全局，1-based）",
+        "to_seq": "int 本卷结束章号（含）",
+        "arc_goal": "str 本卷要完成什么（一句话）",
+        "climax": "str 卷末大高潮/转折（一句话）",
+    }],
     "ending_options": ["str"],
 }
 
@@ -134,6 +141,9 @@ _PLAN_PROMPT = """你是小说【主笔】（总编剧）。你的职责：把�
   「路引被霍岸当场收走」「宁秋鹜承认残图在她手里」）+ 0~1 条 soft（期望但可不成）。
   每条给 2~4 个 anchors（人物名/物件名/动作词），它们会被用于事后 0-token 校验——
   别写「气氛变紧张」这种查不到的软话，要写**可拍到的东西**。
+- **volumes 给出分卷规划**（卷是戏剧单位，不是每 8 章一刀）：每卷 3~15 章，
+  from_seq/to_seq 用全局章号且首尾相接不重叠；每卷给 title（卷名）、arc_goal（本卷要完成什么）、
+  climax（卷末大高潮）。整本书的卷要覆盖全部章；只有本批可见时，先给到本批末尾为止。
 - ending_options 给出 2~4 个全局结局。
 - foreshadow_plan 只列重要的伏笔（3~5 条），给埋设场景与期望回收场景。
 
