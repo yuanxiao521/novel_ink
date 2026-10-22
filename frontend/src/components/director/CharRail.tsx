@@ -4,7 +4,7 @@ import { CHANNEL_CLS, CHANNEL_TAG, type Belief } from '../../types/types';
 import { CastPanel } from './CastPanel';
 import { setSimCast } from '../../api/novel';
 import { EmptyState } from '../common/EmptyState';
-import { charOf, type CharSpec } from './characters';
+import { charInitial, charOf, isDemoChar, TIER_LABEL, type CharInfo, type CharSpec } from './characters';
 
 function BeliefItem({ b }: { b: Belief }) {
   return (
@@ -17,37 +17,51 @@ function BeliefItem({ b }: { b: Belief }) {
   );
 }
 
-function CharCard({ spec, beliefs, ov }: { spec: CharSpec; beliefs: Belief[]; ov?: SimUIState['overrides'][string] }) {
+function CharCard({ spec, info, beliefs, ov }: { spec: CharSpec; info?: CharInfo; beliefs: Belief[]; ov?: SimUIState['overrides'][string] }) {
   const moodColor = spec.moodColor;
   const [thoughtOpen, setThoughtOpen] = useState(false); // 思考区折叠/展开
+  // v1.63：真实书角色没有立绘/权重/情绪基线 —— 名字与目标取接口数据，
+  // 缺失字段直接不渲染（以前显示成 char-xxxx 原始 id / 破图 / 空目标 / 0%）。
+  const known = isDemoChar(spec.id);
+  const name = info?.name?.trim() || spec.name;
+  const tierLabel = info?.tier ? TIER_LABEL[info.tier] || info.tier : '';
+  const goal = info?.goal?.trim() || spec.goal;
+  const mood = ov?.mood || (known ? spec.mood : '');
   return (
     <div className="char-card" data-char-id={spec.id}>
       <div className="char-card-head">
-        <img className="char-portrait" src={spec.portrait} alt={`${spec.name}立绘`} />
+        {known ? (
+          <img className="char-portrait" src={spec.portrait} alt={`${name}立绘`} />
+        ) : (
+          <span className="char-portrait is-initial" title={name}>{charInitial(name)}</span>
+        )}
         <div className="char-name-col">
-          <span className="char-name">{spec.name}</span>
+          <span className="char-name">{name}</span>
           <span className="char-mood" style={moodColor ? { color: moodColor } : undefined}>
-            {ov?.mood || spec.mood}
+            {mood || '待推演'}
           </span>
         </div>
+        {tierLabel ? <span className="char-tier-badge">{tierLabel}</span> : null}
       </div>
       <div className="char-goal-row">
-        <span className="char-goal">{spec.goal}</span>
-        <span className="char-weight">{spec.weight}</span>
+        <span className="char-goal" title={goal}>{goal || '本场目标未定'}</span>
+        {known ? <span className="char-weight">{spec.weight}</span> : null}
       </div>
-      <div className="char-emotion">
-        <div className="emotion-label-row">
-          <span className="emotion-label-text">情绪水位</span>
-          <span className="emotion-val">{spec.emotion}%</span>
+      {known && (
+        <div className="char-emotion">
+          <div className="emotion-label-row">
+            <span className="emotion-label-text">情绪水位</span>
+            <span className="emotion-val">{spec.emotion}%</span>
+          </div>
+          <div className="emotion-track">
+            <div className="emotion-fill" style={{ width: `${spec.emotion}%` }} />
+          </div>
+          <div className="emotion-scale">
+            <span>平静</span>
+            <span>爆发</span>
+          </div>
         </div>
-        <div className="emotion-track">
-          <div className="emotion-fill" style={{ width: `${spec.emotion}%` }} />
-        </div>
-        <div className="emotion-scale">
-          <span>平静</span>
-          <span>爆发</span>
-        </div>
-      </div>
+      )}
       <div className="char-belief-section">
         <div className="belief-header">
           <span className="belief-title">信念账本</span>
@@ -118,13 +132,14 @@ export function CharRail({ state, cast }: { state: SimUIState; cast?: { simId: s
         </EmptyState>
       );
     }
-    // 有上场角色：用 charOf 查每个 ID（静态库 + 新书角色均支持）
+    // 有上场角色：charOf 给演示角色的基线，state.chars 给真实书的名字/档位/目标（v1.63）
     return state.charIds.map((cid) => {
       const spec = charOf(cid);
       return (
         <CharCard
           key={cid}
           spec={spec}
+          info={state.chars[cid]}
           beliefs={state.beliefs[cid] || spec.beliefs}
           ov={state.overrides[cid]}
         />
@@ -133,24 +148,28 @@ export function CharRail({ state, cast }: { state: SimUIState; cast?: { simId: s
   };
 
   return (
-    <aside className="char-rail" style={{ position: 'relative' }}>
-      <div className="rail-header">
-        <span className="rail-title">角色</span>
-        <div className="rail-actions">
-          {hasCast && (
-            <button className="view-switch" title="配置上场角色" onClick={() => setDrawerOpen(true)} disabled={!cast?.simId}>
-              ⚙ 配置
+    // v1.63：aside 只做「定位容器」，滚动交给内层 .char-rail-scroll ——
+    // 否则 aside 的 overflow:auto 会把比它宽的抽屉裁掉（实测左边缺 72~84px）。
+    <aside className="char-rail">
+      <div className="char-rail-scroll">
+        <div className="rail-header">
+          <span className="rail-title">角色</span>
+          <div className="rail-actions">
+            {hasCast && (
+              <button className="view-switch" title="配置上场角色" onClick={() => setDrawerOpen(true)} disabled={!cast?.simId}>
+                ⚙ 配置
+              </button>
+            )}
+            <button className="view-switch" title="全局视角" onClick={() => setGlobalOpen(true)}>
+              全局视角
+              <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
+                <path d="M1.5 2.5L4 5L6.5 2.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
             </button>
-          )}
-          <button className="view-switch" title="全局视角" onClick={() => setGlobalOpen(true)}>
-            全局视角
-            <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
-              <path d="M1.5 2.5L4 5L6.5 2.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
+          </div>
         </div>
+        <div className="char-cards">{renderCharArea()}</div>
       </div>
-      <div className="char-cards">{renderCharArea()}</div>
 
       {/* —— 选角抽屉（有角色后，右侧滑出） —— */}
       {drawerOpen && cast && (

@@ -7,6 +7,8 @@ import {
   type SimState,
   type StoryEvent,
 } from '../types/types';
+import { listBookCharacters } from '../api/novel';
+import type { CharInfo } from '../components/director/characters';
 
 /** 回合节点（时间线） */
 export interface TurnNode {
@@ -85,6 +87,9 @@ export interface SimUIState {
   closeReport: DirectorCloseReport | null; // 场景收束长程汇报（S3）
   emptyWorld: boolean; // 空黑板：无角色且无 facts（引导选角）
   charIds: string[]; // 当前上场角色 id 列表
+  // v1.63：真实书角色信息（名字/档位/目标）。此前角色栏只认 3 个写死的演示角色，
+  // 真实书的角色会显示成 char-xxxx 原始 id + 破图 + 空目标（"展示不全"）。
+  chars: Record<string, CharInfo>;
   worldFacts: Array<{ id: string; text: string }>; // 世界事实（全局视角）
 }
 
@@ -113,6 +118,7 @@ const initState: SimUIState = {
   closeReport: null,
   emptyWorld: false,
   charIds: [],
+  chars: {},
   worldFacts: [],
 };
 
@@ -134,7 +140,8 @@ type Action =
   | { type: 'RAISE_HIDE' }
   | { type: 'HISTORY'; archives: TurnArchive[] }
   | { type: 'VIEW'; archive: TurnArchive | null }
-  | { type: 'RESET_AFTER_REWIND'; turn?: number };
+  | { type: 'RESET_AFTER_REWIND'; turn?: number }
+  | { type: 'CHARS'; chars: Record<string, CharInfo> };
 
 /* ---------- 工具（与 app.js 对齐） ---------- */
 
@@ -175,6 +182,31 @@ function speakerName(charId: string, ev: StoryEvent): string {
   return (actor ? SPEAKER[actor] : undefined) || SPEAKER[charId] || actor || charId;
 }
 
+/**
+ * v1.63：从角色卡 spec_json 里取一句「目标」给角色栏显示（动态目标优先，其次静态目标）。
+ * 取不到就返回空串 —— 冷缺比瞎猜好：宁可显示档位，也别显示一个假目标。
+ */
+function goalFromSpec(specJson: string): string {
+  try {
+    const spec = JSON.parse(specJson || '{}') as Record<string, unknown>;
+    const goals = spec.dynamic_goals;
+    if (Array.isArray(goals) && goals.length > 0) {
+      const first = goals[0] as unknown;
+      const text = typeof first === 'string'
+        ? first
+        : String((first as Record<string, unknown>)?.text || '');
+      if (text.trim()) return text.trim().slice(0, 26);
+    }
+    for (const key of ['goal', 'want', 'desire']) {
+      const v = spec[key];
+      if (typeof v === 'string' && v.trim()) return v.trim().slice(0, 26);
+    }
+  } catch {
+    /* spec_json 坏了不影响显示名字：目标留空 */
+  }
+  return '';
+}
+
 function pad(n: number): string {
   return n < 10 ? '0' + n : String(n);
 }
@@ -207,6 +239,8 @@ function reducer(s: SimUIState, a: Action): SimUIState {
       if (a.st.world?.facts) next.worldFacts = a.st.world.facts;
       return next;
     }
+    case 'CHARS':
+      return { ...s, chars: a.chars };
     case 'RUN':
       return { ...s, runText: a.text, runOk: a.ok };
     case 'TURN_START': {
@@ -436,6 +470,36 @@ export function useDirectorSim(sceneId?: string, bookId?: string, chapterId?: st
   const [playing, setPlaying] = useState(false); // 播放状态（驱动 UI 重渲染）
   const playingRef = useRef(false); // 同步 ref，避免闭包过期
   const [simId, setSimId] = useState<string | null>(null); // sim 实例（导演对话等需要）
+
+  // v1.63：真实书角色名/档位/目标进 state —— 角色栏与舞台此前只有 3 个写死的演示角色，
+  // 真实书的角色会显示成 char-202044d7 这种原始 id（作者反馈「角色配置展示不全」）。
+  // 拿不到就静默保留回落（名字 → id），推演本身不受影响。
+  useEffect(() => {
+    if (!bookId) {
+      dispatch({ type: 'CHARS', chars: {} });
+      return;
+    }
+    let cancel = false;
+    listBookCharacters(bookId)
+      .then((rows) => {
+        if (cancel) return;
+        const map: Record<string, CharInfo> = {};
+        for (const r of rows) {
+          map[r.id] = {
+            name: String(r.name || '').trim() || r.id,
+            tier: String(r.role_tier || ''),
+            goal: goalFromSpec(String(r.spec_json || '')),
+          };
+        }
+        dispatch({ type: 'CHARS', chars: map });
+      })
+      .catch(() => {
+        /* 角色名拿不到不影响推演：显示回落成 id/演示库 */
+      });
+    return () => {
+      cancel = true;
+    };
+  }, [bookId]);
 
   const parse = (e: MessageEvent): Record<string, unknown> => {
     try {

@@ -246,16 +246,29 @@ body {
   display: flex;
 }
 
-/* 左侧角色栏（232px） */
+/* 左侧角色栏（232px）
+   v1.63 修：这一栏**不能**再自己吃 overflow —— 抽屉（288/300px）比栏宽，
+   放进 overflow:auto 的容器里，多出来的部分被裁到屏幕左边外面（实测 x=-72/-84，
+   整段文字开头看不见）。现在：aside 只做定位容器 + 内层 char-rail-scroll 滚动。 */
 .char-rail {
   width: 232px;
   flex: none;
+  position: relative;            /* 抽屉（.rail-drawer）的定位容器 */
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: rgba(11, 13, 17, 0.5);
+  border-right: 1px solid var(--border);
+}
+
+/* 角色卡列表滚动区（抽屉是它的兄弟节点，所以不会被这里裁掉） */
+.char-rail-scroll {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 12px;
   padding: 16px;
-  background: rgba(11, 13, 17, 0.5);
-  border-right: 1px solid var(--border);
   overflow-y: auto;
 }
 
@@ -327,6 +340,19 @@ body {
   background: var(--bg-surface);
 }
 
+/* v1.63：真实书角色没有立绘 → 用名字首字做头像（不再是破图/空白） */
+.char-portrait.is-initial {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-reader);
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--accent-gold);
+  background: linear-gradient(160deg, rgba(232, 184, 96, 0.2), rgba(232, 184, 96, 0.04));
+}
+
 .char-name-col {
   display: flex;
   flex-direction: column;
@@ -351,11 +377,34 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
 }
 
 .char-goal {
   font-size: 11px;
   color: var(--text-secondary);
+  /* 目标最多两行再省略：真实书的目标是「弄清路引背面那道涂改是谁的手笔（权重高）」这种整句，
+     单行会截成 10 来个字（作者说的"展示不全"）；两行既不截断太狠，卡片高度也稳。 */
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* v1.63：档位徽标（主角/关键配角/反派…）—— 真实书没有"权重"数值，用它替代 */
+.char-tier-badge {
+  flex: none;
+  align-self: flex-start;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.6;
+  padding: 0 6px;
+  border-radius: 999px;
+  color: var(--accent-gold);
+  border: 1px solid rgba(232, 184, 96, 0.45);
+  background: rgba(232, 184, 96, 0.08);
 }
 
 .char-weight {
@@ -2289,26 +2338,31 @@ body {
   gap: 6px;
 }
 
+/* 遮罩：整屏（原来只有栏内那一小条，点在舞台上也关不掉抽屉） */
 .rail-overlay {
-  position: absolute;
+  position: fixed;
   inset: 0;
   z-index: 20;
   background: rgba(0, 0, 0, 0.35);
-  border-radius: 8px;
 }
 
+/* 抽屉（配置上场角色 / 全局视角）
+   v1.63 修：原来 right:0 + 固定 288/300px，而定位容器只有 232px(≤1024 时 200px)
+   → 抽屉左侧 72~84px 跑到屏幕外，标题/正文开头整段看不见。
+   现在改成从栏的左沿**向右**展开，宽度按视口自适应。 */
 .rail-drawer {
   position: absolute;
-  right: 0;
+  left: 0;
+  right: auto;
   top: 0;
   bottom: 0;
   z-index: 30;
-  width: 288px;
+  width: min(320px, calc(100vw - 28px));
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-left: 2px solid var(--accent-gold);
-  border-radius: 8px 0 0 8px;
-  box-shadow: -12px 0 28px rgba(0, 0, 0, 0.35);
+  border-radius: 0 8px 8px 0;
+  box-shadow: 12px 0 28px rgba(0, 0, 0, 0.35);
   display: flex;
   flex-direction: column;
   padding: 14px;
@@ -2461,9 +2515,9 @@ body {
   font-family: var(--font-ui);
 }
 
-/* 全局视角（右滑层内容） */
+/* 全局视角（右滑层内容）：比配置抽屉略宽，长句少折行 */
 .rail-drawer.global {
-  width: 300px;
+  width: min(360px, calc(100vw - 28px));
 }
 
 .global-body {

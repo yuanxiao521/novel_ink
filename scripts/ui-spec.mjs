@@ -457,6 +457,70 @@ try {
       JSON.stringify({ book: idxBook.book.id, byKind: bk, scenes: sceneCount,
                        hasKnowledgeKey: !!rec && Array.isArray(rec.knowledge) }));
   }
+
+  // ⑯ 导演台左栏 / 抽屉不再被裁 + 角色卡显示真实名字（v1.63 · 作者原话「角色配置一直有问题，
+  //    会展示不全，尺寸有问题」）。根因两条：①抽屉 288/300px 却定位在 232px 栏里、right:0
+  //    → 左侧 72~84px 跑到视口外；②角色栏只认 3 个写死的演示角色，真实书角色回落成
+  //    char-xxxx 原始 id + 破图 + 空目标。永久回归：抽屉必须完整在视口内 + 名字不得是原始 id。
+  // 找一个**有上场角色**的场景当夹具：只有那种页面才渲染 .char-name（空台是引导卡）
+  const dirCands = [];
+  for (const b of books) {
+    const t = await (await fetch(BASE + "/api/v1/books/" + b.id + "/tree")).json().catch(() => null);
+    for (const ch of (t && t.chapters) || []) {
+      for (const s of ch.scenes || []) dirCands.push({ book: b, scene: s });
+    }
+  }
+  let dr2 = null;
+  for (const c of dirCands.slice(0, 4)) {
+    await goto(WEB + "/director/" + c.scene.id + "?book=" + c.book.id, 8000);
+    dr2 = JSON.parse((await ev("(async () => {"
+    + "const names = Array.from(document.querySelectorAll('.char-name')).map((x) => x.textContent.trim());"
+    + "const rawIds = names.filter((n) => /^char-/.test(n)).length;"
+    + "const rail = document.querySelector('.char-rail');"
+    + "const scroll = document.querySelector('.char-rail-scroll');"
+    + "const btns = Array.from(document.querySelectorAll('.rail-actions .view-switch'));"
+    + "const out = { names: names.slice(0, 6), rawIds: rawIds, railW: rail ? Math.round(rail.getBoundingClientRect().width) : 0,"
+    + "  scrollOv: scroll ? getComputedStyle(scroll).overflowY : '',"
+    + "  railOv: rail ? getComputedStyle(rail).overflow : '' };"
+    + "const g = btns.find((b) => b.textContent.indexOf('全局视角') >= 0);"
+    + "if (g) { g.click(); await new Promise((r) => setTimeout(r, 700)); }"
+    + "const d = document.querySelector('.rail-drawer');"
+    + "if (d) { const r = d.getBoundingClientRect(); out.drawer = { x: Math.round(r.x), w: Math.round(r.width), right: Math.round(r.x + r.width) };"
+    + "  out.vw = window.innerWidth; out.offscreen = r.x < 0 || r.x + r.width > window.innerWidth + 1; }"
+    + "return JSON.stringify(out);"
+    + "})()")) || "{}");
+    if ((dr2.names || []).length > 0) break;      // 这一场的 sim 有上场角色 → 用它断言
+  }
+  if (!dr2 || (dr2.names || []).length === 0) {
+    skip("⑯ 导演台角色配置不再被裁（抽屉 + 真实名字）", "没有「已配置上场角色」的场景作夹具");
+  } else {
+    step("⑯ 导演台角色配置不再被裁：抽屉完整在视口内 + 角色卡显示真实名字",
+      !dr2.err && dr2.rawIds === 0 && !!dr2.drawer && dr2.offscreen === false
+        && String(dr2.railOv || "").indexOf("auto") < 0,   // 栏本身不许再吃 overflow（否则裁抽屉）
+      JSON.stringify(dr2));
+  }
+
+  // ⑰ 正文协作「精修工具」下拉不再逐字竖排（v1.63 · 作者截图「体/检」两行、尺寸不对）
+  //    根因：.s2-more-body 是绝对定位且**没写宽度** → 收缩宽度被包含块（summary 的 87px）夹住，
+  //    每个按钮只剩 ~69px → 中文逐字换行。修法：width:max-content + min-width + 按钮 nowrap。
+  //    永久回归：菜单宽度 ≥140、每项高度 ≤34（单行）、不越出视口右边。
+  await goto(WEB + "/studio/" + proseScene + "?book=" + proseBook, 7000);
+  const menu = JSON.parse((await ev("(async () => {"
+    + "const d = document.querySelector('.s2-more');"
+    + "if (!d) return JSON.stringify({ err: 'no s2-more' });"
+    + "d.open = true; await new Promise((r) => setTimeout(r, 350));"
+    + "const body = d.querySelector('.s2-more-body');"
+    + "if (!body) return JSON.stringify({ err: 'no menu body' });"
+    + "const bb = body.getBoundingClientRect();"
+    + "const items = Array.from(body.querySelectorAll('.ws-btn')).map((b) => { const q = b.getBoundingClientRect(); return { t: b.textContent.trim(), w: Math.round(q.width), h: Math.round(q.height) }; });"
+    + "return JSON.stringify({ vw: window.innerWidth, w: Math.round(bb.width), h: Math.round(bb.height),"
+    + "  overflowRight: bb.right > window.innerWidth + 1, items: items });"
+    + "})()")) || "{}");
+  step("⑰ 正文协作「精修工具」下拉：菜单按内容撑开、每项单行、不越出视口",
+    !menu.err && Number(menu.w) >= 140 && menu.overflowRight === false
+      && (menu.items || []).length >= 5
+      && (menu.items || []).every((x) => Number(x.h) <= 34),
+    JSON.stringify(menu));
 } catch (e) {
   step("UI 剧本异常", false, String(e));
 } finally {

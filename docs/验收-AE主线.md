@@ -768,6 +768,35 @@ curl -s "http://127.0.0.1:8001/api/v1/chapters/$CH/recall"
 **UI**：写作页左栏「记忆 · 写手会读到」→ 计数行 前情 N · 知晓 N · 角色 N · 世界观 N · 伏笔 N，
 展开后「知晓范围」独立成组（截图 `docs/mockups/p3/ink/41-write-recall-knowledge.png`）。
 L3 ⑮ 永久回归：有 digest 的书必须出现 chapter_fact/知晓、有场必须有 scene 块、recall 必须带 knowledge 段。
+
+### 3.29 导演台 / 正文协作的尺寸与展示（v1.63）
+
+> 这一批由作者截图反馈驱动：**「角色配置一直有问题，会展示不全，尺寸有问题」** + 「精修工具下拉逐字竖排」。
+> 三处根因都不是主题/分辨率，而是**定位与宽度写死**，所以做成 L3 永久回归（⑯⑰）。
+
+```bash
+B=book-14b4b312            # 有上场角色（霍岸/裴渡/林澈/宁秋鹜/单霁）的书
+S=scene-8308b5c0
+
+# ① 导演台左栏角色卡：必须是**真实名字 + 档位**，不能是 char-xxxx 原始 id
+node scripts/shot.mjs --url="/director/$S?book=$B" \
+  --js="JSON.stringify(Array.from(document.querySelectorAll('.char-name')).map(x=>x.textContent))"
+# 期望 ["霍岸","裴渡","林澈","宁秋鹜","单霁"]
+
+# ② 抽屉（配置上场角色 / 全局视角）：必须完整在视口内（修复前 x = -72 / -84）
+node scripts/shot.mjs --url="/director/$S?book=$B" --js="...点全局视角后量 rail-drawer..."
+# 期望 drawer.x >= 0 且 drawer.x + drawer.w <= innerWidth
+
+# ③ 正文协作「精修工具」下拉：每项单行、菜单宽 >=140（修复前 87px → 逐字竖排）
+node scripts/shot.mjs --url="/studio/$S?book=$B" --js="...打开 .s2-more 后量 .s2-more-body/每项高..."
+# 期望 bodyW 152、每项高 29
+```
+
+**L3 永久回归**：`node scripts/ui-spec.mjs` → ⑯ 角色配置不被裁 + 真实名字；⑰ 下拉按内容撑开 + 每项单行 + 不越出视口。
+
+**截图**：`docs/mockups/p3/ink/42-director-rail-characters.png`（角色栏真实名字）、
+`43-director-global-drawer.png`（全局视角完整）、`44-director-cast-drawer.png`（配置抽屉完整）、
+`45-studio-tools-menu.png`（墨模下拉）、`docs/mockups/p3/paper/25-studio-tools-menu.png`（纸模下拉）。
 ## 4. 存量验收（S1–S4 / A2 / A3，仍在跑）
 
 ```powershell

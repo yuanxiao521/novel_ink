@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { charName } from './characters';
+import { charLabel } from './characters';
 import { CastPanel } from './CastPanel';
 import { setSimCast } from '../../api/novel';
 import type { SimUIState } from '../../hooks/useDirectorSim';
@@ -56,10 +56,10 @@ export function CenterStage({
     if (!playing) return null;
     // 有角色正在感知
     const perceiving = Object.entries(state.overrides).find(([, o]) => o.perceiving);
-    if (perceiving) return { label: `${charName(perceiving[0])} 正在感知环境…`, phase: 'perceive' };
+    if (perceiving) return { label: `${charLabel(perceiving[0], state.chars)} 正在感知环境…`, phase: 'perceive' };
     // 有角色正在思考
     const thinking = Object.entries(state.overrides).find(([, o]) => o.thought && !o.action);
-    if (thinking) return { label: `${charName(thinking[0])} 正在思考…`, phase: 'think' };
+    if (thinking) return { label: `${charLabel(thinking[0], state.chars)} 正在思考…`, phase: 'think' };
     // 有成文在追加
     if (state.prose.length > 0 && state.current) return { label: '正在生成正文…', phase: 'prose' };
     // 导演调度中
@@ -149,7 +149,7 @@ export function CenterStage({
                       <span className="event-type-tag">
                         <span className={`event-type type-${ev.kind}`}>{TYPE_LABEL[ev.kind] || '信息'}</span>
                       </span>
-                      <span className="event-id">{charName(ev.actor)}</span>
+                      <span className="event-id">{charLabel(ev.actor, state.chars)}</span>
                     </div>
                     <div className="event-quote">{ev.text}</div>
                   </div>
@@ -224,7 +224,7 @@ export function CenterStage({
           ) : (
             Object.entries(state.overrides).map(([cid, ov]) => (
               <div className="summary-row" key={cid}>
-                <span className="summary-name">{charName(cid)}</span>
+                <span className="summary-name">{charLabel(cid, state.chars)}</span>
                 <span className="summary-text">
                   {ov.mood || '—'}{ov.thought ? ` —— ${ov.thought}` : ''}{ov.action ? ` · ${ov.action}` : ''}
                 </span>

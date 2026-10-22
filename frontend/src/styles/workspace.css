@@ -313,23 +313,32 @@
 /* 工具栏 */
 .s2-actions {
   flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
+  /* v1.63：窄窗口下允许换行 —— 否则按钮被挤窄、字号不变但文字逐字竖排（作者截图里的"体/检"两行） */
+  flex-wrap: wrap; row-gap: 8px;
   padding: 10px 18px; border-bottom: 1px solid var(--border); background: var(--bg-panel);
 }
-.s2-actions .ws-btn { padding: 5px 12px; }
+.s2-actions .ws-btn { padding: 5px 12px; white-space: nowrap; }
 .s2-spacer { flex: 1; }
-.s2-more { position: relative; }
+.s2-more { position: relative; flex: none; }
 .s2-more > summary {
   list-style: none; cursor: pointer; font-size: 12px; padding: 5px 12px;
   border: 1px solid var(--border-light); border-radius: var(--radius-md);
   background: var(--bg-elevated); color: var(--text-primary);
+  white-space: nowrap;
 }
 .s2-more > summary::-webkit-details-marker { display: none; }
 .s2-more[open] > summary { border-color: var(--accent-primary); color: var(--accent-primary); }
+/* v1.63 修：绝对定位的收缩宽度会被**包含块宽度**夹住（= summary 的 87px），
+   于是菜单里每个按钮只剩几十像素 → 中文被逐字换行（"体
+检"）。
+   显式给 width/max-content + 按钮 nowrap，菜单宽度只由内容决定。 */
 .s2-more-body {
   position: absolute; top: 30px; left: 0; z-index: 15; display: flex; flex-direction: column; gap: 6px;
+  width: max-content; min-width: 152px; max-width: min(260px, 80vw);
   background: var(--bg-elevated); border: 1px solid var(--border-light);
   border-radius: var(--radius-md); padding: 8px; box-shadow: var(--shadow-lg);
 }
+.s2-more-body .ws-btn { width: 100%; white-space: nowrap; }
 
 /* 三区 */
 .s2-body { flex: 1; display: flex; min-height: 0; gap: 1px; background: var(--border); }
