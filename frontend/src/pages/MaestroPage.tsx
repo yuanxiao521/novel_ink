@@ -67,6 +67,13 @@ interface PlanBatchMeta {
   trimmed: number;
 }
 
+/** v1.51 主笔自主调研的一条记录：它自己点名的查询 + 检索到的命中（可能为空）。 */
+interface ResearchNote {
+  q: string;
+  why: string;
+  hits: Array<{ kind: string; title: string; text: string }>;
+}
+
 interface PlanPreview {
   worldview?: { premise?: string; rules_text?: string; background?: string };
   chapters?: Array<{ seq?: number; title?: string; tone?: string; scenes?: unknown[] }>;
@@ -135,6 +142,9 @@ export function MaestroPage() {
 
   // 主笔骨架（来自 plan API 的预览）
   const [planPreview, setPlanPreview] = useState<PlanPreview | null>(null);
+  /** v1.51：主笔排骨架前自己查了什么（作者可展开核对，不藏） */
+  const [planResearch, setPlanResearch] = useState<ResearchNote[]>([]);
+  const [researchOpen, setResearchOpen] = useState(false);
   const [committing, setCommitting] = useState(false);
   // A4 分批交付：本批元信息 + 每批章数（记忆在本地）+ 上一批落库后的续排提示
   const [planBatch, setPlanBatch] = useState<{ meta: PlanBatchMeta; existing: number } | null>(null);
@@ -439,9 +449,12 @@ export function MaestroPage() {
         if (true) {
           const data = jobSt.result as unknown as {
             plan: PlanPreview; batch?: PlanBatchMeta; existing_chapters?: number;
+            research?: ResearchNote[];
           };
           const meta = data.batch ?? data.plan.batch ?? null;
           setPlanPreview(data.plan);
+          setPlanResearch(data.research ?? []);
+          setResearchOpen(false);
           setPlanBatch(meta ? { meta, existing: data.existing_chapters ?? existing } : null);
           setAgentState('tool');
           const from = meta?.from ?? existing + 1;
@@ -450,7 +463,7 @@ export function MaestroPage() {
             ...prev,
             {
               sender: 'agent',
-              text: `第 ${from}–${to} 章的骨架已经排好（世界观、场景与伏笔都在预览里）。确认落库我就接着排下一批。`,
+              text: `第 ${from}–${to} 章的骨架已经排好（世界观、场景与伏笔都在预览里）${(data.research ?? []).length ? `；排之前我先查了 ${(data.research ?? []).length} 处旧文，在预览卡里可展开` : ""}。确认落库我就接着排下一批。`,
               toolCall: `🔧 已生成骨架预览（第 ${from}–${to} 章）`,
               miniOutline: (data.plan.chapters ?? []).map((c, i) => ({
                 num: `第${c.seq ?? from + i}章`, title: c.title ?? '',
@@ -886,13 +899,20 @@ export function MaestroPage() {
                   <button className="btn-text" onClick={() => void runIdeation()} disabled={ideating}>
                     {ideating ? '主笔构思中…' : (tree?.chapters ?? []).length > 0 ? '✦ 排下一批' : '✦ 让主笔排骨架'}
                   </button>
+                  {/* v1.51：展开/折叠合成一个 toggle——按钮太多时工具栏会被挤成两行 */}
                   <button
                     className="btn-text"
-                    onClick={() => setOutlineExpanded(Object.fromEntries((tree?.chapters ?? []).map((c) => [c.id, true])))}
+                    title="展开或折叠全部章节"
+                    onClick={() => {
+                      const chs = tree?.chapters ?? [];
+                      const anyOpen = chs.some((c) => outlineExpanded[c.id] ?? true);
+                      setOutlineExpanded(anyOpen
+                        ? {}
+                        : Object.fromEntries(chs.map((c) => [c.id, true])));
+                    }}
                   >
-                    全部展开
+                    {(tree?.chapters ?? []).some((c) => outlineExpanded[c.id] ?? true) ? "全部折叠" : "全部展开"}
                   </button>
-                  <button className="btn-text" onClick={() => setOutlineExpanded({})}>全部折叠</button>
                   <button
                     className="btn-text"
                     onClick={() => void openBrief()}
@@ -1014,6 +1034,35 @@ export function MaestroPage() {
                             </li>
                           ))}
                         </ul>
+                        {/* v1.51：主笔排骨架前自己查了什么（有界、可核对，不藏） */}
+                        {planResearch.length > 0 && (
+                          <div className="mk-research">
+                            <button className="mk-research-head" onClick={() => setResearchOpen((v) => !v)}>
+                              <span>主笔查了什么 · {planResearch.length} 条
+                                （{planResearch.filter((r) => r.hits.length > 0).length} 条有命中）</span>
+                              <span className="mk-research-x">{researchOpen ? "收起" : "展开"}</span>
+                            </button>
+                            {researchOpen && (
+                              <div className="mk-research-body">
+                                {planResearch.map((r, i) => (
+                                  <div className="mk-research-item" key={`${r.q}-${i}`}>
+                                    <div className="q">查「{r.q}」{r.why ? <span className="why">（{r.why}）</span> : null}</div>
+                                    {r.hits.length === 0 ? (
+                                      <div className="none">记忆里没有命中（如实记录，不当成查到了）</div>
+                                    ) : (
+                                      r.hits.map((h, j) => (
+                                        <div className="hit" key={j}>
+                                          <span className="kind">{h.kind}</span>
+                                          <span>{h.title ? `${h.title}：` : ""}{h.text}</span>
+                                        </div>
+                                      ))
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
                         <div className="card-footer">
                           <span className="type-tag">待落库</span>
                           <div style={{ display: 'flex', gap: 8 }}>

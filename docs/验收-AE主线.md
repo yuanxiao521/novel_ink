@@ -419,6 +419,28 @@ node scripts/ui-spec.mjs   # ⑭ 永久回归
 涌现章没指定必须推演的场 · 伏笔只埋不收（已写 ≥3 章且 closed=0）· 伏笔逾期未收 ·
 角色连续 ≥3 章断档 · 角色从未出场。评分 = 100 − 高危×20 − 中等×8 − 轻微×3。
 
+### 3.17 主笔自主调研（v1.51 · 排骨架前自查）
+
+```bash
+B=book-14b4b312
+
+# 续批才会调研（首批没有已写内容可查）
+curl -s -X POST "http://127.0.0.1:8001/api/v1/books/$B/jobs/plan_batch" \
+  -H "Content-Type: application/json" -d '{"direction":"延续雨夜与路引的主线","batch_size":2}'
+# 拿 job_id 轮询：
+curl -s "http://127.0.0.1:8001/api/v1/jobs/<job_id>"
+# 期望 result 里除 plan/batch 外多一个 research：
+#   [{q:"雨夜 宁秋鹜", why:"确认第一章雨夜路引的前后状态", hits:[{kind,title,text}, ...]}, ...]
+# 实测（真 LLM）：5 条自主查询，每条 2~3 条命中（character/chapter/foreshadow），随后正常排出第 2–4 章
+
+# 前端：预览卡出现「主笔查了什么 · N 条（M 条有命中）」可展开；查了没中会写「记忆里没有命中」
+node scripts/shot.mjs --url="/maestro?book=$B" --js="..."   # 或人工点「✦ 排下一批」
+```
+
+**设计边界（为什么不做成"给模型一堆工具随便调"）**：不可控（可能连查 10 次跑飞）、不可观测
+（作者看不出它查了啥）。现在是 **模型出检索意图 / 代码执行 / 结果可展开核对**，且
+**LLM 不可用时用 brief 里的确定性线索兜底**（逾期伏笔 / 断档角色 / 上一批章），调研不会消失。
+
 ## 4. 存量验收（S1–S4 / A2 / A3，仍在跑）
 
 ```powershell

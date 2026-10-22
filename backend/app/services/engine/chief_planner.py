@@ -168,7 +168,8 @@ constraint_keywords（约束表述词，如「不能」「只能」）。
 
 async def plan_skelly(direction: str, context: str = "", inspirations: list[dict] | None = None,
                    *, batch_from: int = 0, batch_size: int = 0,
-                   locked: list[dict] | None = None) -> dict:
+                   locked: list[dict] | None = None,
+                   research: str = "") -> dict:
     """主笔产出书籍骨架（预览态）。LLM 不可用/产出非法 → 抛 ValueError（路由转 503）。
 
     阶段③：结构化输出经 `validate_and_retry` 校验——骨架缺章/缺标题/缺场景数组时
@@ -187,6 +188,10 @@ async def plan_skelly(direction: str, context: str = "", inspirations: list[dict
         lines = "\n".join(f"- {c.get('title', '')}：{c.get('desc', '')}"
                           for c in inspirations if c.get("title"))
         base += f"\n\n作者已在酝酿以下设定（规划时必须吸收/不矛盾）：\n{lines}"
+    if research.strip():
+        # v1.51：主笔自己点名要查的东西，已经由代码检索并整理成笔记——
+        # 这是**事实**（来自全书记忆），规划时必须与之一致，不得矛盾。
+        base += "\n\n" + research.strip()
     prompt = _PLAN_PROMPT.format(direction=direction or "（未提供，按经典玄幻开局生成）",
                                  context=base)
     frm = 0

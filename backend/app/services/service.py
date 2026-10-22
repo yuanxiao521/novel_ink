@@ -757,15 +757,40 @@ class SimulationService:
                    "title": c.get("title") or "", "summary": c.get("summary") or ""}
                   for i, c in enumerate(existing)]
         frm = int(batch_from or 0) or (len(existing) + 1)
+
+        # ---- v1.51 主笔自主调研：先让主笔点名"还要确认什么"，再由代码去查 ----
+        # 只对**续批**做（首批没有已写内容，没什么可查）；查询意图由模型给，执行是本地 SQL。
+        research_notes: list[dict] = []
+        research_text = ""
+        if existing:
+            from app.services.engine import chief_research
+
+            brief: dict = {}
+            try:
+                brief = await self.get_book_brief(book_id)
+            except Exception as e:  # noqa: BLE001  脉络读不到就少给点线索，不挡规划
+                logger.warning("[主笔] 调研前读脉络失败 book=%s：%s", book_id, e)
+            queries = await chief_research.plan_queries(
+                llm_client, str(brief.get("text") or ""), direction, frm)
+            if not queries:
+                queries = chief_research.fallback_queries(brief)
+            if queries:
+                research_notes = await chief_research.run_queries(self.repo, book_id, queries)
+                research_text = chief_research.render_research(research_notes)
+                logger.info("[主笔] 自主调研 %d 条查询：%s", len(queries),
+                            [q.get("q") for q in queries])
+
         plan = await plan_skelly(direction, context or book.get("synopsis", ""),
                                  inspirations=inspirations or None,
                                  batch_from=frm, batch_size=max(0, int(batch_size or 0)),
-                                 locked=locked)
+                                 locked=locked, research=research_text)
         chs = plan.get("chapters") or []
         batch = plan.get("batch") or {"from": 1, "to": len(chs), "asked": 0,
                                       "got": len(chs), "trimmed": 0}
         return {"book_id": book_id, "plan": plan,
-                "existing_chapters": len(existing), "batch": batch}
+                "existing_chapters": len(existing), "batch": batch,
+                # v1.51：主笔这次自己查了什么（预览卡里给作者看，不藏）
+                "research": research_notes}
 
     async def _book_prose_stats(self, book_id: str) -> dict:
         """该书已落库正文的规模（B33 骨架替换前的防误删闸门用）。"""
