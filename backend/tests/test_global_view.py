@@ -27,7 +27,11 @@ def _book(tensions, prose=True, archives=True):
         scenes.append({"id": sid, "chapter_id": cid,
                        "final_prose": ("正文" * 30 if prose else "")})
         if archives:
-            arch[sid] = [{"tension": t, "tension_trend": "up"}]
+            # v1.70：真实 TurnArchive 形态带角色行动事件 —— 空回合（无行动/无成文）
+            # 现在被 scene_tension 过滤（B73），夹具必须符合真实形态
+            arch[sid] = [{"tension": t, "tension_trend": "up",
+                          "events": [{"id": "E-%s" % sid, "actor": "甲", "kind": "action",
+                                      "text": "行动 %s" % t}]}]
     return chapters, scenes, arch
 
 
@@ -149,8 +153,13 @@ async def svc():
     await repo.save_scene({"id": "s1", "chapter_id": "c1", "title": "开场",
                            "final_prose": "正文" * 20})
     sim = SimulationState(scenario="t", book_id="book-g", chapter_id="c1", scene_id="s1")
-    sim.turn_archives = [TurnArchive(turn=1, tension=30, tension_trend="up"),
-                         TurnArchive(turn=2, tension=55, tension_trend="up")]
+    # v1.70：归档带最小事件（真实 TurnArchive 形态）——空回合（无角色行动/无成文）
+    # 现在会被 scene_tension 过滤，不再计入张力曲线（B73）
+    sim.turn_archives = [
+        TurnArchive(turn=1, tension=30, tension_trend="up",
+                    events=[{"id": "E1", "actor": "林澈", "kind": "action", "text": "开场行动"}]),
+        TurnArchive(turn=2, tension=55, tension_trend="up",
+                    events=[{"id": "E2", "actor": "林澈", "kind": "dialogue", "text": "对白"}])]
     await repo.save("sim-1", sim)
     return service
 

@@ -3893,7 +3893,13 @@ class SimulationService:
 
     @staticmethod
     def _archive_turn(sim: models.SimulationState, prev_events: int) -> None:
-        """把刚结束的回合归档进 sim.turn_archives（供时间线回退查看）。"""
+        """把刚结束的回合归档进 sim.turn_archives（供时间线回退查看）。
+
+        v1.70 修：本回合**既无角色行动也无成文**时不归档（导演提示-only 的空回合）——
+        否则会出现"演绎了 19 回合、点开全是空的"假时间线（真实数据实测：LLM 挂掉期间
+        每回合只有 director_hint 事件，character_phase 无产出，19 回合全部为空壳）。
+        空回合不进时间线，作者点「⟳ 新开」重置或补选角色后重新推演即可。
+        """
         turn = sim.world.turn
         new_events = sim.events[prev_events:]
         if not new_events:
@@ -3911,6 +3917,9 @@ class SimulationService:
         for e in new_events:
             if e.type.value == "text" and e.payload.get("text"):
                 prose = e.payload["text"]
+        # 空回合拦截：没有角色行动、也没有成文 → 时间线不收（避免"空壳回合"假象）
+        if not acted and not prose:
+            return
         # 回合类型：从本回合事件推断（冲突优先）
         cls = "type-info"
         for e in new_events:

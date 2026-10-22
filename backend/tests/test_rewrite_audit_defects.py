@@ -318,3 +318,120 @@ async def test_resolve_chapter_uses_l1_cache(monkeypatch):
     second, _ = await svc._resolve_chapter_ref(chapter_no=1, book_id="b-a")
     assert first and second
     assert calls == 1, f"章清单没走 L1 缓存（查了 {calls} 次库）"
+
+# ---------------------------------------------------------------- 空回合不归档/历史过滤（v1.70）
+@pytest.mark.asyncio
+async def test_empty_turn_not_archived(monkeypatch):
+    '''导演提示-only 的回合（无角色行动、无成文）不得进时间线（真实数据实测 19 个空壳回合）。'''
+    from app.services.service import SimulationService
+    from app.services import service as svc_mod
+
+    repo = await _repo()
+    svc = SimulationService(repo)
+    # 造一个带 2 角色、turn=1 的 sim，且本回合只有 director 事件
+    from app.schemas import models
+    sim = models.SimulationState(
+        id="s-x", scenario="test", book_id="b-a", chapter_id="c-a", scene_id="s-a",
+        characters={"林澈": models.CharacterCard(id="林澈", name="林澈", summary="主角")},
+        action_order=["林澈"],
+    )
+    sim.world.turn = 1
+    sim.director.hint.stage_prompt = "舞台提示：让林澈先开口"
+    prev = len(sim.events)
+    sim.director.hint and None
+    WorldEngine = __import__("app.services.engine.world", fromlist=["WorldEngine"]).WorldEngine
+    WorldEngine(sim).append_event(type_=models.EventType.director_hint,
+                                  source=models.EventSource.director, actor="导演",
+                                  payload={"hints": ["舞台提示：让林澈先开口"]})
+    svc._archive_turn(sim, prev)
+    assert not sim.turn_archives, "空回合（无角色行动/无成文）不应归档"
+
+@pytest.mark.asyncio
+async def test_history_filters_legacy_empty_archives(monkeypatch):
+    '''存量数据里的空壳回合在 /history 里必须被过滤（时间线不再显示假回合）。'''
+    from app.services.service import SimulationService
+    from app.schemas import models
+
+    repo = await _repo()
+    svc = SimulationService(repo)
+    sim = models.SimulationState(
+        id="s-y", scenario="test", book_id="b-a", chapter_id="c-a", scene_id="s-a",
+        characters={"林澈": models.CharacterCard(id="林澈", name="林澈", summary="主角")},
+        world_turn=3,
+    )
+    sim.turn_archives = [
+        models.TurnArchive(turn=1, tension=48, tension_trend="flat", cls="type-info",
+                           summary="空壳", prose="", events=[]),
+        models.TurnArchive(turn=2, tension=50, tension_trend="up", cls="type-action",
+                           summary="有行动", prose="正文。",
+                           events=[{"id": "E1", "actor": "林澈", "kind": "action", "text": "走"}]),
+    ]
+    await repo.save("s-y", sim)
+    out = await svc.get_state("s-y")
+    archives = [a.model_dump() for a in out.turn_archives]
+    valid = [a for a in archives if (a.get("events") or []) or (a.get("prose") or "").strip()]
+    assert len(valid) == 1 and valid[0]["turn"] == 2
+
+# ---------------------------------------------------------------- 空回合不归档 / 历史过滤（v1.70）
+@pytest.mark.asyncio
+async def test_empty_turn_not_archived():
+    '''导演提示-only 的回合（无角色行动、无成文）不得进时间线（真实数据实测 19 个空壳回合）。'''
+    from app.db.repo import Repo
+    from app.schemas import models
+    from app.services.engine.world import WorldEngine
+    from app.services.service import SimulationService
+
+    repo = Repo(use_db=False)
+    await repo.save_book({"id": "b-e", "title": "空回合", "genre": "测试",
+                          "status": "planned", "cover_init": "空", "synopsis": ""})
+    await repo.save_chapter({"id": "c-e", "book_id": "b-e", "title": "第 1 章",
+                             "summary": "目标。", "order_no": 1, "tone": "action",
+                             "word_target": 1000})
+    await repo.save_scene({"id": "s-e", "chapter_id": "c-e", "title": "站台", "cursor_pos": 0})
+    svc = SimulationService(repo)
+    sim = models.SimulationState(
+        id="s-empty", scenario="test", book_id="b-e", chapter_id="c-e", scene_id="s-e",
+        characters={"林澈": models.CharacterCard(id="林澈", name="林澈", summary="主角")},
+        action_order=["林澈"],
+    )
+    sim.world.turn = 1
+    sim.director.hint.stage_prompt = "舞台提示：让林澈先开口"
+    prev = len(sim.events)
+    WorldEngine(sim).append_event(
+        type_=models.EventType.director_hint, source=models.EventSource.director,
+        actor="导演", payload={"hints": ["舞台提示：让林澈先开口"]})
+    svc._archive_turn(sim, prev)
+    assert not sim.turn_archives, "空回合（无角色行动/无成文）不应归档"
+
+
+@pytest.mark.asyncio
+async def test_history_filters_legacy_empty_archives():
+    '''存量数据里的空壳回合在 /history 里必须被过滤（时间线不再显示假回合）。'''
+    from app.db.repo import Repo
+    from app.schemas import models
+    from app.services.service import SimulationService
+
+    repo = Repo(use_db=False)
+    await repo.save_book({"id": "b-h", "title": "历史过滤", "genre": "测试",
+                          "status": "planned", "cover_init": "历", "synopsis": ""})
+    await repo.save_chapter({"id": "c-h", "book_id": "b-h", "title": "第 1 章",
+                             "summary": "目标。", "order_no": 1, "tone": "action",
+                             "word_target": 1000})
+    svc = SimulationService(repo)
+    sim = models.SimulationState(
+        id="s-legacy", scenario="test", book_id="b-h", chapter_id="c-h", scene_id="s-legacy",
+        characters={"林澈": models.CharacterCard(id="林澈", name="林澈", summary="主角")},
+        world_turn=3,
+    )
+    sim.turn_archives = [
+        models.TurnArchive(turn=1, tension=48, tension_trend="flat", cls="type-info",
+                           summary="空壳回合", prose="", events=[]),
+        models.TurnArchive(turn=2, tension=50, tension_trend="up", cls="type-action",
+                           summary="有行动", prose="正文。",
+                           events=[{"id": "E1", "actor": "林澈", "kind": "action", "text": "走"}]),
+    ]
+    await repo.save("s-legacy", sim)
+    out = await svc.get_state("s-legacy")
+    archives = [a.model_dump() for a in out.turn_archives]
+    valid = [a for a in archives if (a.get("events") or []) or (a.get("prose") or "").strip()]
+    assert len(valid) == 1 and valid[0]["turn"] == 2, "空壳回合必须被过滤"

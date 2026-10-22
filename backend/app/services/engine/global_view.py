@@ -37,8 +37,13 @@ def _positive(tensions: list[float]) -> list[float]:
 
 
 def scene_tension(archives: list[dict] | None) -> dict:
-    """单场景张力：均值/峰值/末回合趋势。无有效张力 → has=False。"""
-    items = archives or []
+    """单场景张力：均值/峰值/末回合趋势。无有效张力 → has=False。
+
+    v1.70：先过滤**空回合**（无角色行动、无成文，导演提示-only 的空壳）——
+    空回合不该出现在张力曲线/回合数里（真实数据实测：19 回合全空壳，曲线却显示有 19 回合）。
+    """
+    items = [a for a in (archives or [])
+             if (a.get("events") or []) or (a.get("prose") or "").strip()]
     vals = _positive([a.get("tension") for a in items])
     trend = "flat"
     for a in reversed(items):

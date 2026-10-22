@@ -1027,12 +1027,21 @@ async def step(sim_id: str, n: int = 1, svc: SimulationService = Depends(get_ser
 
 @router.get("/sims/{sim_id}/history")
 async def history(sim_id: str, svc: SimulationService = Depends(get_service)):
-    """回合归档列表（时间线回退查看）。"""
+    """回合归档列表（时间线回退查看）。
+
+    v1.70：过滤掉**空回合**（无角色行动、无成文）——这些是"导演提示-only"的空壳归档
+    （LLM 挂掉期间推演的老数据，实测某 sim 19 回合全空），时间线上不该显示。
+    """
     sim = await svc.get_state(sim_id)
+    archives = [a.model_dump() for a in sim.turn_archives]
+    valid = [a for a in archives
+             if (a.get("events") or []) or (a.get("prose") or "").strip()]
     return {
         "sim_id": sim_id,
         "turn": sim.world.turn,
-        "archives": [a.model_dump() for a in sim.turn_archives],
+        "archives": valid,
+        "total_archived": len(archives),
+        "filtered_empty": len(archives) - len(valid),
     }
 
 
