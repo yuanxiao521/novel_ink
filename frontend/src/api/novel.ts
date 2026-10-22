@@ -25,6 +25,15 @@ export interface ChapterMeta {
   word_target?: number;
 }
 
+/** v1.55 场级必然事件：hard 不可取消（收束时校验）/ soft 只作导演倾向 */
+export interface BeatItem {
+  id?: string;
+  text: string;
+  level: "hard" | "soft" | string;
+  /** 判定锚点（人物名/物件名/动作词）：事后 0-token 校验用 */
+  anchors?: string[];
+}
+
 export interface SceneMeta {
   id: string;
   chapter_id: string;
@@ -36,6 +45,8 @@ export interface SceneMeta {
   content_desc?: string;
   scene_summary?: string;
   characters?: CharacterMeta[];
+  /** v1.55：主笔定下的本场事件约束 */
+  beats?: BeatItem[];
 }
 
 export interface CharacterMeta {
@@ -150,6 +161,8 @@ export interface ScenePatchItem {
   stage_desc?: string;
   goal?: string;
   content_desc?: string;
+  /** v1.55：整场 beats 替换（不给 = 不改） */
+  beats?: BeatItem[];
 }
 
 export async function replaceChapterScenes(

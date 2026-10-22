@@ -47,6 +47,8 @@ const MEM_MODE_LABEL: Record<string, string> = {
 interface SceneRow {
   id: string; title?: string; goal?: string; final_prose?: string;
   stage_desc?: string; content_desc?: string;
+  /** v1.55：本场事件约束（hard 收束时会被校验） */
+  beats?: Array<{ text: string; level: string; anchors?: string[] }>;
 }
 
 export function WritePage() {
@@ -346,6 +348,31 @@ export function WritePage() {
               ))}
 
               {/* v1.49 · 记忆：写手这次会读到什么（前情/角色/世界观/伏笔） */}
+              {/* v1.55：本场必然事件（主笔定的硬约束）——作者必须看得见，否则就是暗规则 */}
+              {(() => {
+                const rows = scenes
+                  .map((s) => ({ title: s.title || "（未命名场）",
+                                 beats: (s.beats ?? []).filter((b) => b.level === "hard") }))
+                  .filter((r) => r.beats.length > 0);
+                const total = rows.reduce((n, r) => n + r.beats.length, 0);
+                if (total === 0) return null;
+                return (
+                  <>
+                    <div className="s2-info-title" style={{ marginTop: 12 }}>本章必然事件 · {total}</div>
+                    {rows.map((r) => (
+                      <div className="wp-beat-row" key={r.title}>
+                        <b>{r.title}</b>
+                        {r.beats.map((b, k) => (
+                          <span className="wp-beat" key={k} title={`锚点：${(b.anchors ?? []).join("、") || "（无，按整句判定）"}`}>
+                            {b.text}
+                          </span>
+                        ))}
+                      </div>
+                    ))}
+                  </>
+                );
+              })()}
+
               <div className="s2-info-title" style={{ marginTop: 12 }}>
                 记忆 · 写手会读到
                 <button className="wp-mem-toggle" onClick={() => setMemOpen((v) => !v)}>

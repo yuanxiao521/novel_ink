@@ -534,6 +534,29 @@ PY
 **回合节流**：每回合最多 3 人行动（`MAX_ACTORS_PER_TURN`），主角固定在场，其余按导演主动权顺序补位；
 不在名单的角色本回合不思考、不发言、不决策。
 
+### 3.21 beats 可读可编（v1.55）
+
+```bash
+SC=scene-8308b5c0; CH=chapter-c08f2b6b
+
+# ① 写 beats（只传 beats 也必须不影响其它字段——B58 回归）
+cat > /tmp/beats.json <<'JSON'
+{"beats": [{"text": "霍岸把林澈的路引对折收走", "level": "hard", "anchors": ["霍岸", "路引"]},
+           {"text": "两人暂时互不揭穿", "level": "soft"}]}
+JSON
+curl -s -X PUT "http://127.0.0.1:8001/api/v1/scenes/$SC" \
+  -H "Content-Type: application/json" --data-binary @/tmp/beats.json
+
+# ② 章节场景列表应带解析后的 beats（且标题/舞台/目标没被清空）
+curl -s "http://127.0.0.1:8001/api/v1/chapters/$CH/scenes"
+# 期望 scenes[0].beats = [{level:"hard",text:…,anchors:[…]}, {level:"soft",…}]，title 非空
+
+# ③ 前端：写作页左栏「本章必然事件 · N」（按场归组）；主笔页「✎ 编辑场景列表」每场一条 beats 输入框
+```
+
+**回归要点**：`PUT /scenes/{id}` 用 `exclude_unset`（不是 `exclude_none`）——
+只传 beats 时绝不清空标题/舞台/目标/内容；beats 合并进 `plan_cfg_json` 时保留其它导演配置。
+
 ## 4. 存量验收（S1–S4 / A2 / A3，仍在跑）
 
 ```powershell

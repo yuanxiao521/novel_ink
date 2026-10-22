@@ -108,14 +108,45 @@ class SimulationService:
         return await self.repo.list_chapters_by_book(book_id)
 
     async def list_scenes(self, chapter_id: str) -> list[dict]:
-        return await self.repo.list_scenes_by_chapter(chapter_id)
+        # v1.55：带解析后的 beats，前端才能显示"这场必然发生什么"
+        rows = await self.repo.list_scenes_by_chapter(chapter_id)
+        return [self._scene_with_beats(s) or {} for s in rows]
 
     async def get_chapter(self, chapter_id: str) -> dict | None:
         """章节详情（含 book_id，供导演台 scene→chapter→book 反查书树）。"""
         return await self.repo.get_chapter(chapter_id)
 
+    @staticmethod
+    def _merge_beats_into_plan_cfg(plan_cfg_json: str, beats: object) -> str:
+        """把 beats 合并进 plan_cfg_json（v1.55）：只动 beats 键，其它导演配置一律保留。"""
+        from app.services.engine.beats import parse_beats
+
+        try:
+            cur = json.loads(plan_cfg_json or "{}")
+        except Exception:  # noqa: BLE001
+            cur = {}
+        if not isinstance(cur, dict):
+            cur = {}
+        cur["beats"] = parse_beats(beats or [])
+        return json.dumps(cur, ensure_ascii=False)
+
+    @staticmethod
+    def _scene_with_beats(scene: dict | None) -> dict | None:
+        """场景返回里带解析后的 beats（前端要显示"这场必然发生什么"）。"""
+        if not scene:
+            return scene
+        from app.services.engine.beats import parse_beats
+
+        try:
+            cfg = json.loads(str(scene.get("plan_cfg_json") or "{}"))
+        except Exception:  # noqa: BLE001
+            cfg = {}
+        out = dict(scene)
+        out["beats"] = parse_beats((cfg or {}).get("beats") if isinstance(cfg, dict) else [])
+        return out
+
     async def get_scene(self, scene_id: str) -> dict | None:
-        return await self.repo.get_scene(scene_id)
+        return self._scene_with_beats(await self.repo.get_scene(scene_id))
 
     async def get_scene_characters(self, scene_id: str) -> list[dict]:
         """场景可用角色 = 本书书级角色 + 场景特设角色。"""
@@ -687,7 +718,13 @@ class SimulationService:
         }
 
     async def get_book_tree(self, book_id: str) -> dict | None:
-        return await self.repo.get_book_tree(book_id)
+        tree = await self.repo.get_book_tree(book_id)
+        if not tree:
+            return tree
+        # v1.55：场景带解析后的 beats（场景编辑器要显示/编辑"本场必然事件"）
+        for ch in tree.get("chapters") or []:
+            ch["scenes"] = [self._scene_with_beats(s) or {} for s in (ch.get("scenes") or [])]
+        return tree
 
     # ---------------------------------------------------------------- 四层写接口（S1）
     async def create_book(self, data: dict) -> dict:
@@ -728,7 +765,13 @@ class SimulationService:
         return {"id": sid}
 
     async def update_scene(self, scene_id: str, data: dict) -> dict:
-        await self.repo.save_scene({**data, "id": scene_id})
+        payload = dict(data)
+        # v1.55：beats 单独处理——合进 plan_cfg_json，别覆盖其它导演配置（goal_pressure 等）
+        if "beats" in payload:
+            cur = await self.repo.get_scene(scene_id)
+            base = str((cur or {}).get("plan_cfg_json") or payload.get("plan_cfg_json") or "{}")
+            payload["plan_cfg_json"] = self._merge_beats_into_plan_cfg(base, payload.pop("beats"))
+        await self.repo.save_scene({**payload, "id": scene_id})
         return {"id": scene_id}
 
     async def delete_scene(self, scene_id: str) -> None:
@@ -757,6 +800,10 @@ class SimulationService:
                 "content_desc": str(sc.get("content_desc") or ""),
                 "cursor_pos": j + 1,
             }
+            if "beats" in sc:
+                # v1.55：beats 合进 plan_cfg_json（保留既有导演配置）
+                base_cfg = str((existing_map.get(sid) or {}).get("plan_cfg_json") or "{}")
+                fields["plan_cfg_json"] = self._merge_beats_into_plan_cfg(base_cfg, sc.get("beats"))
             if sid and sid in existing_map:
                 await self.repo.save_scene({**fields, "id": sid})
                 keep.append(sid)

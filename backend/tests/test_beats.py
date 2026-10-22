@@ -7,6 +7,8 @@
 """
 from __future__ import annotations
 
+import pytest
+
 from app.services.engine.beats import (
     LEVELS, MIN_ANCHOR_HITS, beats_block, check_beats, hard_beats,
     parse_beats, record_status,
@@ -201,5 +203,107 @@ def test_strip_fence_handles_markdown_and_prose():
     assert _strip_fence("先说明一句" + chr(10) + chr(123) + chr(34) + "a" + chr(34) + ": 1" + chr(125)) == chr(123) + chr(34) + "a" + chr(34) + ": 1" + chr(125)
     assert _strip_fence(chr(123) + chr(34) + "a" + chr(34) + ": 1" + chr(125)) == chr(123) + chr(34) + "a" + chr(34) + ": 1" + chr(125)
     assert _strip_fence("") == ""
+
+# ---------------------------------------------------------------- 场景 beats 读写（v1.55）
+async def _scene_fixture(plan_cfg_json: str = "{}"):
+    """内存态造「书 → 章 → 场」并返回 (svc, scene_id)。"""
+    from app.db.repo import Repo
+    from app.services.service import SimulationService
+
+    repo = Repo(use_db=False)
+    svc = SimulationService(repo)
+    await repo.save_book({"id": "b1", "title": "T", "genre": "g", "status": "planned",
+                          "cover_init": "T", "synopsis": ""})
+    await repo.save_chapter({"id": "c1", "book_id": "b1", "title": "第 1 章", "summary": "",
+                             "order_no": 1, "tone": "action", "word_target": 2000})
+    sid = (await svc.create_scene("c1", {"title": "场一",
+                                   "plan_cfg_json": plan_cfg_json}))["id"]
+    return svc, sid
+
+
+@pytest.mark.asyncio
+async def test_update_scene_merges_beats_without_clobbering_plan_cfg():
+    """v1.55：写 beats 不能把场景原有的导演配置（goal_pressure 等）冲掉。"""
+    import json
+
+    svc, sid = await _scene_fixture(json.dumps({"goal_pressure": [{"char": "c1"}]}))
+    await svc.update_scene(sid, {"beats": [{"text": "路引被收走", "level": "hard",
+                                          "anchors": ["霍岸", "路引"]}]})
+    scene = await svc.get_scene(sid)
+    cfg = json.loads(scene["plan_cfg_json"])
+    assert cfg["goal_pressure"] == [{"char": "c1"}]        # 原有配置保留
+    assert cfg["beats"][0]["level"] == "hard"
+    assert scene["beats"][0]["text"] == "路引被收走"        # 读接口也带解析后的 beats
+
+
+@pytest.mark.asyncio
+async def test_replace_chapter_scenes_writes_beats():
+    """批量保存场景时 beats 要落库（主笔页的「场景编辑器」走这条路径）。"""
+    svc, sid = await _scene_fixture()
+    await svc.replace_chapter_scenes("c1", [
+        {"id": sid, "title": "场一",
+         "beats": [{"text": "残图出现", "level": "hard", "anchors": ["宁秋鹜", "残图"]},
+                   {"text": "两人结盟", "level": "soft"}]},
+    ])
+    scene = await svc.get_scene(sid)
+    assert [b["level"] for b in scene["beats"]] == ["hard", "soft"]
+    assert scene["beats"][0]["anchors"] == ["宁秋鹜", "残图"]
+
+
+@pytest.mark.asyncio
+async def test_list_scenes_includes_beats():
+    svc, sid = await _scene_fixture()
+    await svc.update_scene(sid, {"beats": [{"text": "X 发生", "level": "hard"}]})
+    rows = await svc.list_scenes("c1")
+    assert rows[0]["beats"][0]["text"] == "X 发生"
+    # 没 beats 的场景给空数组（前端不用判空指针）
+    sid2 = (await svc.create_scene("c1", {"title": "场二"}))["id"]
+    rows2 = await svc.list_scenes("c1")
+    assert [r for r in rows2 if r["id"] == sid2][0]["beats"] == []
+
+# ---------------------------------------------------------------- API：只传 beats 不许清空其它字段
+@pytest.fixture(scope="module")
+def client():
+    """内存态 TestClient（覆盖 get_repo），用于验证路由层语义。"""
+    from fastapi.testclient import TestClient
+
+    from app.api.deps import get_repo
+    from app.db.repo import Repo
+    from app.main import app
+
+    shared = Repo(use_db=False)
+
+    async def _fake_repo():
+        return shared
+
+    app.dependency_overrides[get_repo] = _fake_repo
+    with TestClient(app) as c:
+        yield c
+    app.dependency_overrides.clear()
+
+
+def test_put_scene_with_only_beats_keeps_other_fields(client):
+    """B58 回归：PUT /scenes/{id} 只传 beats 时，title/stage_desc/goal/content_desc 必须原样保留。"""
+    bid = client.post("/api/v1/books", json={"title": "B58 书"}).json()["id"]
+    cid = client.post(f"/api/v1/books/{bid}/chapters",
+                      json={"title": "第 1 章"}).json()["id"]
+    sid = client.post(f"/api/v1/chapters/{cid}/scenes", json={
+        "title": "场一", "stage_desc": "雨夜站台", "goal": "路引被收走",
+        "content_desc": "霍岸拦查",
+    }).json()["id"]
+
+    r = client.put(f"/api/v1/scenes/{sid}", json={"beats": [
+        {"text": "路引被霍岸收走", "level": "hard", "anchors": ["霍岸", "路引"]},
+    ]})
+    assert r.status_code == 200
+
+    scene = client.get(f"/api/v1/scenes/{sid}").json()
+    assert scene["title"] == "场一"                  # 修前会被清成 ""
+    assert scene["stage_desc"] == "雨夜站台"
+    assert scene["goal"] == "路引被收走"
+    assert scene["content_desc"] == "霍岸拦查"
+    assert scene["beats"][0]["level"] == "hard"
+
+
 
 

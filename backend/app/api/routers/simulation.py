@@ -225,6 +225,8 @@ class SceneBody(models.BaseModel):
     stage_desc: str = ""
     goal: str = ""
     content_desc: str = ""
+    # v1.55 场级必然事件（hard 不可取消 / soft 只作倾向）；None = 不改
+    beats: list[dict] | None = None
 
 
 class ScenePatchIn(models.BaseModel):
@@ -234,6 +236,8 @@ class ScenePatchIn(models.BaseModel):
     stage_desc: str = ""
     goal: str = ""
     content_desc: str = ""
+    # v1.55 场级必然事件（None = 不改；给了就整体替换该场 beats）
+    beats: list[dict] | None = None
 
 
 class SceneBatchIn(models.BaseModel):
@@ -309,7 +313,9 @@ async def create_scene(chapter_id: str, body: SceneBody, svc: SimulationService 
 
 @router.put("/scenes/{scene_id}")
 async def update_scene(scene_id: str, body: SceneBody, svc: SimulationService = Depends(get_service)):
-    return await svc.update_scene(scene_id, body.model_dump(exclude_none=True))
+    # B58（v1.55）：**必须 exclude_unset**。此前用 exclude_none，SceneBody 的默认值（title=""、
+    # stage_desc="" …）会被当成"要写入的空值" → 只想改 beats 的一次 PUT 把场景标题/舞台/目标全清空。
+    return await svc.update_scene(scene_id, body.model_dump(exclude_unset=True))
 
 
 @router.delete("/scenes/{scene_id}", status_code=status.HTTP_204_NO_CONTENT)

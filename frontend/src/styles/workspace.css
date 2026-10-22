@@ -1012,4 +1012,10 @@
 /* v1.52：场清单里的"需推演/已推演"标记（涌现/混合章） */
 .wp-scene-req { margin-left: 6px; font-style: normal; font-size: 10.5px; color: var(--accent-warn); }
 .wp-scene-req.done { color: var(--accent-green); }
+/* v1.55 写作页：本章必然事件（主笔硬约束） */
+.wp-beat-row { display: flex; flex-direction: column; gap: 2px; margin: 4px 0 2px; padding: 5px 8px;
+  border-left: 3px solid var(--accent-gold); background: var(--bg-panel); border-radius: var(--radius-md); }
+.wp-beat-row b { font-size: 11px; color: var(--text-secondary); font-weight: 600; }
+.wp-beat { font-size: 11px; line-height: 1.5; color: var(--accent-gold); }
+
 

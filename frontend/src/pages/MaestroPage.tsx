@@ -39,7 +39,7 @@ import {
 } from '../api/novel';
 import type {
   BookTree, BookMemoryMeta, InspirationCard, MaterialUsage, MemoryTopic,
-  RehearsalPlan, SceneDetail, ScenePatchItem,
+  BeatItem, RehearsalPlan, SceneDetail, ScenePatchItem,
 } from '../api/novel';
 
 /* ---------- 类型 ---------- */
@@ -269,6 +269,8 @@ export function MaestroPage() {
   // 章节场景编辑器（主笔升级 · 场景级部分修改）：整章场景列表内联编辑 → 批量保存
   const [sceneEditorOpen, setSceneEditorOpen] = useState(false);
   const [sceneEdits, setSceneEdits] = useState<ScenePatchItem[]>([]);
+  /** v1.55：每场的 beats 文本（一行一条 `hard|文本|锚点1,锚点2`），与 sceneEdits 同序 */
+  const [sceneBeatsText, setSceneBeatsText] = useState<string[]>([]);
   const [sceneSaving, setSceneSaving] = useState(false);
 
   // 主笔"正在干什么"的具体动作文本（v1.39）：agentState 是粗状态，activity 是细文案
@@ -630,6 +632,20 @@ export function MaestroPage() {
   };
 
   /* ---------- 章节场景编辑器（场景级部分修改 · 整体保存） ---------- */
+  /** v1.55：beats ⇄ 文本（一行一条：`hard|文本|锚点1,锚点2`；省略层级默认 hard） */
+  const beatsToText = (beats?: BeatItem[]): string =>
+    (beats ?? []).map((b) => `${b.level === "soft" ? "soft" : "hard"}|${b.text}|${(b.anchors ?? []).join(",")}`).join("\n");
+  const textToBeats = (text: string): BeatItem[] =>
+    text.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => {
+      const [a, b, c] = line.split("|");
+      const hasLevel = b !== undefined;
+      const level = hasLevel && (a.trim() === "hard" || a.trim() === "soft") ? a.trim() : "hard";
+      const body = hasLevel && (a.trim() === "hard" || a.trim() === "soft") ? b : a;
+      const anchors = (hasLevel && (a.trim() === "hard" || a.trim() === "soft") ? c : b) ?? "";
+      return { text: (body ?? "").trim(), level,
+        anchors: anchors.split(",").map((x) => x.trim()).filter(Boolean) };
+    }).filter((b) => b.text);
+
   const openSceneEditor = () => {
     const ch = tree?.chapters.find((c) => c.id === selId);
     if (!ch) return;
@@ -639,17 +655,27 @@ export function MaestroPage() {
       stage_desc: s.stage_desc ?? '',
       goal: s.goal ?? '',
       content_desc: s.content_desc ?? '',
+      beats: s.beats ?? [],
     })));
+    setSceneBeatsText((ch.scenes ?? []).map((s) => beatsToText(s.beats)));
     setSceneEditorOpen(true);
   };
   const setSceneEditField = (i: number, field: keyof ScenePatchItem, v: string) => {
     setSceneEdits((prev) => prev.map((r, idx) => (idx === i ? { ...r, [field]: v } : r)));
   };
-  const addSceneRow = () => setSceneEdits((prev) => [...prev, { title: '', stage_desc: '', goal: '', content_desc: '' }]);
-  const removeSceneRow = (i: number) => setSceneEdits((prev) => prev.filter((_, idx) => idx !== i));
+  const addSceneRow = () => {
+    setSceneEdits((prev) => [...prev, { title: '', stage_desc: '', goal: '', content_desc: '' }]);
+    setSceneBeatsText((prev) => [...prev, ""]);
+  };
+  const removeSceneRow = (i: number) => {
+    setSceneEdits((prev) => prev.filter((_, idx) => idx !== i));
+    setSceneBeatsText((prev) => prev.filter((_, idx) => idx !== i));
+  };
   const saveSceneEdits = async () => {
     if (sceneSaving) return;
-    const cleaned = sceneEdits.filter((s) => (s.title ?? '').trim() || s.id);
+    const cleaned = sceneEdits
+      .map((s, i) => ({ ...s, beats: textToBeats(sceneBeatsText[i] ?? "") }))
+      .filter((s) => (s.title ?? '').trim() || s.id);
     if (cleaned.length === 0) { briefFlash('场景列表为空'); return; }
     setSceneSaving(true);
     try {
@@ -1269,6 +1295,18 @@ export function MaestroPage() {
                               placeholder="场景内容描述（事件梗概 / 冲突点 / 环境细节）"
                               value={s.content_desc ?? ''}
                               onChange={(e) => setSceneEditField(i, 'content_desc', e.target.value)}
+                            />
+                            {/* v1.55：本场必然事件（hard 收束时会被校验） */}
+                            <textarea
+                              className="char-edit-input"
+                              rows={2}
+                              placeholder="本场事件约束：一行一条 hard|事件|锚点1,锚点2（hard 不可取消，收束时校验）"
+                              value={sceneBeatsText[i] ?? ''}
+                              onChange={(e) => setSceneBeatsText((prev) => {
+                                const next = [...prev];
+                                next[i] = e.target.value;
+                                return next;
+                              })}
                             />
                           </div>
                           <button className="btn-adopt" title="删除该场景" onClick={() => removeSceneRow(i)}>✕</button>

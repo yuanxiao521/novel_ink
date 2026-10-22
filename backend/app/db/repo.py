@@ -392,6 +392,8 @@ class Repo:
                 "stage_desc": r.stage_desc, "goal": r.goal,
                 "content_desc": r.content_desc, "scene_summary": r.scene_summary,
                 "final_prose": r.final_prose,
+                # v1.55：beats 存在 plan_cfg_json 里，列表接口必须带出来（否则前端看不到硬约束）
+                "plan_cfg_json": r.plan_cfg_json or "{}",
                 "created_at": str(r.created_at), "updated_at": str(r.updated_at),
             } for r in rows]
 
@@ -1152,6 +1154,8 @@ class Repo:
                     "cursor_pos": sc.cursor_pos, "stage_desc": sc.stage_desc,
                     "goal": sc.goal, "content_desc": sc.content_desc,
                     "scene_summary": sc.scene_summary,
+                    # v1.55：主笔写的 beats 在 plan_cfg_json 里，树里也要带（场景编辑器要用）
+                    "plan_cfg_json": sc.plan_cfg_json or "{}",
                 })
             all_chars = (
                 (await session.execute(select(Character))).scalars().all()
