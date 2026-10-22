@@ -656,6 +656,9 @@ _CHAPTER_PROMPT = """你是小说正文【写手】。这次不是写一段，�
 【记忆检索（前情 · 相关角色 · 世界观 · 未回收伏笔）】
 {recall}
 
+【已推演的场（有则据成果渲染：不要重演过程、不要改设定）】
+{rehearsed}
+
 【本章场景大纲（有场时作为分段依据；没有就按上面的任务推进）】
 {scenes}
 
@@ -715,7 +718,7 @@ def chapter_segment_goals(word_target: int | None, seg_chars: int = SEG_CHARS,
 def chapter_prompt(*, chapter: dict, characters: list[dict] | None = None,
                    world_states: list[dict] | None = None, constraints: str = "",
                    memory: str = "", scenes: str = "", written: str = "",
-                   recall: str = "",
+                   recall: str = "", rehearsed: str = "",
                    seg_no: int = 1, seg_total: int = 1, seg_goal: str = "",
                    seg_target: int = SEG_CHARS) -> str:
     """装配「第 N 段」的写手 prompt。
@@ -739,6 +742,7 @@ def chapter_prompt(*, chapter: dict, characters: list[dict] | None = None,
         constraints=constraints or "（无）",
         memory=memory or "（无）",
         recall=recall or "（无检索素材：本章按摘要与角色卡推进，不要发明新设定）",
+        rehearsed=rehearsed or "（本章没有已推演的场：按大纲与摘要推进）",
         scenes=scenes or "（本章未拆场：按基调与摘要推进即可）",
         written_tail=tail or "（本章尚未开始，这是第一段）",
     )

@@ -441,6 +441,35 @@ node scripts/shot.mjs --url="/maestro?book=$B" --js="..."   # 或人工点「✦
 （作者看不出它查了啥）。现在是 **模型出检索意图 / 代码执行 / 结果可展开核对**，且
 **LLM 不可用时用 brief 里的确定性线索兜底**（逾期伏笔 / 断档角色 / 上一批章），调研不会消失。
 
+### 3.18 章级生产路径裁决（v1.52 · 0-token）
+
+```bash
+CH=chapter-c08f2b6b
+# 默认（mode=draft）：可以直接写
+curl -s "http://127.0.0.1:8001/api/v1/chapters/$CH/production-plan"
+# 期望 {mode:"draft", mode_label:"直写", next_action:"draft", can_write:true, required:[], pending:[]}
+
+# 改成涌现（指定两场必须先推演）
+S1=scene-8308b5c0; S2=scene-5128352b
+curl -s -X PUT "http://127.0.0.1:8001/api/v1/chapters/$CH/production" \
+  -H "Content-Type: application/json" \
+  -d "{\"mode\":\"emerge\",\"production\":{\"must_rehearse\":[\"$S1\",\"$S2\"]}}"
+curl -s "http://127.0.0.1:8001/api/v1/chapters/$CH/production-plan"
+# 期望 {next_action:"rehearse", can_write:false, required:[S1,S2], pending:[S1,S2],
+#       why:"还差 2 场推演…", scenes:[{turns:0, required:true}, ...]}
+
+# 前端（写作页）：主按钮变「▶ 先推演 2 场（含「零里废弃车站」）」并跳导演台；
+# 「✍ 写这一章」降级为次要按钮（可强行直写，tooltip 说明会退化）
+# 截图 docs/mockups/p3/ink/33-write-emerge.png
+
+# 复原
+curl -s -X PUT ".../chapters/$CH/production" -d '{"mode":"draft","production":{"must_rehearse":null,"hook":null}}'
+```
+
+**规则要点（都写进单测了）**：draft 不需推演 · **emerge 未指定 must_rehearse 时按"全部场"处理并显式标注** ·
+hybrid 只看关键场（未指定则如实说"等同直写"）· 无场 + emerge → `manual`（先去拆场）· mode 非法按直写兜底。
+**写手素材**："已推演的场"块来自场摘要/定稿正文节选/回合数，空则整块不出现（不给写手塞空标题）。
+
 ## 4. 存量验收（S1–S4 / A2 / A3，仍在跑）
 
 ```powershell

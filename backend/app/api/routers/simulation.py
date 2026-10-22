@@ -278,6 +278,16 @@ class ProductionIn(models.BaseModel):
     production: dict = {}
 
 
+@router.get("/chapters/{chapter_id}/production-plan")
+async def chapter_production_plan(chapter_id: str,
+                                  svc: SimulationService = Depends(get_service)):
+    """本章生产路径裁决（v1.52 · 0-token）：draft 直写 / emerge 先推演 / hybrid 关键场先演，
+
+    以及"还差几场推演、下一步该去哪"——写作页据此引导，作者不用记路由。
+    """
+    return await svc.chapter_production_plan(chapter_id)
+
+
 @router.put("/chapters/{chapter_id}/production")
 async def set_chapter_production(chapter_id: str, body: ProductionIn,
                                  svc: SimulationService = Depends(get_service)):

@@ -9,7 +9,10 @@ import {
   fetchChapterRecall, generateChapterSettings, listScenes, pollJob, reindexBookMemory,
   saveChapterProse,
 } from '../api/novel';
-import type { ChapterRecall, MemoryStats, RecallItem } from '../api/novel';
+import { fetchChapterProductionPlan } from '../api/novel';
+import type {
+  ChapterProductionPlan, ChapterRecall, MemoryStats, RecallItem,
+} from '../api/novel';
 
 /* ==========================================================================
    WritePage —— 章级写作主线（v1.46 · 直写链路）
@@ -61,6 +64,8 @@ export function WritePage() {
   const [wordTarget, setWordTarget] = useState(0);
   /** v1.50：这一章的生产方式（主笔裁决）：draft 直写 / emerge 涌现 / hybrid 混合 */
   const [mode, setMode] = useState("draft");
+  /** v1.52：生产路径裁决（还差几场推演 / 下一步去哪） */
+  const [prod, setProd] = useState<ChapterProductionPlan | null>(null);
   const [savedText, setSavedText] = useState('');
   const [scenes, setScenes] = useState<SceneRow[]>([]);
   const [editing, setEditing] = useState(false);
@@ -103,6 +108,11 @@ export function WritePage() {
       setSummary(d.summary || '');
       setWordTarget(d.word_target || 0);
       setMode(d.mode || "draft");
+      try {
+        const plan = await fetchChapterProductionPlan(chapterId);
+        setProd(plan);
+        if (plan.mode) setMode(plan.mode);
+      } catch { setProd(null); }
       setText(d.prose_md || d.prose || '');
       setSavedText(d.prose_md || d.prose || '');
     } catch { /* 保持现状 */ }
@@ -244,9 +254,30 @@ export function WritePage() {
           </header>
 
           <div className="s2-actions">
-            <button className="ws-btn ws-btn-primary" disabled={busy} onClick={() => void writeChapter()}
-                    title="按本章字数目标分段写满（不是写一段），段间自动承接">
-              {busy ? (streamChars > 0 ? `写这一章… ${Math.round(streamChars)} 字` : '写这一章…（构思中）') : '✍ 写这一章'}
+            {/* v1.52：按 mode 自动选路——emerge/hybrid 还差推演时，主按钮变成"去推演" */}
+            {prod && prod.next_action === "rehearse" && (
+              <button className="ws-btn ws-btn-primary" disabled={busy}
+                      onClick={() => nav(`/director/${prod.pending[0]}?book=${prod.book_id}`)}
+                      title={prod.why}>
+                ▶ 先推演 {prod.pending.length} 场（含「{prod.scenes.find((s) => s.id === prod.pending[0])?.title || "本场"}」）
+              </button>
+            )}
+            {prod && prod.next_action === "manual" && (
+              <button className="ws-btn ws-btn-primary" disabled
+                      title={prod.why}>
+                ⚠ 需先在主笔拆场（涌现模式）
+              </button>
+            )}
+            <button
+              className={prod && prod.next_action !== "draft" ? "ws-btn" : "ws-btn ws-btn-primary"}
+              disabled={busy || (prod?.next_action === "manual")}
+              onClick={() => void writeChapter()}
+              title={prod && !prod.can_write
+                ? "还没推演完，直写会退化成自由发挥（不推荐，但可强行写）"
+                : "按本章字数目标分段写满（不是写一段），段间自动承接"}
+            >
+              {busy ? (streamChars > 0 ? `写这一章… ${Math.round(streamChars)} 字` : "写这一章…（构思中）")
+                : (prod && prod.mode !== "draft" && prod.can_write ? "✍ 据推演写这一章" : "✍ 写这一章")}
             </button>
             <button className="ws-btn" disabled={settingsBusy || busy} onClick={() => void runGenerateSettings()}
                     title="主笔补齐本章摘要与各场设定（舞台/本场目标/内容描述）——只补空字段，不覆盖你手写的">
@@ -277,6 +308,15 @@ export function WritePage() {
               </div>
               <div className="s2-kv"><span>字数目标</span><b>{wordTarget > 0 ? `${wordTarget} 字` : '未设（默认 4000）'}</b></div>
               <div className="s2-kv"><span>基调</span><b>{tone || '未定'}</b></div>
+              {/* v1.52：生产方式与"还差什么"（数据来自 /production-plan，与执行层同一份） */}
+              <div className="s2-kv"><span>生产方式</span>
+                <b>{prod ? prod.mode_label : (mode === "emerge" ? "涌现" : mode === "hybrid" ? "混合" : "直写")}
+                  {prod && prod.required.length > 0
+                    ? ` · 需推演 ${prod.required.length} 场（已完成 ${prod.required.length - prod.pending.length}）`
+                    : ""}</b>
+              </div>
+              {prod?.why && <div className="s2-hint">{prod.why}</div>}
+              {!!prod?.notes?.length && <div className="s2-hint">{prod.notes.join("；")}</div>}
               <div className="s2-kv"><span>要完成的事</span>
                 <b className="wp-summary" title={summary || '未填'}>{summary || '未填'}</b>
               </div>
@@ -293,7 +333,14 @@ export function WritePage() {
                     onKeyDown={(e) => { if (e.key === 'Enter') nav(`/studio/${s.id}`); }}
                   >
                     {s.title || '（未命名场）'}
-                    {!(s.final_prose || '').trim() && <em className="wp-scene-todo">未写</em>}
+                    {!(s.final_prose || "").trim() && <em className="wp-scene-todo">未写</em>}
+                    {(() => {
+                      const row = prod?.scenes.find((x) => x.id === s.id);
+                      if (!row || !row.required) return null;
+                      return row.turns > 0
+                        ? <em className="wp-scene-req done">已推演 {row.turns}</em>
+                        : <em className="wp-scene-req">需推演</em>;
+                    })()}
                   </span>
                 </div>
               ))}

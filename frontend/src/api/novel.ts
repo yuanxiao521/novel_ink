@@ -254,6 +254,45 @@ export interface BookBrief {
   text: string;
 }
 
+/* ---------- v1.52 章级生产路径裁决（draft 直写 / emerge 先推演 / hybrid 关键场先演） ---------- */
+
+export interface ProductionSceneRow {
+  id: string;
+  title: string;
+  turns: number;
+  finalized: boolean;
+  /** 是否属于"必须先推演"的场 */
+  required: boolean;
+}
+
+export interface ChapterProductionPlan {
+  chapter_id: string;
+  book_id: string;
+  title: string;
+  mode: string;
+  mode_label: string;
+  production: Record<string, unknown>;
+  hook: string;
+  scenes: ProductionSceneRow[];
+  required: string[];
+  /** 还差推演的场（空 = 可以写） */
+  pending: string[];
+  /** draft（可写）| rehearse（先推演）| manual（需先拆场） */
+  next_action: string;
+  can_write: boolean;
+  why: string;
+  notes: string[];
+  turns_total: number;
+}
+
+/** 本章该怎么生产 + 还差什么（写作页据此选路，作者不用记路由）。 */
+export async function fetchChapterProductionPlan(
+  chapterId: string,
+): Promise<ChapterProductionPlan> {
+  return getJson<ChapterProductionPlan>(
+    `${API_BASE}/api/v1/chapters/${chapterId}/production-plan`);
+}
+
 /** 全局脉络 + 骨架体检（0-token，零 LLM）。 */
 export async function fetchBookBrief(bookId: string): Promise<BookBrief> {
   return getJson<BookBrief>(`${API_BASE}/api/v1/books/${bookId}/brief`);

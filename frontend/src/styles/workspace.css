@@ -1009,3 +1009,7 @@
 .wp-mem-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .wp-mem-actions .ws-btn { padding: 3px 9px; font-size: 11px; white-space: nowrap; }
 
+/* v1.52：场清单里的"需推演/已推演"标记（涌现/混合章） */
+.wp-scene-req { margin-left: 6px; font-style: normal; font-size: 10.5px; color: var(--accent-warn); }
+.wp-scene-req.done { color: var(--accent-green); }
+

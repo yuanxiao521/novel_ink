@@ -1110,6 +1110,28 @@ class SimulationService:
         brief["book_id"] = book_id
         return brief
 
+    async def chapter_production_plan(self, chapter_id: str) -> dict:
+        """本章该怎么生产（draft 直写 / emerge 先推演 / hybrid 关键场先演）+ 还差什么。
+
+        v1.52：把「去 /write 还是去 /director」从作者记性变成数据裁决——
+        写作页照 plan.next_action 引导，不再靠人记流程。
+        """
+        from app.services.engine.chapter_production import plan_production
+
+        chapter = await self.repo.get_chapter(chapter_id)
+        if chapter is None:
+            raise ChapterNotFoundError(f"未找到章节: {chapter_id}")
+        book_id = str(chapter.get("book_id") or "")
+        scenes = await self.repo.list_scenes_by_chapter(chapter_id)
+        arcs = await self._archives_by_scene(book_id) if book_id else {}
+        turns_by_scene = {sid: len(v or []) for sid, v in (arcs or {}).items()}
+        plan = plan_production(chapter=chapter, scenes=scenes,
+                               turns_by_scene=turns_by_scene)
+        plan["chapter_id"] = chapter_id
+        plan["book_id"] = book_id
+        plan["title"] = str(chapter.get("title") or "")
+        return plan
+
     async def set_chapter_mode(self, chapter_id: str = "", mode: str = "",
                                production: dict | None = None, book_id: str = "",
                                chapter_no: int = 0) -> dict:
@@ -1403,7 +1425,20 @@ class SimulationService:
         except Exception as e:  # noqa: BLE001  检索失败不能挡住写作
             logger.warning("[recall] 装配失败 chapter=%s：%s", chapter_id, e)
 
+        # v1.52 · 生产方式：emerge/hybrid 章要把「已推演的场」成果喂给写手（据成果渲染，不重演）。
+        rehearsal_text = ""
+        try:
+            from app.services.engine.chapter_production import rehearsal_block
+
+            arcs = await self._archives_by_scene(book_id) if book_id else {}
+            turns_by_scene = {sid: len(v or []) for sid, v in (arcs or {}).items()}
+            rehearsal_text = rehearsal_block(scenes=scenes, turns_by_scene=turns_by_scene)
+        except Exception as e:  # noqa: BLE001  推演成果读不到不影响直写
+            logger.warning("[production] 推演成果装配失败 chapter=%s：%s", chapter_id, e)
+
         return {"chapter": chapter, "book_id": book_id, "characters": characters,
+                # v1.52：已推演的场（emerge/hybrid 拿来渲染的依据）
+                "rehearsed_text": rehearsal_text,
                 "memory": memory, "constraints": constraints, "world_states": world_states,
                 "existing": existing, "scenes_text": scenes_text, "word_target": target,
                 # v1.47：把场清单原样带出，供分段编排按"场功能"推进
@@ -1514,6 +1549,7 @@ class SimulationService:
                 world_states=ctx["world_states"], constraints=ctx["constraints"],
                 memory=ctx["memory"], scenes=ctx["scenes_text"], written=written,
                 recall=ctx.get("recall_text") or "",
+                rehearsed=ctx.get("rehearsed_text") or "",
                 seg_no=i, seg_total=len(goals), seg_goal=goal, seg_target=seg_target)
             seg: list[str] = []
             if i > 1:
