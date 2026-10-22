@@ -1867,12 +1867,14 @@ export interface RecallItem {
 
 export interface ChapterRecall {
   prev: RecallItem[];
+  /** v1.62：知晓范围——谁在哪一章知道了什么（后文写他不知情就是硬伤） */
+  knowledge: RecallItem[];
   characters: RecallItem[];
   world: RecallItem[];
   foreshadows: RecallItem[];
   /** keyword（中文关键词）| hybrid（向量+关键词）| fallback（全靠兜底直取） */
   mode: string;
-  /** 四段里由检索命中的段数；0 = 全靠兜底直取 */
+  /** 五段里由检索命中的段数；0 = 全靠兜底直取 */
   from_search: number;
   query: string;
   counts: Record<string, number>;

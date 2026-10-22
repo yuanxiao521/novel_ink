@@ -15,12 +15,21 @@ from typing import Iterable
 
 RRF_K = 60
 
-# kind → 权重：写作时"角色/伏笔"错了最伤，前情次之，场景梗概最弱
+# kind → 权重：写作时"角色/伏笔"错了最伤，前情次之，场景梗概最弱。
+# v1.62 新增的字段级 kind 沿用同一套直觉：
+#   chapter_knowledge 最高（"他知道了他不该知道的事"是最硬的硬伤）
+#   chapter_fact / volume 次高（状态与上一卷收在哪，决定衔接对不对）
+#   chapter_hook 只是提醒"还欠读者什么"，chapter 是兜底，都不该压过人物/伏笔
 KIND_WEIGHT: dict[str, float] = {
     "character": 1.25,
     "foreshadow": 1.20,
+    "chapter_knowledge": 1.20,
+    "volume": 1.15,
+    "chapter_fact": 1.12,
     "world": 1.10,
     "chapter": 1.10,
+    "foreshadow_trace": 1.05,
+    "chapter_hook": 1.05,
     "memory": 1.00,
     "belief": 1.00,
     "scene": 0.95,

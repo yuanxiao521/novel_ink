@@ -733,6 +733,41 @@ curl -s -X POST "http://127.0.0.1:8001/api/v1/chapters/$CH/revisions/1/restore" 
 **真数据 E2E（6636 字真章）**：覆盖保存 240 字测试稿 → 版本链 [v1=6940 原文, v2=240] →
 恢复 v1 → 正文写回 6940 字 + 追加 v3(restore:1) —— 历史连续，原稿无损。
 
+
+### 3.28 字段级记忆索引（RAG 索引升级，v1.62）
+
+```bash
+B=book-14b4b312              # 一本有「已生成 digest」的章的书
+CH=chapter-c08f2b6b          # 该章（digest_json 非空）
+
+# ① 重建索引（digest 字段要被拆成不同 kind）
+curl -s -X POST "http://127.0.0.1:8001/api/v1/books/$B/memory/reindex"
+# 轮询 job 后看 result.by_kind，期望含：
+#   chapter_fact / chapter_knowledge / chapter_hook / foreshadow_trace
+#   书里有场时还必须有 scene（v1.62 修 B61：场素材以前从没进过索引）
+
+# ② 索引统计（前端「记忆」面板同一份口径）
+curl -s "http://127.0.0.1:8001/api/v1/books/$B/memory/stats"
+
+# ③ 召回必须带「知晓范围」段（第五段，独立渲染）
+curl -s "http://127.0.0.1:8001/api/v1/chapters/$CH/recall"
+# 期望 JSON 顶层有 knowledge: [...]；text 里依次出现
+#   【记忆检索 · 前情提要】→【记忆检索 · 知晓范围】→【记忆检索 · 相关角色】
+#   →【记忆检索 · 世界观 / 世界状态】→【记忆检索 · 未回收伏笔】
+```
+
+**时间闸（后文不得泄漏）**：写第 N 章时，前情只能看到第 N 章之前的素材。章级 kind 白名单在
+`rag/kinds.py::CHAPTER_SCOPED_KINDS`，两条检索腿共用 `store._chapter_scope()`。
+真实库回归：`pytest backend/tests/test_rag_digest.py -k future_chapter`。
+
+**真数据 E2E（「新书」2 章）**：第 1 章已有 digest；给第 2 章写入 469 字正文 → 后台生成 digest
+→ 索引从 37 涨到 46 块（chapter_fact 5 / chapter_knowledge 2 / chapter_hook 2 / foreshadow_trace 8 / scene 3）；
+第 2 章 recall：prev 只有第 1 章（「第一章 零里雨夜·事实」）、knowledge 1 条、foreshadows 含
+「伏笔推进 · 第 1 章 埋」、**后文泄漏检查为空**。
+
+**UI**：写作页左栏「记忆 · 写手会读到」→ 计数行 前情 N · 知晓 N · 角色 N · 世界观 N · 伏笔 N，
+展开后「知晓范围」独立成组（截图 `docs/mockups/p3/ink/41-write-recall-knowledge.png`）。
+L3 ⑮ 永久回归：有 digest 的书必须出现 chapter_fact/知晓、有场必须有 scene 块、recall 必须带 knowledge 段。
 ## 4. 存量验收（S1–S4 / A2 / A3，仍在跑）
 
 ```powershell

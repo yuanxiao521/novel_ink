@@ -22,9 +22,11 @@ from app.services.rag.indexer import _char_text
 
 logger = logging.getLogger(__name__)
 
-# 各段字符预算（总预算 ~1800 字：写手 prompt 里不能把正文上下文挤掉）
-BUDGET = {"prev": 700, "characters": 420, "world": 420, "foreshadow": 260}
-ITEM_CHARS = {"prev": 190, "characters": 150, "world": 110, "foreshadow": 110}
+# 各段字符预算（总预算 ~1900 字：写手 prompt 里不能把正文上下文挤掉）
+# v1.62：新增「知晓范围」段（300 字）——它是防"角色知道了不该知道的事"用的，
+# 宁可少给前情也不能省这段；前情段因此从 700 收到 620。
+BUDGET = {"prev": 620, "knowledge": 300, "characters": 400, "world": 380, "foreshadow": 220}
+ITEM_CHARS = {"prev": 190, "knowledge": 110, "characters": 140, "world": 100, "foreshadow": 100}
 
 
 def _clip(text: str, limit: int) -> str:
@@ -38,6 +40,29 @@ def _scene_text(scenes: list[dict]) -> str:
         parts.append(" ".join(str(x) for x in (sc.get("title"), sc.get("goal"),
                                                sc.get("content_desc")) if str(x or "").strip()))
     return " ".join(p for p in parts if p)
+
+
+# v1.62：同一章可能同时命中「事实 / 钩子 / 章摘要」——只留一块，
+# 否则预算全花在重复叙述同一件事上。优先级：事实 > 钩子 > 章摘要（摘要与事实高度重叠）。
+# 卷概要单独占一格（key 用 v:），它和章不是同一件事。
+_PREV_PRIORITY = {"chapter_fact": 0, "chapter_hook": 1, "volume": 2, "chapter": 3}
+
+
+def _dedupe_prev(hits: list[dict], limit: int = 6) -> list[dict]:
+    """按「章号」合并同一章的多个字段块，保留信息量最高的那一种（保持检索顺序）。"""
+    kept: dict[str, tuple[int, dict]] = {}
+    order: list[str] = []
+    for h in hits or []:
+        kind = str(h.get("kind") or "")
+        no = int(h.get("chapter_no") or 0)
+        key = ("v:" if kind == "volume" else "c:") + str(no)
+        rank = _PREV_PRIORITY.get(kind, 9)
+        if key not in kept:
+            order.append(key)
+            kept[key] = (rank, h)
+        elif rank < kept[key][0]:
+            kept[key] = (rank, h)
+    return [kept[k][1] for k in order][:max(0, int(limit))]
 
 
 async def _query_vector(text: str) -> Optional[list[float]]:
@@ -101,8 +126,8 @@ def _fallback_foreshadows(items: list[dict], limit: int = 4) -> list[dict]:
 
 
 async def chapter_recall(repo, book_id: str, chapter_id: str) -> dict[str, Any]:
-    """装配一章的「记忆素材」：前情 / 角色 / 世界观 / 未回收伏笔 + 检索模式。"""
-    empty = {"prev": [], "characters": [], "world": [], "foreshadows": [],
+    """装配一章的「记忆素材」：前情 / 知晓 / 角色 / 世界观 / 未回收伏笔 + 检索模式。"""
+    empty = {"prev": [], "knowledge": [], "characters": [], "world": [], "foreshadows": [],
              "mode": "empty", "query": "", "counts": {}, "chars": 0}
     if not book_id or not chapter_id:
         return empty
@@ -120,12 +145,18 @@ async def chapter_recall(repo, book_id: str, chapter_id: str) -> dict[str, Any]:
                                       _scene_text(scenes)) if str(x or "").strip())
     qvec = await _query_vector(query)
 
-    prev = await _hit(book_id, query, ["chapter"], 6, qvec, chapter_no_lt=cur_no)
+    # v1.62：前情取「章事实 / 章钩子 / 已写完的卷概要」，老 chapter 块只给没有 digest 的章兜底；
+    # 多取几条再按章去重，避免同一章的事实+钩子+摘要三份挤进前三。
+    prev = _dedupe_prev(await _hit(
+        book_id, query, ["chapter_fact", "chapter_hook", "volume", "chapter"], 10, qvec,
+        chapter_no_lt=cur_no))
+    # 知晓范围单独一段：它回答的是"谁知道什么"，混进前情提要会后文写崩都找不到原因
+    know = await _hit(book_id, query, ["chapter_knowledge"], 4, qvec, chapter_no_lt=cur_no)
     chars = await _hit(book_id, query, ["character"], 4, qvec)
     world = await _hit(book_id, query, ["world"], 5, qvec)
-    fs = await _hit(book_id, query, ["foreshadow"], 4, qvec)
-    # 四段里真正由检索命中的段数（0 = 全靠兜底直取，前端要能看出来）
-    from_search = sum(1 for x in (prev, chars, world, fs) if x)
+    fs = await _hit(book_id, query, ["foreshadow", "foreshadow_trace"], 5, qvec)
+    # 五段里真正由检索命中的段数（0 = 全靠兜底直取，前端要能看出来）
+    from_search = sum(1 for x in (prev, know, chars, world, fs) if x)
     mode = "hybrid" if qvec else "keyword"
     if from_search == 0:
         mode = "fallback"
@@ -151,13 +182,17 @@ async def chapter_recall(repo, book_id: str, chapter_id: str) -> dict[str, Any]:
             fs = _fallback_foreshadows(await repo.list_foreshadows(book_id))
         except Exception:  # noqa: BLE001
             fs = []
-    # 已回收伏笔不占额度（检索按相关度可能把 closed 也捞回来）
-    fs = [f for f in fs if "closed" not in str(f.get("title") or "")]
+    # 已回收伏笔不占额度（检索按相关度可能把 closed 也捞回来；
+    # v1.62 的「伏笔推进」痕迹里 close 那条同理：谈"未回收"时它已经是过去式了）
+    fs = [f for f in fs
+          if "closed" not in str(f.get("title") or "")
+          and "回收" not in str(f.get("title") or "")]
 
-    bundle = {"prev": prev, "characters": chars, "world": world, "foreshadows": fs,
+    bundle = {"prev": prev, "knowledge": know, "characters": chars, "world": world,
+              "foreshadows": fs,
               "mode": mode, "from_search": from_search,
               "query": _clip(query, 200),
-              "counts": {"prev": len(prev), "characters": len(chars),
+              "counts": {"prev": len(prev), "knowledge": len(know), "characters": len(chars),
                          "world": len(world), "foreshadows": len(fs)}}
     bundle["chars"] = len(render(bundle))
     return bundle
@@ -167,6 +202,8 @@ def render(bundle: dict[str, Any]) -> str:
     """把素材渲染成 prompt 段落（带预算裁剪：宁可少给，不许挤掉正文上下文）。"""
     sections = (
         ("prev", "【记忆检索 · 前情提要】"),
+        # v1.62：这段是硬的——写"他不知道"之前必须能查到他到底知不知道
+        ("knowledge", "【记忆检索 · 知晓范围】"),
         ("characters", "【记忆检索 · 相关角色】"),
         ("world", "【记忆检索 · 世界观 / 世界状态】"),
         ("foreshadows", "【记忆检索 · 未回收伏笔】"),

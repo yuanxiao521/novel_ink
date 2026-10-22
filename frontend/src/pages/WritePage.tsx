@@ -32,9 +32,11 @@ import type {
      4. 保存（落 chapters.prose_md，唯一真源）
    ========================================================================== */
 
-/** 记忆素材分组（顺序 = 写手 prompt 里的顺序：前情 → 角色 → 世界观 → 伏笔） */
-const MEM_GROUPS: Array<[keyof Pick<ChapterRecall, 'prev' | 'characters' | 'world' | 'foreshadows'>, string]> = [
+/** 记忆素材分组（顺序 = 写手 prompt 里的顺序：前情 → 知晓 → 角色 → 世界观 → 伏笔） */
+const MEM_GROUPS: Array<[keyof Pick<ChapterRecall, 'prev' | 'knowledge' | 'characters' | 'world' | 'foreshadows'>, string]> = [
+  // v1.62：知晓范围单列——「谁知道了什么」是硬约束，混在前情里出问题时最难查
   ['prev', '前情提要'],
+  ['knowledge', '知晓范围'],
   ['characters', '相关角色'],
   ['world', '世界观 / 世界状态'],
   ['foreshadows', '未回收伏笔'],
@@ -553,8 +555,9 @@ export function WritePage() {
                       {MEM_MODE_LABEL[recall.mode] ?? recall.mode}
                     </span>
                     <span>
-                      前情 {recall.counts.prev ?? 0} · 角色 {recall.counts.characters ?? 0}
-                      {" · "}世界观 {recall.counts.world ?? 0} · 伏笔 {recall.counts.foreshadows ?? 0}
+                      前情 {recall.counts.prev ?? 0} · 知晓 {recall.counts.knowledge ?? 0}
+                      {" · "}角色 {recall.counts.characters ?? 0} · 世界观 {recall.counts.world ?? 0}
+                      {" · "}伏笔 {recall.counts.foreshadows ?? 0}
                     </span>
                   </div>
                   <div className="s2-hint">

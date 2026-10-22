@@ -375,19 +375,24 @@ try {
       + "const title = Array.from(document.querySelectorAll('.s2-info-title')).map((x) => x.textContent.trim()).find((t) => t.indexOf('记忆') >= 0);"
       + "if (!title) return JSON.stringify({ err: 'no memory section' });"
       + "const line = (document.querySelector('.wp-mem-line') || {}).innerText || '';"
+      + "const km = line.match(/知晓\\s*(\\d+)/);"          // v1.62：知晓段的条数（0 = 没有 digest）
+      + "const know = km ? Number(km[1]) : -1;"
       + "const toggle = document.querySelector('.wp-mem-toggle');"
       + "const before = document.querySelectorAll('.wp-mem-item').length;"
       + "if (toggle && toggle.textContent.indexOf('展开') >= 0) toggle.click();"
       + "await new Promise((r) => setTimeout(r, 400));"
-      + "return JSON.stringify({ line: line, before: before,"
+      + "return JSON.stringify({ line: line, before: before, know: know,"
       + "  mode: (document.querySelector('.wp-mem-mode') || {}).innerText || '',"
       + "  groups: Array.from(document.querySelectorAll('.wp-mem-group-head')).map((x) => x.innerText.trim()),"
       + "  items: document.querySelectorAll('.wp-mem-item').length,"
       + "  actions: Array.from(document.querySelectorAll('.wp-mem-actions button')).map((b) => b.textContent.trim()) });"
       + "})()")) || "{}");
-    step("⑬ 记忆面板：写作页可读「写手会读到什么」（前情/角色/世界观/伏笔 + 检索模式 + 可展开）",
-      !mr.err && String(mr.line).indexOf("前情") >= 0 && String(mr.line).indexOf("伏笔") >= 0
-        && mr.items >= 1 && (mr.actions || []).some((a) => String(a).indexOf("检索") >= 0),
+    //    v1.62：「知晓范围」独立成组（谁知道了什么 = 后文写崩的头号原因，必须能单独看）
+    step("⑬ 记忆面板：写作页可读「写手会读到什么」（前情/知晓/角色/世界观/伏笔 + 检索模式 + 可展开）",
+      !mr.err && String(mr.line).indexOf("前情") >= 0 && String(mr.line).indexOf("知晓") >= 0
+        && String(mr.line).indexOf("伏笔") >= 0
+        && mr.items >= 1 && (mr.actions || []).some((a) => String(a).indexOf("检索") >= 0)
+        && (Number(mr.know) <= 0 || (mr.groups || []).some((g) => /知晓范围/.test(g))),
       JSON.stringify(mr));
   }
 
@@ -420,6 +425,37 @@ try {
         && (br.modes || []).every((m) => ["直写", "涌现", "混合"].indexOf(String(m)) >= 0)
         && br.hasIssuesOrOk === true,
       JSON.stringify(br));
+  }
+
+  // ⑮ 字段级记忆索引（v1.62）：章 digest 必须真的进索引，场素材不能漏
+  //    动机：v1.49 索引是「一章一块」，v1.58 有了结构化 digest 却没进索引（两套口径）；
+  //    且 DB 模式的章 dict 不带 scenes，**场素材整体从没进过索引**（实测 5 场 → 0 块）。
+  //    永久回归：某本书的索引里有 chapter_fact/知晓或钩子；该书有场时必须有 scene 块；
+  //    且 /chapters/{id}/recall 的返回里 knowledge 段必须存在（前端口径）。
+  let idxBook = null;
+  for (const b of books) {
+    const st = await (await fetch(BASE + "/api/v1/books/" + b.id + "/memory/stats")).json().catch(() => null);
+    const bk = (st && st.by_kind) || {};
+    if (Number(bk.chapter_fact || 0) >= 1) { idxBook = { book: b, byKind: bk }; break; }
+  }
+  if (!idxBook) {
+    skip("⑮ 字段级记忆索引（章事实/知晓/钩子 + 场素材）", "没有「已生成前情概要」的章作夹具（先保存正文 → 后台生成 digest）");
+  } else {
+    const t = await (await fetch(BASE + "/api/v1/books/" + idxBook.book.id + "/tree")).json().catch(() => null);
+    const chs = (t && t.chapters) || [];
+    const sceneCount = chs.reduce((n, c) => n + ((c.scenes || []).length), 0);
+    const target = chs.find((c) => c.order_no >= 1) || chs[0];
+    const rec = target
+      ? await (await fetch(BASE + "/api/v1/chapters/" + target.id + "/recall")).json().catch(() => null)
+      : null;
+    const bk = idxBook.byKind;
+    step("⑮ 字段级记忆索引：章事实/知晓/钩子 + 场素材都进了索引，recall 带 knowledge 段",
+      Number(bk.chapter_fact || 0) >= 1
+        && (Number(bk.chapter_knowledge || 0) >= 1 || Number(bk.chapter_hook || 0) >= 1)
+        && (sceneCount === 0 || Number(bk.scene || 0) >= 1)
+        && !!rec && Array.isArray(rec.knowledge),
+      JSON.stringify({ book: idxBook.book.id, byKind: bk, scenes: sceneCount,
+                       hasKnowledgeKey: !!rec && Array.isArray(rec.knowledge) }));
   }
 } catch (e) {
   step("UI 剧本异常", false, String(e));

@@ -2068,6 +2068,9 @@ class SimulationService:
         conflicts = list(digest.get("conflicts") or [])
         conflicts += detect_conflicts(digest, vol_digest)
         await self.repo.save_chapter({**chapter, "digest_json": json.dumps(digest, ensure_ascii=False)})
+        # v1.62：digest 是**记忆索引的上游**（章事实/知晓/钩子三块都从这里来），
+        # 生成完不重建索引 = 检索侧永远读不到这一章的结构化前情。
+        await self._reindex_quietly(book_id, reason="chapter_digest")
         return {"chapter_id": chapter_id, "chapter_no": no, "digest": digest,
                 "conflicts": conflicts, "volume": vol}
 
@@ -2129,6 +2132,8 @@ class SimulationService:
                 "stale": False,
             })
             done.append({"volume_no": vol["no"], "range": [vol["from"], vol["to"]]})
+        if any("range" in d for d in done):
+            await self._reindex_quietly(book_id, reason="volume_digest")
         return {"book_id": book_id, "volumes": done}
 
     async def generate_book_digest(self, book_id: str) -> dict:
@@ -2160,7 +2165,30 @@ class SimulationService:
             "digest_json": json.dumps(bd, ensure_ascii=False),
             "summary_md": str(bd.get("summary_md") or ""),
         })
+        await self._reindex_quietly(book_id, reason="book_digest")
         return {"book_id": book_id, "volumes": len(vols), "digest": bd}
+
+    async def _reindex_quietly(self, book_id: str, *, reason: str = "") -> str:
+        """顺手重建记忆索引（不抛、不挡主流程）；返回 queued/fallback/failed/skip。
+
+        v1.62：digest（章/卷/全书）是索引的上游，改了不重建 → 检索侧读到的是旧素材。
+        队列可用就入队；不可用就进程内跑一次（一本书 ~50ms，比"悄悄过期"划算）。
+        """
+        if not book_id:
+            return "skip"
+        try:
+            from app.services.tasks_worker import enqueue as job_enqueue
+
+            await job_enqueue("book_reindex", {"book_id": book_id})
+            return "queued"
+        except Exception as e:  # noqa: BLE001  队列不可用退回进程内，别让索引悄悄过期
+            logger.warning("[rag] %s 后索引入队失败，进程内重建 book=%s：%s", reason, book_id, e)
+            try:
+                await self.reindex_book_memory(book_id)
+                return "fallback"
+            except Exception as e2:  # noqa: BLE001
+                logger.warning("[rag] %s 后索引重建失败 book=%s：%s", reason, book_id, e2)
+                return "failed"
 
     async def set_volume_config(self, book_id: str, *, volume_size: int | None = None,
                                 volumes: list[dict] | None = None) -> dict:

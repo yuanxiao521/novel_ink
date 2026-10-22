@@ -21,12 +21,25 @@ from sqlalchemy import func, or_, select
 from app.config import settings
 from app.db.models.memory_chunk import MemoryChunk
 from app.services.rag.fusion import apply_kind_weight, rrf_fuse
+# v1.62：哪些 kind 受「章号时间轴」约束由 kinds.py 统一声明（新增 kind 只改那一处）。
+from app.services.rag.kinds import CHAPTER_SCOPED_KINDS
 
 logger = logging.getLogger(__name__)
 
 TS_CONFIG = "zh"            # 0019 迁移创建的中文分词配置（无 zhparser 时退化为 simple）
 KEYWORD_CANDIDATES = 30     # 单路召回上限（与原实现 retrieval_recall_top_k=20 同量级）
 VECTOR_CANDIDATES = 30
+
+def _chapter_scope(chapter_no_lt: Optional[int]):
+    """章级素材的时间闸：非章级素材不受限；章级素材只取**当前章之前**的。
+
+    为什么单独抽函数：关键词腿和向量腿都要用同一条规则，写两遍必然有一天只改一处
+    （v1.49 就是按「kind != 'chapter'」写的，v1.62 新增章级 kind 后会漏后文）。
+    """
+    if chapter_no_lt is None:
+        return None
+    return or_(MemoryChunk.kind.notin_(list(CHAPTER_SCOPED_KINDS)),
+               MemoryChunk.chapter_no < int(chapter_no_lt))
 
 
 def _factory():
@@ -107,10 +120,10 @@ async def _keyword_leg(session, book_id: str, query: str, kinds,
         MemoryChunk.book_id == book_id, MemoryChunk.tsv.op("@@")(tsquery))
     if kinds:
         stmt = stmt.where(MemoryChunk.kind.in_(list(kinds)))
-    if chapter_no_lt is not None:
-        # 「前情」只看当前章之前的：非 chapter 类素材 chapter_no=0，不受限
-        stmt = stmt.where(or_(MemoryChunk.kind != "chapter",
-                              MemoryChunk.chapter_no < int(chapter_no_lt)))
+    scope = _chapter_scope(chapter_no_lt)
+    if scope is not None:
+        # 「前情」只看当前章之前的：非章级素材（角色/世界观/伏笔）不受限
+        stmt = stmt.where(scope)
     stmt = stmt.order_by(rank.desc()).limit(KEYWORD_CANDIDATES)
     rows = (await session.execute(stmt)).all()
     return [(r[0], float(r[1] or 0.0)) for r in rows]
