@@ -592,6 +592,39 @@ PY
 （B59）→ 真跑时 `beats` 恒为空、闸门永远不触发；B60 又让"真拦下"那一刻崩掉。
 **只有真跑一遍才会同时暴露"接线断了"和"拦下就崩"**。
 
+### 3.23 beats 结论可查 + 导演挑目标（v1.57）
+
+```bash
+# ① 推演一场带 hard beat 的戏（用 seed 雨夜书房场景，跑 1 回合看导演目标）
+cd backend && PYTHONPATH=. ../.venv/Scripts/python.exe - <<PY
+import asyncio, json
+from app.db.repo import Repo
+from app.services.service import SimulationService
+async def main():
+    repo, svc = Repo(), SimulationService(Repo())
+    ch = (await repo.list_chapters_by_book("book-rain"))[0]
+    sc = (await svc.list_scenes(ch["id"]))[0]
+    await svc.update_scene(sc["id"], {"beats": [
+        {"text": "陈家老宅的锁被撬开", "level": "hard", "anchors": ["老宅", "锁"]}]})
+    r = await svc.start(book_id="book-rain", chapter_id=ch["id"], scene_id=sc["id"], resume=False)
+    await svc.step(r["sim_id"], 1)
+    sim = await svc._load_sim(r["sim_id"])
+    print("beat_target:", sim.scratch.get("beat_target"))   # {beat_id:"b1", how:"..."}
+    await repo.delete(r["sim_id"]); await svc.update_scene(sc["id"], {"beats": []})
+asyncio.run(main())
+PY
+# 期望：beat_target = {beat_id:"b1", how:"（这回合怎么逼它发生）"}；无 LLM 时 how="按确定性策略推进"
+
+# ② 收束后结论落到场景（作者/巡检/体检都能读）
+curl -s "http://127.0.0.1:8001/api/v1/scenes/<scene_id>" | grep -o "beats_status[^,]*" | head -2
+# 期望 beats_status = {achieved, missed, missed_texts, evidence, judged, ok, retries, turn, at}
+
+# ③ 章级巡检结果里带 beats 汇总；主笔页「全局脉络」的骨架体检会报 beats_unmet（中危）
+```
+
+**语义边界**：①只报**已推演过**的场（没演的场不算"未达成"）；②`beats_status` 跟着**场景**走——
+sim 只是快照，换一次推演不该丢结论；③导演选目标只认"还没发生的 hard beat id"，选错作废不污染 sim。
+
 ## 4. 存量验收（S1–S4 / A2 / A3，仍在跑）
 
 ```powershell

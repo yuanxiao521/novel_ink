@@ -157,6 +157,8 @@ def build_graph(plan_cfg: PlanCfg, decide_fn: DecideFn, converge_fn: ConvergeFn,
             "hint": sim.director.hint.stage_prompt,
             "injected": sim.director.injected_events,
             "raise_request": sim.director.raise_request.model_dump(),
+            # v1.57：本回合导演显式要逼的那条必然事件（作者在导演台能看到它在追什么）
+            "beat_target": sim.scratch.get("beat_target") or {},
         })
         return {}
 

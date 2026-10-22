@@ -150,6 +150,17 @@ class DirectorEngine:
             return
         logger.info("[director-plan] LLM 不可用/产出空 → 回退确定性策略")
         self.fallback_plan()
+        self._fallback_beat_target()
+
+    def _fallback_beat_target(self) -> None:
+        """确定性回退：也要挑一条还没发生的 hard beat 当目标（无 LLM 时同样有推进方向）。"""
+        from app.services.engine.beats import event_texts, unmet_hard_beats
+
+        unmet = unmet_hard_beats(list(getattr(self.cfg, "beats", []) or []),
+                                 event_texts(self.sim.events))
+        self.sim.scratch["beat_target"] = (
+            {"beat_id": str(unmet[0].get("id")), "how": "按确定性策略推进"} if unmet else {}
+        )
 
     async def llm_plan(self) -> bool:
         """LLM 软引导（导演只给方向，不代写台词）。
@@ -165,6 +176,9 @@ class DirectorEngine:
             "injected_event": "str：环境/事件压，可留空",
             "stage_prompt": "str：一句中文，提示让谁先接话",
             "raise_request": {"reason_kind": "branch|out_of_control|world_gap，可空", "reason": "str，可空"},
+            # v1.57：从【还没发生的必然事件】里挑一条作为本回合目标（没有就返回空对象）
+            "beat_target": {"beat_id": "str 事件 id（如 b1），或空串",
+                            "how": "str 这回合你打算怎么逼它发生（≤20 字）"},
         }
         raw = await llm_client.call_cheap(self._llm_plan_prompt(), schema)
         if not isinstance(raw, dict):
@@ -198,7 +212,23 @@ class DirectorEngine:
             # 任何结构异常都视为 LLM 不可靠 → 回退，绝不污染 sim
             return False
 
-        if not (hint.info_exposures or hint.goal_adjusts or inj):
+        # v1.57：导演显式选中的"本回合要逼的必然事件"（只认还没发生的 hard beat id）
+        try:
+            from app.services.engine.beats import event_texts, unmet_hard_beats
+
+            target = raw.get("beat_target")
+            target = target if isinstance(target, dict) else {}
+            bid = str(target.get("beat_id") or "").strip()
+            allowed = {str(b.get("id")) for b in unmet_hard_beats(
+                list(getattr(self.cfg, "beats", []) or []), event_texts(self.sim.events))}
+            self.sim.scratch["beat_target"] = (
+                {"beat_id": bid, "how": str(target.get("how") or "")[:40]}
+                if bid and bid in allowed else {}
+            )
+        except Exception:  # noqa: BLE001  目标选错不影响软引导本身
+            self.sim.scratch["beat_target"] = {}
+
+        if not (hint.info_exposures or hint.goal_adjusts or inj or self.sim.scratch.get("beat_target")):
             return False  # 空引导等同失败，交给确定性回退
         hint.stage_prompt = raw.get("stage_prompt") or self._pick_stage_prompt(hint)
         self.sim.director.hint = hint
@@ -396,12 +426,24 @@ class DirectorEngine:
         return "\n".join(lines)
 
     def _beats_part(self) -> str:
-        """v1.54：把场级必然事件写进导演 prompt（hard 不可取消，soft 只作倾向）。"""
-        from app.services.engine.beats import beats_block
+        """把场级必然事件写进导演 prompt（hard 不可取消），并标出“还没发生的”。
 
-        block = beats_block(list(getattr(self.cfg, "beats", []) or []), where="本场")
+        v1.57：导演要**显式挑一条还没发生的 hard beat** 作为本回合目标（beat_target），
+        否则"约束"只是贴在那里、没人真去推。
+        """
+        from app.services.engine.beats import beats_block, event_texts, unmet_hard_beats
+
+        beats = list(getattr(self.cfg, "beats", []) or [])
+        block = beats_block(beats, where="本场")
         if not block:
             return ""
+        unmet = unmet_hard_beats(beats, event_texts(self.sim.events))
+        if unmet:
+            lines = "\n".join("- id=" + str(b.get("id")) + "｜" + str(b.get("text"))
+                              for b in unmet)
+            block += "\n\n【还没发生的必然事件（选一条作为本回合目标 beat_target）】\n" + lines
+        else:
+            block += "\n\n【必然事件已全部发生】beat_target 返回空对象。"
         return (block + "\n（这些是**事实级约束**：你可以决定它们怎么发生、什么顺序、由谁触发，"
                 "但不能取消、不能换成别的结论。本回合至少朝其中一件推进。）\n\n")
 

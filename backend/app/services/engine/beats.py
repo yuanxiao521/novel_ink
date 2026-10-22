@@ -138,3 +138,23 @@ def apply_beats_gate(sim, beats: list[dict], *, max_retries: int = 2) -> dict | 
     sim.director.hint.stage_prompt = (hint + " ｜必然事件还没发生：" + missing)[:400]
     return status
 
+def unmet_hard_beats(beats: list[dict], texts: Iterable[str]) -> list[dict]:
+    """还没发生的 hard beats（导演"本回合逼哪一条"用它挑目标）。"""
+    res = check_beats(beats, texts)
+    missed = set(res.get("missed") or [])
+    return [b for b in hard_beats(beats) if str(b.get("id")) in missed]
+
+
+def event_texts(events: Iterable[object]) -> list[str]:
+    """从 sim.events 抽文本（判定用）：payload 里的字符串 + actor 名。"""
+    out: list[str] = []
+    for ev in events or []:
+        payload = getattr(ev, "payload", None) or {}
+        if isinstance(payload, dict):
+            out += [str(v) for v in payload.values() if isinstance(v, str)]
+        actor = getattr(ev, "actor", "")
+        if actor:
+            out.append(str(actor))
+    return out
+
+

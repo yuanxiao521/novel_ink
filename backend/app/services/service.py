@@ -116,6 +116,30 @@ class SimulationService:
         """章节详情（含 book_id，供导演台 scene→chapter→book 反查书树）。"""
         return await self.repo.get_chapter(chapter_id)
 
+    async def _persist_beats_status(self, sim: models.SimulationState) -> None:
+        """把本场 beats 判定结果写回 `scenes.plan_cfg_json.beats_status`（v1.57）。
+
+        为什么落场景而不只留 sim.scratch：sim 只是**一次推演的快照**（会被新推演覆盖），
+        而"这一场的必然事件到底发生了没有"是**场景级结论**——作者、章级巡检、骨架体检
+        都要读它。不落场景，这个结论就只存在于日志里。
+        """
+        status = (sim.scratch or {}).get("beats_status")
+        if not status or not sim.scene_id:
+            return
+        try:
+            import time as _time
+
+            scene = await self.repo.get_scene(sim.scene_id)
+            if not scene:
+                return
+            cfg = _parse_json_obj(str(scene.get("plan_cfg_json") or "{}"))
+            cfg["beats_status"] = {**status, "turn": int(sim.world.turn),
+                                   "at": int(_time.time() * 1000)}
+            await self.repo.save_scene({**scene, "id": sim.scene_id,
+                                        "plan_cfg_json": json.dumps(cfg, ensure_ascii=False)})
+        except Exception as e:  # noqa: BLE001  落库失败不能挡住推演收尾
+            logger.warning("[beats] 判定结果落库失败（忽略）：%s", e)
+
     @staticmethod
     def _merge_beats_into_plan_cfg(plan_cfg_json: str, beats: object) -> str:
         """把 beats 合并进 plan_cfg_json（v1.55）：只动 beats 键，其它导演配置一律保留。"""
@@ -143,6 +167,8 @@ class SimulationService:
             cfg = {}
         out = dict(scene)
         out["beats"] = parse_beats((cfg or {}).get("beats") if isinstance(cfg, dict) else [])
+        # v1.57：最近一次推演的判定结论（未达成时含 missed_texts，供 UI/巡检展示）
+        out["beats_status"] = (cfg or {}).get("beats_status") if isinstance(cfg, dict) else None
         return out
 
     async def get_scene(self, scene_id: str) -> dict | None:
@@ -1819,6 +1845,22 @@ class SimulationService:
         return {"filled": filled, "chapter_summary": need_chapter,
                 "scenes": len(scenes), "scenes_generated": len(gen_list)}
 
+    @staticmethod
+    def _chapter_beats_summary(scenes: list[dict]) -> dict:
+        """章内各场 beats 结论汇总（v1.57）：只报**已经推演过**的场，未推演的场不算未达成。"""
+        unmet: list[dict] = []
+        checked = 0
+        for sc in scenes or []:
+            cfg = _parse_json_obj(str(sc.get("plan_cfg_json") or "{}"))
+            st = cfg.get("beats_status") or {}
+            if not isinstance(st, dict) or not st:
+                continue
+            checked += 1
+            for t in st.get("missed_texts") or []:
+                if str(t).strip():
+                    unmet.append({"scene": str(sc.get("title") or ""), "text": str(t)})
+        return {"scenes_checked": checked, "unmet": unmet, "ok": not unmet}
+
     async def chapter_inspect(self, chapter_id: str) -> dict:
         """**章级巡检**（v1.48 · P1）：体检 ∥ 质检 → 评审 → 0-token 裁决 → 自动记账。
 
@@ -1877,6 +1919,8 @@ class SimulationService:
             "score": {"total": total, "dims": dims},
             "verdict": verdict,
             "bookkeeping_written": written,
+            # v1.57：本场必然事件达成情况（来自推演时落库的 beats_status；读不到就当没查）
+            "beats": self._chapter_beats_summary(ctx.get("scenes") or []),
         }
 
     async def prose_review(self, scene_id: str, text: str) -> dict:
@@ -2730,6 +2774,8 @@ class SimulationService:
             # 单回合内举手 → 暂停等作者拍板（外层 SSE 循环会因 pending 停止）
             if sim.director.raise_request.pending:
                 break
+        if sim.ended:
+            await self._persist_beats_status(sim)   # v1.57：beats 结论跟着场景走
         return sim
 
     async def stream_step(self, sim_id: str) -> AsyncIterator[dict]:
@@ -2757,6 +2803,8 @@ class SimulationService:
         self._archive_turn(sim, prev_events)
         await self.repo.save(sim_id, sim)
         await self._sync_beliefs(sim)  # 信念账本草稿 → 书级 Belief 表（幂等）
+        if sim.ended:
+            await self._persist_beats_status(sim)   # v1.57：beats 结论跟着场景走
 
     async def _sync_beliefs(self, sim: models.SimulationState) -> None:
         """把 sim 运行时信念幂等 upsert 到书级 Belief 表（自动沉淀：edited=False，只增不删）。"""

@@ -327,6 +327,108 @@ async def test_sim_plan_cfg_reads_scene_beats():
     assert cfg.beats and cfg.beats[0]["text"] == "X 发生"
     assert cfg.beats[0]["level"] == "hard"
 
+# ---------------------------------------------------------------- v1.57：导演挑目标 + 结论落库
+def test_event_texts_and_unmet_hard_beats():
+    from app.services.engine.beats import event_texts, unmet_hard_beats
+
+    class _Ev:
+        def __init__(self, actor, payload):
+            self.actor = actor
+            self.payload = payload
+
+    events = [_Ev("霍岸", {"text": "霍岸收走了路引"})]
+    beats = [{"id": "b1", "text": "路引被收走", "level": "hard", "anchors": ["霍岸", "路引"]},
+             {"id": "b2", "text": "穿越", "level": "hard", "anchors": ["平行世界"]},
+             {"id": "b3", "text": "结盟", "level": "soft", "anchors": ["结盟"]}]
+    texts = event_texts(events)
+    assert "霍岸" in texts and any("路引" in x for x in texts)
+    unmet = unmet_hard_beats(beats, texts)
+    assert [b["id"] for b in unmet] == ["b2"]          # soft 不算；已达成的 b1 不算
+
+
+@pytest.mark.asyncio
+async def test_persist_beats_status_writes_scene():
+    """v1.57：beats 判定必须跟着**场景**走（sim.scratch 会被下一次推演覆盖）。"""
+    import json
+
+    from app.db.repo import Repo
+    from app.schemas.models import SimulationState, WorldState
+    from app.services.service import SimulationService
+
+    repo = Repo(use_db=False)
+    svc = SimulationService(repo)
+    await repo.save_book({"id": "b7", "title": "T", "genre": "g", "status": "planned",
+                          "cover_init": "T", "synopsis": ""})
+    await repo.save_chapter({"id": "c7", "book_id": "b7", "title": "第 1 章", "summary": "",
+                             "order_no": 1, "tone": "action", "word_target": 1000})
+    sid = (await svc.create_scene("c7", {"title": "场一"}))["id"]
+    sim = SimulationState(scenario="t", scene_id=sid, world=WorldState(scene_id=sid, title="t"))
+    sim.world.turn = 9
+    sim.scratch["beats_status"] = {"ok": False, "missed": ["b1"],
+                                   "missed_texts": ["两人穿越到平行世界"], "retries": 2}
+    await svc._persist_beats_status(sim)
+    scene = await svc.get_scene(sid)
+    st = scene["beats_status"]
+    assert st["ok"] is False and st["missed_texts"] == ["两人穿越到平行世界"]
+    assert st["turn"] == 9 and st["retries"] == 2
+
+
+def test_chapter_beats_summary_ignores_untried_scenes():
+    """没推演过的场不参与判定（否则"还没演"会被误报成"没达成"）。"""
+    import json
+
+    from app.services.service import SimulationService
+
+    scenes = [
+        {"title": "场一", "plan_cfg_json": json.dumps({"beats_status": {
+            "ok": False, "missed_texts": ["没发生的事"]}})},
+        {"title": "场二", "plan_cfg_json": "{}"},
+    ]
+    got = SimulationService._chapter_beats_summary(scenes)
+    assert got["scenes_checked"] == 1
+    assert got["unmet"] == [{"scene": "场一", "text": "没发生的事"}]
+    assert got["ok"] is False
+
+
+def test_book_brief_flags_unmet_beats():
+    """骨架体检要报"推演过但必然事件没发生"——作者以为演完了，其实是硬伤。"""
+    import json
+
+    from app.services.engine.book_brief import build_brief
+
+    ch = [{"id": "c1", "order_no": 1, "title": "第 1 章", "summary": "", "prose_md": "正文" * 50,
+           "tone": "action", "tension_curve": "raise", "word_target": 3000,
+           "mode": "emerge", "production_json": "{}"}]
+    scenes = {"c1": [{"id": "s1", "title": "验证场", "goal": "", "content_desc": "",
+                      "stage_desc": "", "scene_summary": "推演收束",
+                      "plan_cfg_json": json.dumps({"beats_status": {
+                          "ok": False, "missed_texts": ["穿越"]}})}]}
+    brief = build_brief(book={"id": "b", "title": "T", "genre": "g", "synopsis": ""},
+                        chapters=ch, scenes_by_chapter=scenes, characters=[],
+                        foreshadows=[], world_states=[], beliefs=[])
+    codes = [i["code"] for i in brief["issues"]]
+    assert "beats_unmet" in codes
+    hit = [i for i in brief["issues"] if i["code"] == "beats_unmet"][0]
+    assert "穿越" in hit["msg"] and "验证场" in hit["where"]
+
+
+@pytest.mark.asyncio
+async def test_director_fallback_sets_beat_target():
+    """无 LLM 时也要挑一条没发生的 hard beat 当目标（否则"约束"没人推）。"""
+    from app.schemas.models import SimulationState, WorldState
+    from app.services.engine.director import DirectorEngine, PlanCfg
+    from app.services.engine.beats import parse_beats
+
+    sim = SimulationState(scenario="t", world=WorldState(scene_id="s", title="t"))
+    cfg = PlanCfg(beats=parse_beats([{"id": "b1", "text": "穿越", "level": "hard",
+                                     "anchors": ["平行世界"]}]))
+    eng = DirectorEngine(sim, cfg)
+    eng._fallback_beat_target()
+    assert sim.scratch["beat_target"]["beat_id"] == "b1"
+    part = eng._beats_part()
+    assert "还没发生的必然事件" in part and "id=b1" in part
+
+
 
 
 

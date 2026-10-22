@@ -501,6 +501,25 @@ export function WritePage() {
                             <b>风险 {String(vf.risks ?? 0)} · 伏笔 {String(vf.foreshadow ?? 0)} · 信念 {String(vf.beliefs ?? 0)}</b>
                           </div>
                           <div className="s2-kv"><span>记账</span><b>写入 {String(inspect.bookkeeping_written ?? 0)} 条</b></div>
+                          {/* v1.57：本场必然事件达成情况（推演时落库的 beats_status） */}
+                          {(() => {
+                            const bt = (inspect.beats ?? {}) as Record<string, unknown>;
+                            const unmet = (bt.unmet ?? []) as Array<Record<string, unknown>>;
+                            const checked = Number(bt.scenes_checked ?? 0);
+                            if (!checked) return null;
+                            return (
+                              <>
+                                <div className="s2-kv"><span>必然事件</span>
+                                  <b>{unmet.length === 0 ? `全部达成（${checked} 场已推演）` : `未达成 ${unmet.length} 条`}</b>
+                                </div>
+                                {unmet.slice(0, 3).map((x, i) => (
+                                  <div className="wp-inspect-risk" key={i}>
+                                    · {String(x.scene ?? "")}：{String(x.text ?? "")}
+                                  </div>
+                                ))}
+                              </>
+                            );
+                          })()}
                           {Array.isArray(vf.top_risks) && (vf.top_risks as string[]).slice(0, 3).map((x, i) => (
                             <div className="wp-inspect-risk" key={i}>· {String(x)}</div>
                           ))}

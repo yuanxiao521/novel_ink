@@ -49,6 +49,7 @@ def build_brief(*, book: dict, chapters: list[dict],
     """装配全局脉络 + 骨架体检结果（纯函数：不读库、不调模型，便于单测）。"""
     rows: list[dict] = []
     scene_no: dict[str, int] = {}
+    unmet_beats: list[dict] = []      # v1.57：推演过但没发生的必然事件（场景级结论）
     for ch in sorted(chapters, key=lambda c: int(c.get("order_no") or 0)):
         cid = str(ch.get("id") or "")
         no = int(ch.get("order_no") or 0)
@@ -57,6 +58,17 @@ def build_brief(*, book: dict, chapters: list[dict],
         prod = _production(ch)
         for sc in scenes:
             scene_no[str(sc.get("id") or "")] = no
+            # v1.57：场推演完的 beats 结论（beats_status 由推演收尾落库）
+            try:
+                cfg = json.loads(str(sc.get("plan_cfg_json") or "{}"))
+            except Exception:  # noqa: BLE001
+                cfg = {}
+            st = (cfg or {}).get("beats_status") if isinstance(cfg, dict) else None
+            if isinstance(st, dict) and st and not st.get("ok"):
+                for t in (st.get("missed_texts") or [])[:3]:
+                    if str(t).strip():
+                        unmet_beats.append({"no": no, "scene": str(sc.get("title") or ""),
+                                            "text": str(t)})
         rows.append({
             "no": no, "id": cid, "title": ch.get("title") or "",
             # label：给 UI/渲染用的完整章名（标题已自带「第 N 章」就不重复串）
@@ -133,6 +145,15 @@ def build_brief(*, book: dict, chapters: list[dict],
     for o in overdue:
         add("high", "fs_overdue",
             f"伏笔逾期未收：应于第 {o['due_chapter']} 章前回收，当前仍 {o['status']}——{o['text']}")
+
+    # v1.57：推演完但"必然事件没发生"——这是硬伤（作者以为演完了，其实那件事没发生）
+    for u in unmet_beats[:4]:
+        add("mid", "beats_unmet",
+            "必然事件未达成：" + u["text"],
+            "第 " + str(u["no"]) + " 章《" + u["scene"] + "》")
+    if len(unmet_beats) > 4:
+        add("low", "beats_unmet_more",
+            "另有 " + str(len(unmet_beats) - 4) + " 条必然事件未达成（见各场详情）")
 
     written_nos = {r["no"] for r in written}
     for c in char_rows:
