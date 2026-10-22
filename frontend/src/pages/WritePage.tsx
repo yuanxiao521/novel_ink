@@ -129,7 +129,12 @@ export function WritePage() {
     based_on?: string; hit?: boolean;
   } | null>(null);
   const [candBusy, setCandBusy] = useState(false);
+  /** v1.70：「按这条改」的失败原因要**持久可见**（toast 2.4 秒就没了，作者会以为没反应） */
+  const [candErr, setCandErr] = useState("");
   const [applyBusy, setApplyBusy] = useState(false);
+  /** v1.70：候选卡上的范围切换（整章 / 只改第 N 段）——scope=para 需要段号 */
+  const [candScope, setCandScope] = useState("chapter");
+  const [candPara, setCandPara] = useState(1);
   /** v1.65：顶栏工具按钮 → 派给右栏责编流（与 StudioPage 的 v1.43 机制同一条路） */
   const [pendingTool, setPendingTool] = useState('');
   /** v1.65：章级审校记录（体检/质检/润色/AI 味/并入 的留痕） */
@@ -280,14 +285,17 @@ export function WritePage() {
     }
   }, [chapterId]);
 
-  /** v1.69：按一条审校建议产候选（不落库；采纳才写正文） */
-  const rewriteBy = async (instruction: string) => {
+  const [candInstr, setCandInstr] = useState("");
+  const rewriteBy = async (instruction: string, scope = "chapter", paraIndex = 0) => {
     if (!chapterId || candBusy) return;
     setSideTab("audit");
+    setCandInstr(instruction);
+    setCandErr("");
     setCandBusy(true);
     try {
-      const r = await rewriteChapter(chapterId, instruction, "chapter");
+      const r = await rewriteChapter(chapterId, instruction, scope, paraIndex);
       if (r.error) {
+        setCandErr(String(r.error));
         flash(`按建议改失败：${r.error}`);
       } else if (r.note_id && r.after) {
         setCand({
@@ -298,6 +306,7 @@ export function WritePage() {
         flash(r.cache?.hit ? "候选已就绪（缓存命中，没花模型）" : "候选已就绪，看一眼再采纳");
       }
     } catch (e) {
+      setCandErr(String(e instanceof Error ? e.message : e));
       flash(`按建议改失败：${String(e instanceof Error ? e.message : e)}`);
     } finally {
       setCandBusy(false);
@@ -915,6 +924,13 @@ export function WritePage() {
                       + 模型判定（偏离项与改法）。**只出意见，不改一个字**。
                     </div>
                   )}
+                  {candErr && (
+                    <div className="wp-cand-err" role="alert">
+                      <b>按这条改没出候选：</b>
+                      <span>{candErr}</span>
+                      <div className="s2-hint">常见原因：模型限流（稍后重试）/ 这条建议已满足（模型认为无需改动）/ 正文刚被你改过（重开会重新审计）。</div>
+                    </div>
+                  )}
                   {cand && (
                     <div className="wp-cand">
                       <div className="wp-cand-head">
@@ -929,6 +945,25 @@ export function WritePage() {
                       )}
                       {cand.kept.length > 0 && <div className="s2-hint">刻意保留：{cand.kept.join("；")}</div>}
                       <div className="wp-cand-body">{cand.after.slice(0, 360)}{cand.after.length > 360 ? "…" : ""}</div>
+                      <div className="wp-cand-scope">
+                        <span>范围：</span>
+                        <select className="wp-scope-sel" value={candScope}
+                                onChange={(e) => setCandScope(e.target.value)}>
+                          <option value="chapter">整章</option>
+                          <option value="para">只改第 N 段</option>
+                        </select>
+                        {candScope === "para" && (
+                          <input className="wp-scope-no" type="number" min={1}
+                                 max={paras.length} value={candPara}
+                                 onChange={(e) => setCandPara(Math.max(1, Number(e.target.value) || 1))}
+                                 title="段号（正文区 ¶N）" />
+                        )}
+                        <button className="wp-fix-btn" disabled={candBusy || busy}
+                                title="按上面选的范围重新生成候选（替换当前候选）"
+                                onClick={() => void rewriteBy(candInstr, candScope, candScope === "para" ? candPara : 0)}>
+                            {candBusy ? "重出中…" : "↻ 按此范围重出"}
+                        </button>
+                      </div>
                       <div className="wp-cand-actions">
                         <button className="ws-btn ws-btn-primary" disabled={applyBusy} onClick={() => void adoptCandidate()}>
                           {applyBusy ? "采纳中…" : "✓ 采纳并保存"}
@@ -954,7 +989,7 @@ export function WritePage() {
                           <span title={c.suggest || ""}>{c.detail}
                             {c.suggest ? <em style={{ display: "block", fontStyle: "normal", color: "var(--text-muted)" }}>→ {c.suggest}</em> : null}
                           </span>
-                          <button className="wp-fix-btn" disabled={candBusy || busy} title="按这条建议让主笔改一版（候选，不落库）"
+                          <button className="wp-fix-btn" disabled={candBusy || busy} title="按这条建议让主笔改一版（候选，不落库；范围可在候选卡切换）"
                                   onClick={() => void rewriteBy([c.detail, c.suggest].filter(Boolean).join("；"))}>
                             {candBusy ? "改中…" : "✍ 按这条改"}
                           </button>

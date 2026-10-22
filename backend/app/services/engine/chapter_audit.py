@@ -28,6 +28,7 @@ AUDIT_SCHEMA = {
         "detail": "str 具体偏离（引用正文现象，不要泛泛而谈）",
         "suggest": "str 怎么改（可执行的下一步，不要求改字时写「保留」）",
         "severity": "str high|mid|low",
+        "scope_hint": "str 这条建议的作用范围：chapter|scene|para（默认 chapter）",
     }],
     "keep": ["str 这一章做得对、后文必须保持的东西"],
 }
@@ -179,11 +180,13 @@ def normalize_audit(raw: object) -> dict:
         if not detail:
             continue
         sev = _s(it.get("severity")).lower()
+        hint = _s(it.get("scope_hint")).lower()
         items.append({
             "kind": _s(it.get("kind"), 24) or "other",
             "detail": detail,
             "suggest": _s(it.get("suggest"), 200),
             "severity": sev if sev in SEVERITY_ORDER else "mid",
+            "scope_hint": hint if hint in ("chapter", "scene", "para") else "chapter",
         })
     items.sort(key=lambda x: SEVERITY_ORDER.get(x["severity"], 1))
     try:

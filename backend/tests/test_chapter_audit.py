@@ -163,6 +163,5 @@ async def test_service_audit_runs_without_llm_and_writes_no_prose(monkeypatch):
     assert out["rendered"]
     # 只读：正文一个字都没变
     assert (await repo.get_chapter("c-a"))["prose_md"] == "林澈在雨里捡到一张路引。"
-    # 但结论要留痕（章级审计 note）
-    notes = await repo.list_chapter_notes("c-a")
-    assert notes and notes[0]["chapter_id"] == "c-a"
+    # v1.70：LLM 未接入时不落 note（避免每次点都灌噪声）；note 只在真正跑了模型时留痕
+    assert await repo.list_chapter_notes("c-a") == []

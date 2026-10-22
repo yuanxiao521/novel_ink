@@ -110,14 +110,41 @@ def l1_set(ns: str, key: str, value: Any, ttl: float | None = None) -> None:
     L1.set(ns + ":" + str(key), value, ttl)
 
 
+def l1_drop(ns: str, key: str) -> None:
+    """显式失效（增删改章后立刻生效，不必等 45s TTL）。"""
+    L1._data.pop(ns + ":" + str(key), None)   # 内部小结构，直接删即可
+
+
 # ---------------------------------------------------------------- L2：Redis
+# 进程内复用**一条**客户端：v1.69 的写法是"每次操作 from_url 再 aclose"，
+# 而 single-flight 的等待方每 250ms 轮询一次 → 并发下就是连接风暴（实测 10 并发可到 40 连接/秒）。
+# 现在按事件循环缓存（redis.asyncio 客户端绑 loop，测试里换 loop 要重建）。
+_CLIENT: tuple[object, aredis.Redis] | None = None
+
+
 async def _client() -> aredis.Redis:
-    return aredis.from_url(settings.redis_url, decode_responses=True)
+    global _CLIENT
+    loop = asyncio.get_running_loop()
+    if _CLIENT is not None and _CLIENT[0] is loop:
+        return _CLIENT[1]
+    if _CLIENT is not None:
+        try:
+            await _CLIENT[1].aclose()
+        except Exception:  # noqa: BLE001
+            pass
+    client = aredis.from_url(settings.redis_url, decode_responses=True)
+    _CLIENT = (loop, client)
+    return client
+
+
+def reset_client() -> None:
+    """测试/重启用：丢掉共享客户端（不关连接，避免跨 loop 报错）。"""
+    global _CLIENT
+    _CLIENT = None
 
 
 async def get_json(key: str) -> Any | None:
     """读缓存；Redis 不可用 → None（当未命中处理，绝不抛）。"""
-    client = None
     try:
         client = await _client()
         raw = await client.get(key)
@@ -125,16 +152,9 @@ async def get_json(key: str) -> Any | None:
     except Exception as e:  # noqa: BLE001  缓存故障不能影响业务
         logger.warning("[cache] 读失败（降级为直算）：%s", e)
         return None
-    finally:
-        if client is not None:
-            try:
-                await client.aclose()
-            except Exception:  # noqa: BLE001
-                pass
 
 
 async def set_json(key: str, value: Any, ttl: int | None = None) -> bool:
-    client = None
     try:
         client = await _client()
         await client.set(key, json.dumps(value, ensure_ascii=False), ex=ttl or _ttl_for(key))
@@ -142,56 +162,55 @@ async def set_json(key: str, value: Any, ttl: int | None = None) -> bool:
     except Exception as e:  # noqa: BLE001
         logger.warning("[cache] 写失败（不影响本次结果）：%s", e)
         return False
-    finally:
-        if client is not None:
-            try:
-                await client.aclose()
-            except Exception:  # noqa: BLE001
-                pass
 
 
 async def delete(key: str) -> None:
-    client = None
     try:
         client = await _client()
         await client.delete(key)
     except Exception:  # noqa: BLE001
         pass
-    finally:
-        if client is not None:
-            try:
-                await client.aclose()
-            except Exception:  # noqa: BLE001
-                pass
 
 
 # ---------------------------------------------------------------- single-flight
-async def acquire_lock(key: str, px_ms: int = LOCK_PX_MS) -> bool | None:
-    """SET NX PX。
+LOCK_OK = "ok"        # 抢到锁，由我计算
+LOCK_BUSY = "busy"    # 别人在算，我等结果
+LOCK_DOWN = "down"    # Redis 不可用 → 立刻直算（不傻等）
 
-    返回值是三态（这是"降级不卡 45s"的关键）：
-      True  —— 抢到锁，由我计算；
-      False —— 别人正在算，我该等结果；
-      None  —— **Redis 不可用**，缓存体系整体失效 → 调用方立刻直算，不能傻等。
-    """
-    client = None
+# 释放锁必须**只删自己的**：锁 30s 过期后若已被别人拿到，无条件 DEL 会把别人的锁删掉
+# （v1.69 就是无条件 delete）。这里用 Lua 做 compare-and-del（GET==token 才 DEL，原子）。
+_RELEASE_LUA = (
+    "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end"
+)
+
+
+def new_token_or_none() -> str:
+    import uuid
+
+    return uuid.uuid4().hex
+
+
+async def acquire_lock(key: str, px_ms: int = LOCK_PX_MS) -> tuple[str, str]:
+    """SET NX PX。返回 (state, token)：state 见 LOCK_OK / LOCK_BUSY / LOCK_DOWN。"""
+    token = new_token_or_none()
     try:
         client = await _client()
-        ok = await client.set(key + ":lock", "1", nx=True, px=px_ms)
-        return bool(ok)
+        ok = await client.set(key + ":lock", token, nx=True, px=px_ms)
+        return (LOCK_OK, token) if ok else (LOCK_BUSY, "")
     except Exception as e:  # noqa: BLE001
         logger.warning("[cache] 加锁失败（缓存不可用，降级直算）：%s", e)
-        return None
-    finally:
-        if client is not None:
-            try:
-                await client.aclose()
-            except Exception:  # noqa: BLE001
-                pass
+        return LOCK_DOWN, ""
 
 
-async def release_lock(key: str) -> None:
-    await delete(key + ":lock")
+async def release_lock(key: str, token: str = "") -> None:
+    """只释放自己的锁（token 不符 = 锁已过期且被别人接手 → 什么都不做）。"""
+    if not token:
+        return
+    try:
+        client = await _client()
+        await client.eval(_RELEASE_LUA, 1, key + ":lock", token)
+    except Exception as e:  # noqa: BLE001  Redis 不可用就当锁会自己过期（PX）
+        logger.warning("[cache] 释放锁失败（等待过期）：%s", e)
 
 
 async def single_flight(
@@ -209,17 +228,17 @@ async def single_flight(
     cached = await get_json(key)
     if cached is not None:
         return cached, False
-    lock = await acquire_lock(key, lock_px)
-    if lock is None:
+    state, token = await acquire_lock(key, lock_px)
+    if state == LOCK_DOWN:
         # 缓存不可用：直算，绝不在这里等 45s（作者点一下要立刻有结果）
         return await factory(), True
-    if lock is True:
+    if state == LOCK_OK:
         try:
             value = await factory()
             await set_json(key, value, _ttl_for(key))
             return value, True
         finally:
-            await release_lock(key)
+            await release_lock(key, token)
     deadline = time.monotonic() + wait_timeout
     while time.monotonic() < deadline:
         await asyncio.sleep(WAIT_STEP)

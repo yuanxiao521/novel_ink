@@ -71,7 +71,7 @@ class FakeRedis:
 
     def __init__(self) -> None:
         self.store: dict[str, object] = {}
-        self.locks: set[str] = set()
+        self.locks: dict[str, str] = {}
         self.gets = 0
         self.sets = 0
 
@@ -85,13 +85,16 @@ class FakeRedis:
         return True
 
     async def acquire_lock(self, key, px_ms=30000):
+        # v1.70：三态签名（OK, token）/（BUSY, ""）/（DOWN, ""）——与 cache.acquire_lock 对齐
         if key in self.locks:
-            return False
-        self.locks.add(key)
-        return True
+            return (cache_mod.LOCK_BUSY, "")
+        token = "tok-" + str(len(self.locks) + 1)
+        self.locks[key] = token
+        return (cache_mod.LOCK_OK, token)
 
-    async def release_lock(self, key):
-        self.locks.discard(key)
+    async def release_lock(self, key, token=""):
+        if self.locks.get(key) == token:
+            self.locks.pop(key, None)
 
 
 @pytest.fixture

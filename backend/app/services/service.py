@@ -109,6 +109,19 @@ def _scene_plan_cfg(plan_cfg_json: str, static_cfg: PlanCfg) -> PlanCfg:
     )
 
 
+
+# v1.70：同一 note 的并发 apply 互斥（进程内锁；跨进程由 payload.applied 幂等兜底）
+_APPLY_NOTE_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+def _apply_note_lock(note_id: str) -> asyncio.Lock:
+    lock = _APPLY_NOTE_LOCKS.get(note_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _APPLY_NOTE_LOCKS[note_id] = lock
+    return lock
+
+
 class SimulationService:
     def __init__(self, repo: Repo):
         self.repo = repo
@@ -803,6 +816,7 @@ class SimulationService:
             existing = await self.repo.list_chapters_by_book(book_id)
             data["order_no"] = max((int(c.get("order_no") or 0) for c in existing), default=0) + 1
         await self.repo.save_chapter(data)
+        self._drop_chapters_l1(book_id)          # L1：章清单变了，立即失效（不等 45s TTL）
         # v1.59：新增章可能落进某卷 range → 归属同步（幂等；失败不影响建章）
         try:
             await self.sync_volume_assignments(book_id)
@@ -810,8 +824,15 @@ class SimulationService:
             logger.warning("[volume] 归属同步失败 book=%s：%s", book_id, e)
         return {"id": cid}
 
+    def _drop_chapters_l1(self, book_id: str) -> None:
+        from app.services import cache as cache_mod
+
+        if book_id:
+            cache_mod.l1_drop("chapters", book_id)
+
     async def update_chapter(self, chapter_id: str, data: dict) -> dict:
         await self.repo.save_chapter({**data, "id": chapter_id})
+        self._drop_chapters_l1(str((data or {}).get("book_id") or ""))
         # 章号/章序可能改了 → 归属重算
         if "order_no" in data:
             try:
@@ -825,6 +846,7 @@ class SimulationService:
         ch = await self.repo.get_chapter(chapter_id) or {}
         book_id = str(ch.get("book_id") or "")
         await self.repo.delete_chapter(chapter_id)
+        self._drop_chapters_l1(book_id)          # L1：删章后章清单立即失效
         # v1.59：删章后卷归属要重算（否则 volume_id 指向已删章的位置）
         if book_id:
             try:
@@ -2420,6 +2442,17 @@ class SimulationService:
         }
 
 
+    async def _chapters_cached(self, book_id: str) -> list[dict]:
+        """章清单走 L1 进程内缓存（TTL 45s / 容量 256）——只放"丢了无所谓"的映射，不放 LLM 结果。"""
+        from app.services import cache as cache_mod
+
+        cached = cache_mod.l1_get("chapters", book_id)
+        if cached is not None:
+            return cached
+        rows = await self.repo.list_chapters_by_book(book_id)
+        cache_mod.l1_set("chapters", book_id, rows)
+        return rows
+
     async def _resolve_chapter_ref(self, *, chapter_id: str = "", chapter_no: object = 0,
                                    book_id: str = "") -> tuple[dict | None, str]:
         """把「第 N 章」或内部 id 统一解析成章 dict（解析不了就返回原因，不抛）。
@@ -2439,7 +2472,7 @@ class SimulationService:
             return None, "缺 chapter_id 或 chapter_no（章号，如 3）"
         if not book_id:
             return None, "缺 book_id（按章号审计需要知道是哪本书）"
-        chapters = await self.repo.list_chapters_by_book(book_id)
+        chapters = await self._chapters_cached(book_id)
         for ch in chapters:
             if int(ch.get("order_no") or 0) == no:
                 return ch, ""
@@ -2484,6 +2517,7 @@ class SimulationService:
         # v1.69：审校结果走两级缓存（L2 Redis）+ single-flight —— 同一「正文 + 评测计划」
         # 在 24h 内不重复打 LLM；并发点同一个审计只跑一次。
         cache_info = {"key": "", "hit": False, "ttl": 0}
+        payload: dict = {}
         if not body:
             skipped = "章正文为空（先写正文再审计）"
         elif not llm_client.available:
@@ -2506,19 +2540,32 @@ class SimulationService:
             cache_info["ttl"] = cache_mod.AUDIT_TTL
 
             async def _compute_audit() -> dict:
+                """只在**未命中缓存**时跑：跑完顺手落一条章级审计 note，并把 note_id 一起缓存。
+
+                v1.69 的坑：note 在缓存之外创建 → 每次点审计都新增一条（表被重复噪声灌满）。
+                现在 note 的创建属于"计算结果"的一部分：命中缓存就复用同一条 note。
+                """
                 try:
                     raw = await validate_and_retry(
                         llm_client,
                         audit_prompt(chapter=chapter, body=body, volume=volume, checks=checks),
                         AUDIT_SCHEMA, validate_audit,
                     )
-                    if isinstance(raw, dict):
-                        return {"deviation": normalize_audit(raw), "skipped": ""}
-                    return {"deviation": None, "skipped": "模型未返回可用审计"}
+                    if not isinstance(raw, dict):
+                        return {"deviation": None, "skipped": "模型未返回可用审计", "note_id": ""}
+                    dev = normalize_audit(raw)
+                    rendered = render_audit({"checks": checks, "deviation": dev})
+                    note = await self._save_chapter_note(
+                        chapter_id, kind="chief", created_by="chief",
+                        suggestion=(rendered or "骨架遵循度审计")[:600], before="",
+                        payload={"audit": {"checks": checks, "deviation": dev}},
+                    )
+                    return {"deviation": dev, "skipped": "", "note_id": note}
                 except Exception as e:  # noqa: BLE001  审计失败不 500：0-token 结论照样有用
                     logger.warning("[audit] LLM 判定失败 chapter=%s：%s", chapter_id, e)
                     return {"deviation": None,
-                            "skipped": f"LLM 判定失败（{type(e).__name__}）：已给出 0-token 结论"}
+                            "skipped": f"LLM 判定失败（{type(e).__name__}）：已给出 0-token 结论",
+                            "note_id": ""}
 
             payload, computed = await cache_mod.single_flight(key, _compute_audit)
             payload = payload or {}
@@ -2533,13 +2580,9 @@ class SimulationService:
                   "checks": checks, "deviation": deviation, "skipped": skipped,
                   "cache": cache_info}
         report["rendered"] = render_audit(report)
-        if body:
-            note_id = await self._save_chapter_note(
-                chapter_id, kind="chief", created_by="chief",
-                suggestion=(report["rendered"] or "骨架遵循度审计")[:600],
-                before="", payload={"audit": {k: report[k] for k in ("goal", "checks", "deviation")}},
-            )
-            report["note_id"] = note_id
+        # note 只在"真正跑了模型"那条路径里创建（并且随结果一起缓存）：
+        # 命中缓存 → 复用同一条 note；LLM 未接入 → 不落 note（避免每次点都灌一条噪声）。
+        report["note_id"] = str(payload.get("note_id") or "")
         return report
 
     async def chapter_rewrite(self, chapter_id: str = "", instruction: str = "", scope: str = "chapter",
@@ -2547,13 +2590,18 @@ class SimulationService:
                               chapter_no: object = 0, book_id: str = "") -> dict:
         """**按建议改稿**（v1.69 · 方案② 的候选环节）：只产候选，不落库。
 
-        作者点「按这条改」后：定位范围 → 让模型只改这一处 → 服务端把片段拼回全文
-        （范围外逐字节不变，可直接断言）→ 落一条 polisher note（after 有值）。
-        候选走 L2 缓存（10min，键含 body_hash + sha1(instruction|scope)）并 single-flight。
+        v1.70 修的三个缺陷（都有回归用例）：
+          - 疑点1：scope=para 时此前把**整章**塞进 prompt（写着「只改这一段」），
+            模型回整章 → splice 把整章塞回一段 → 正文膨胀。现在 prompt 只喂**这一段**；
+          - 疑点3：章正文超 8000 字时整章改写只喂尾部 → 采纳等于砍掉前文。
+            现在**直接拒绝**（提示改用 para/scene），并给「候选骤短」护栏；
+          - 疑点6：命中缓存还重复落 note → note 创建挪进 single-flight 的计算体内，
+            命中缓存 = 复用同一条 note。
         """
         from app.services import cache as cache_mod
         from app.services.engine.chapter_rewrite import (
-            REWRITE_SCHEMA, normalize_rewrite, rewrite_prompt, splice_scope, validate_rewrite,
+            REWRITE_SCHEMA, MAX_PROMPT_BODY, normalize_rewrite, rewrite_prompt, splice_scope,
+            validate_rewrite,
         )
         from app.services.engine.schema_retry import validate_and_retry
         from app.services.text_metrics import chapter_body
@@ -2580,14 +2628,33 @@ class SimulationService:
             pi = int(para_index or 0)
         except (TypeError, ValueError):
             pi = 0
+        paras = [p for p in body.split("\n\n")]
         scene_prose = ""
-        if scope == "scene":
+
+        # ---- 定位改写片段（prompt 只看到这一段；其余段落不受影响）----
+        if scope == "para":
+            if pi <= 0 or pi > len(paras):
+                return {"error": f"para_index 越界：{pi}（本文共 {len(paras)} 段）", "chapter_id": cid}
+            fragment = paras[pi - 1]
+            scope_label = f"第 {pi} 段（共 {len(paras)} 段）"
+        elif scope == "scene":
             if not scene_id:
                 return {"error": "scope=scene 需要 scene_id", "chapter_id": cid}
             sc = await self.repo.get_scene(scene_id)
             scene_prose = str((sc or {}).get("final_prose") or "").strip()
             if not scene_prose or scene_prose not in body:
                 return {"error": "本场已推演正文不在章正文里（先「并入本章」再按场改）", "chapter_id": cid}
+            fragment = scene_prose
+            scope_label = "本场（已并入正文的那一段）"
+        else:
+            scope = "chapter"
+            # 疑点3：整章 > 8000 字时 prompt 只装得下尾部 → 采纳等于砍掉前文。直接拒绝。
+            if len(body) > MAX_PROMPT_BODY:
+                return {"error": (
+                    f"整章 {len(body)} 字 > {MAX_PROMPT_BODY}：整章改写只能看到尾部、会截断前文。"
+                    "请改用 scope=para（按段）或 scope=scene（按场）分段改，或先把章正文控制在 8000 字内。"), "chapter_id": cid}
+            fragment = body
+            scope_label = "整章"
 
         volume = None
         for v in await self.repo.list_book_volumes(bid) if bid else []:
@@ -2603,14 +2670,19 @@ class SimulationService:
         key = cache_mod.rewrite_key(cid, body_hash, instr, scope)
 
         async def _compute_candidate() -> dict:
-            """最多两次：第一次若返回"与原文一致"的空候选，第二次带纠错提示再来。"""
+            """最多两次：第一次若返回「与原文一致」的空候选，第二次带纠错提示再来。
+
+            note 的创建属于「计算结果」的一部分（随结果一起缓存）——
+            v1.69 的坑：命中缓存还每次新建 note，审计表被重复噪声灌满。
+            """
             nudge = ""
             cand: dict = {"after": "", "summary": "", "kept": []}
             for _attempt in range(2):
                 raw = await validate_and_retry(
                     llm_client,
-                    rewrite_prompt(chapter=chapter, body=(scene_prose if scope == "scene" else body),
-                                   instruction=instr, scope=scope, context=context, nudge=nudge),
+                    rewrite_prompt(chapter=chapter, body=fragment, instruction=instr,
+                                   scope=scope, scope_label=scope_label,
+                                   context=context, nudge=nudge),
                     REWRITE_SCHEMA, validate_rewrite,
                 )
                 cand = normalize_rewrite(raw) if isinstance(raw, dict) else cand
@@ -2623,37 +2695,42 @@ class SimulationService:
                         nudge = f"上一次的输出无法拼回正文：{e}。请按 scope 要求只给对应的正文片段。"
                         continue
                     if trial.strip() != body.strip():
-                        return cand
+                        new_body, diff = splice_scope(body, check_after, scope=scope,
+                                                      para_index=pi, scene_prose=scene_prose)
+                        note = await self._save_chapter_note(
+                            cid, kind="polisher", created_by="editor",
+                            suggestion=(str(cand.get("summary") or "按建议改稿"))[:200],
+                            before=body, after=new_body,
+                            payload={"instruction": instr, "scope": scope, "diff": diff,
+                                     "based_on": body_hash, "kept": cand.get("kept") or [],
+                                     "kind": "rewrite"},
+                        )
+                        return {"after": new_body, "summary": cand.get("summary") or "",
+                                "kept": cand.get("kept") or [], "diff": diff, "note_id": note}
                 nudge = ("上一次改写与原文完全一致（等于没改）。请**务必做出实质修改**：至少改动一句指向该建议的话；"
                          "如果这条建议其实已经满足，就做最小的必要改进，并在 summary 里说明为什么这样改。")
             return cand
 
         try:
-            cand, computed = await cache_mod.single_flight(key, _compute_candidate)
+            payload, computed = await cache_mod.single_flight(key, _compute_candidate)
         except Exception as e:  # noqa: BLE001  模型失败要如实回报（不 500）
             logger.warning("[rewrite] 候选生成失败 chapter=%s：%s", cid, e)
             return {"error": f"候选生成失败：{type(e).__name__}: {e}", "chapter_id": cid}
-        cand = cand or {}
-        after = str(cand.get("after") or "").strip()
-        if not after:
-            return {"error": "模型没产出候选（可重试）", "chapter_id": cid}
-        try:
-            new_body, diff = splice_scope(body, after, scope=scope, para_index=pi,
-                                         scene_prose=scene_prose)
-        except ValueError as e:
-            return {"error": str(e), "chapter_id": cid}
-        if new_body.strip() == body.strip():
-            return {"error": "候选与原文一致（模型没改出东西）", "chapter_id": cid}
+        payload = payload or {}
+        new_body = str(payload.get("after") or "")
+        note_id = str(payload.get("note_id") or "")
+        if not new_body or not note_id:
+            return {"error": "模型没产出可用候选（可重试）", "chapter_id": cid}
+        diff = payload.get("diff") or {}
+        # 通用护栏：整章候选骤短（<60%）= 疑似截断/砍稿，拒绝
+        if scope == "chapter" and len(body) >= 200 and len(new_body) < int(len(body) * 0.6):
+            return {"error": (
+                f"候选 {len(new_body)} 字比原文 {len(body)} 字短了 40% 以上（疑似截断/砍稿），已拒绝。"
+                "可改用 scope=para/scene 分段改。"), "chapter_id": cid}
 
-        note_id = await self._save_chapter_note(
-            cid, kind="polisher", created_by="editor",
-            suggestion=(str(cand.get("summary") or "按建议改稿"))[:200],
-            before=body, after=new_body,
-            payload={"instruction": instr, "scope": scope, "diff": diff,
-                     "based_on": body_hash, "kept": cand.get("kept") or [], "kind": "rewrite"},
-        )
-        return {"chapter_id": cid, "note_id": note_id, "summary": str(cand.get("summary") or ""),
-                "kept": cand.get("kept") or [], "after": new_body, "diff": diff,
+        return {"chapter_id": cid, "note_id": note_id,
+                "summary": str(payload.get("summary") or ""),
+                "kept": payload.get("kept") or [], "after": new_body, "diff": diff,
                 "based_on": body_hash,
                 "cache": {"key": key, "hit": not computed, "ttl": cache_mod.REWRITE_TTL}}
 
@@ -2664,69 +2741,74 @@ class SimulationService:
         安全三件套：①必须 confirm；②候选生成时的正文 hash 必须与当前一致（否则拒绝，
         避免覆盖作者后来的修改）；③写库走既有 save_chapter_prose / save_scene_prose
         （覆盖前自动存版本、触发记账/索引/前情，可一键回退）。
-        """
-        from app.services import cache as cache_mod
-        from app.services.text_metrics import chapter_body
 
+        v1.70：**每条 note 一把进程内互斥锁** —— 修复「两次并发 apply 都能过 hash 校验、
+        各写一次」的竞态（回归用例 test_concurrent_apply_writes_once）。
+        """
         if not confirm:
             raise InvalidActionError("采纳会改写正文，需要 confirm=true")
-        note = await self.repo.get_prose_note(note_id)
-        if note is None:
-            raise InvalidActionError(f"审计记录不存在: {note_id}")
-        if str(note.get("status") or "") == "rejected":
-            raise InvalidActionError("这条记录已被驳回，不能再采纳")
-        after = str(note.get("after") or "").strip()
-        if not after:
-            raise InvalidActionError("这条记录没有候选稿（after 为空），无需应用")
-        try:
-            payload = json.loads(note.get("payload_json") or "{}")
-        except Exception:  # noqa: BLE001
-            payload = {}
-        if not isinstance(payload, dict):
-            payload = {}
-        if payload.get("applied"):
-            return {"note_id": note_id, "already_applied": True, "applied": payload.get("applied")}
+        from app.services import cache as cache_mod
+        lock = _apply_note_lock(note_id)
+        async with lock:
+            # 拿到锁之后**重新读一遍** note：并发场景下别人可能已经应用过了
+            note = await self.repo.get_prose_note(note_id)
+            if note is None:
+                raise InvalidActionError(f"审计记录不存在: {note_id}")
+            if str(note.get("status") or "") == "rejected":
+                raise InvalidActionError("这条记录已被驳回，不能再采纳")
+            after = str(note.get("after") or "").strip()
+            if not after:
+                raise InvalidActionError("这条记录没有候选稿（after 为空），无需应用")
+            try:
+                payload = json.loads(note.get("payload_json") or "{}")
+            except Exception:  # noqa: BLE001
+                payload = {}
+            if not isinstance(payload, dict):
+                payload = {}
+            if payload.get("applied"):
+                return {"note_id": note_id, "already_applied": True, "applied": payload.get("applied")}
 
-        expected = str(based_on or payload.get("based_on") or "")
-        chapter_id = str(note.get("chapter_id") or "")
-        scene_id = str(note.get("scene_id") or "")
-        revision = 0
-        if chapter_id:
-            chapter = await self.repo.get_chapter(chapter_id)
-            if chapter is None:
-                raise InvalidActionError(f"章节不存在: {chapter_id}")
-            cur = chapter_body(chapter, await self.repo.list_scenes_by_chapter(chapter_id))
-            if expected and expected != cache_mod.sha256_text(cur):
-                raise InvalidActionError(
-                    "正文在生成候选后已变更（hash 不一致）——请重新生成候选，避免覆盖新内容")
-            had_prose = bool(str(chapter.get("prose_md") or "").strip())
-            saved = await self.save_chapter_prose(chapter_id, after)
-            revs = await self.repo.list_chapter_revisions(chapter_id)
-            # 注意语义：save_chapter_prose 把**覆盖前的旧正文**存成最新版本。
-            # 所以这里返回的是"旧文存为第几版"（首次写入没有旧文 → 0）。
-            revision = int((revs[0] or {}).get("version") or 0) if (revs and had_prose) else 0
-            target = "chapter"
-        elif scene_id:
-            scene = await self.repo.get_scene(scene_id)
-            if scene is None:
-                raise InvalidActionError(f"场景不存在: {scene_id}")
-            cur = str(scene.get("final_prose") or "")
-            if expected and expected != cache_mod.sha256_text(cur):
-                raise InvalidActionError(
-                    "本场正文在生成候选后已变更（hash 不一致）——请重新生成候选")
-            saved = await self.save_scene_prose(scene_id, after)
-            target = "scene"
-        else:
-            raise InvalidActionError("这条记录既没有 chapter_id 也没有 scene_id，无法采纳")
+            expected = str(based_on or payload.get("based_on") or "")
+            chapter_id = str(note.get("chapter_id") or "")
+            scene_id = str(note.get("scene_id") or "")
+            revision = 0
+            if chapter_id:
+                chapter = await self.repo.get_chapter(chapter_id)
+                if chapter is None:
+                    raise InvalidActionError(f"章节不存在: {chapter_id}")
+                cur = chapter_body(chapter, await self.repo.list_scenes_by_chapter(chapter_id))
+                if expected and expected != cache_mod.sha256_text(cur):
+                    raise InvalidActionError(
+                        "正文在生成候选后已变更（hash 不一致）——请重新生成候选，避免覆盖新内容")
+                had_prose = bool(str(chapter.get("prose_md") or "").strip())
+                saved = await self.save_chapter_prose(chapter_id, after)
+                revs = await self.repo.list_chapter_revisions(chapter_id)
+                # 语义：save_chapter_prose 把**覆盖前的旧正文**存成最新版本；
+                # 首次写入没有旧文 → prev_revision = 0（前端不显示「可回退」）。
+                revision = int((revs[0] or {}).get("version") or 0) if (revs and had_prose) else 0
+                target = "chapter"
+            elif scene_id:
+                scene = await self.repo.get_scene(scene_id)
+                if scene is None:
+                    raise InvalidActionError(f"场景不存在: {scene_id}")
+                cur = str(scene.get("final_prose") or "")
+                if expected and expected != cache_mod.sha256_text(cur):
+                    raise InvalidActionError(
+                        "本场正文在生成候选后已变更（hash 不一致）——请重新生成候选")
+                saved = await self.save_scene_prose(scene_id, after)
+                target = "scene"
+            else:
+                raise InvalidActionError("这条记录既没有 chapter_id 也没有 scene_id，无法采纳")
 
-        applied = {"at": int(time.time() * 1000), "prev_revision": revision,
-                   "chars": len(after), "target": target}
-        await self.repo.save_prose_note({
-            "id": note_id, "status": "approved", "reviewed_at": datetime.now(),
-            "payload_json": json.dumps({**payload, "applied": applied}, ensure_ascii=False),
-        })
-        return {"note_id": note_id, "target": target, "prev_revision": revision,
-                "chars": len(after), "saved": saved, "already_applied": False}
+            applied = {"at": int(time.time() * 1000), "prev_revision": revision,
+                       "chars": len(after), "target": target}
+            await self.repo.save_prose_note({
+                "id": note_id, "status": "approved", "reviewed_at": datetime.now(),
+                "payload_json": json.dumps({**payload, "applied": applied}, ensure_ascii=False),
+            })
+            return {"note_id": note_id, "target": target, "prev_revision": revision,
+                    "chars": len(after), "saved": saved, "already_applied": False}
+
     # ---------------------------------------------------------------- 章级审校工具（v1.65）
     # 为什么在 service 而不是 engine：与场级 prose.* 一一对应（同一台引擎），差别只在
     # "单位是章 + 落章级审计（prose_notes.chapter_id）"。合并进章级工作台后，责编在章级

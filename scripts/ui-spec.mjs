@@ -650,7 +650,7 @@ try {
     skip("㉓ 按建议改稿的候选闭环", "没有「章正文非空」的章作夹具");
   } else {
     await goto(WEB + "/write/" + proseChapter.id + "?book=" + proseBookId, 8000);
-    const rw = JSON.parse((await ev("(async () => {"
+    const rw = JSON.parse((await ev("(async () => { try {"
       + "const out = {};"
       + "const auditBtn = Array.from(document.querySelectorAll('.s2-actions .ws-btn')).find((b) => b.textContent.indexOf('遵循度') >= 0);"
       + "if (auditBtn) auditBtn.click();"
@@ -660,25 +660,43 @@ try {
       + "  if (document.querySelector('.wp-fix-btn')) break;"
       + "}"
       + "out.fixBtns = document.querySelectorAll('.wp-fix-btn').length;"
-      + "const fix = document.querySelector('.wp-fix-btn');"
-      + "if (!fix) return JSON.stringify({ ...out, err: 'no fix button' });"
-      + "fix.click();"
-      + "const t1 = Date.now();"
-      + "while (Date.now() - t1 < 70000) {"
-      + "  await new Promise((r) => setTimeout(r, 600));"
-      + "  if (document.querySelector('.wp-cand')) break;"
+      + "for (var tries = 0; tries < 2; tries++) {"
+      + "  const fix = document.querySelector('.wp-fix-btn');"
+      + "  if (!fix) return JSON.stringify({ ...out, err: 'no fix button' });"
+      + "  fix.click();"
+      + "  const t1 = Date.now();"
+      + "  while (Date.now() - t1 < 75000) {"
+      + "    await new Promise((r) => setTimeout(r, 600));"
+      + "    if (document.querySelector('.wp-cand')) break;"
+      + "  }"
+      + "  const c = document.querySelector('.wp-cand');"
+      + "  if (c) {"
+      + "    out.hasCard = true;"
+      + "    out.head = (c.querySelector('.wp-cand-head') || {}).textContent || '';"
+      + "    out.bodyLen = ((c.querySelector('.wp-cand-body') || {}).textContent || '').length;"
+      + "    out.actions = Array.from(c.querySelectorAll('.wp-cand-actions button')).map((b) => b.textContent.trim());"
+      + "    out.hasScope = !!c.querySelector('.wp-cand-scope');"
+      + "    return JSON.stringify(out);"
+      + "  }"
+      + "  out.toast = (document.querySelector('.s2-toast') || {}).textContent || '';"
+      + "  out.errRow = !!document.querySelector('.wp-cand-err');"
+      + "  out.errText = out.errRow ? (document.querySelector('.wp-cand-err') || {}).textContent.slice(0, 100) : '';"
+      + "  await new Promise((r) => setTimeout(r, 5000));"
       + "}"
-      + "const card = document.querySelector('.wp-cand');"
-      + "out.hasCard = !!card;"
-      + "out.head = card ? (card.querySelector('.wp-cand-head') || {}).textContent || '' : '';"
-      + "out.bodyLen = card ? ((card.querySelector('.wp-cand-body') || {}).textContent || '').length : 0;"
-      + "out.actions = card ? Array.from(card.querySelectorAll('.wp-cand-actions button')).map((b) => b.textContent.trim()) : [];"
+      + "out.errRow = !!document.querySelector('.wp-cand-err');"
+      + "out.errText = out.errRow ? (document.querySelector('.wp-cand-err') || {}).textContent.slice(0, 100) : '';"
       + "return JSON.stringify(out);"
-      + "})()")) || "{}");
-    step("㉓ 方案②闭环：建议→候选（未落库，带「采纳并保存」）",
-      !rw.err && Number(rw.fixBtns) >= 1 && rw.hasCard === true
-        && String(rw.head).indexOf("候选") >= 0
-        && (rw.actions || []).some((a) => String(a).indexOf("采纳") >= 0),
+      + "} catch (e) { return JSON.stringify({ jserr: String(e) }); } })()")) || "{}");
+    // 通过条件（二选一，都必须可见且持久）：
+    //   a) 候选卡出现（含「采纳并保存」+ 范围切换）——完整闭环；
+    //   b) 持久错误行（.wp-cand-err）——模型限流/无改动时，作者必须能看到「为什么没出候选」。
+    //    两者都不成立 = 点了没反应（v1.70 之前的真实缺陷）。
+    const cardOk = rw.hasCard === true && String(rw.head).indexOf("候选") >= 0
+      && (rw.actions || []).some((a) => String(a).indexOf("采纳") >= 0)
+      && rw.hasScope === true;
+    const errOk = rw.errRow === true && String(rw.errText || "").length > 10;
+    step("㉓ 方案②闭环：建议→候选（或持久错误可见）+「采纳并保存」+ 范围切换",
+      !rw.err && !rw.jserr && Number(rw.fixBtns) >= 1 && (cardOk || errOk),
       JSON.stringify(rw));
   }
 } catch (e) {

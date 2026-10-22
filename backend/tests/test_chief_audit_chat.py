@@ -92,8 +92,8 @@ async def test_chief_chat_answers_chapter_question_without_llm(_disable_llm):
     assert "遵循度" in out["reply"] or "骨架" in out["reply"]
     # 只读：正文没被改
     assert (await repo.get_chapter("c-1"))["prose_md"] == "林澈在雨里捡到一张路引。"
-    # 结论留痕（章级审计 note）
-    assert await repo.list_chapter_notes("c-1")
+    # v1.70：LLM 不可用 → 不落 note（留痕只发生在真正跑了模型的审计里），避免噪声
+    assert await repo.list_chapter_notes("c-1") == []
 
 
 @pytest.mark.asyncio

@@ -931,6 +931,30 @@ sha256 与「长度+首尾」的区别 · single-flight 并发只跑一次 · **
 
 **L3 永久回归**：㉓ 遵循度 tab →「✍ 按这条改」→ 候选卡（未落库）出现且带「✓ 采纳并保存」（L3 刻意不点采纳，避免改夹具正文）。
 **截图**：`docs/mockups/p3/ink/49-write-suggestion-candidate.png`
+
+### 3.35 方案② 完成度审计与缺陷修复（v1.70）
+
+> 审计方法：**先写「应当通过」的回归用例 → 在 v1.69 上跑红（证明缺陷真实）→ 修复 → 转绿**。
+> 7 个疑点全部实证，其中 2 个阻断级（数据损失风险）。
+
+| # | 级别 | 缺陷 | 证据（实测） | 修复 | 回归用例 |
+| --- | --- | --- | --- | --- | --- |
+| B66 | 阻断 | scope=para 喂整章给模型，splice 把整章塞回一段 → 正文膨胀 | 探针：22 字 → 38 字（1.7 倍） | prompt 只喂该段 | `test_para_scope_only_sends_and_replaces_that_paragraph` |
+| B67 | 阻断 | 章 >8000 字整章改写只喂尾部 → 采纳砍掉前文 | 探针：9001 → 8030 字（丢头部 971 字） | 整章 >8000 拒绝 + 候选骤短 <60% 护栏 | `test_chapter_scope_refuses_too_long_body` / `..._rejects_suspiciously_short_candidate` |
+| B68 | 应修 | release_lock 无条件 DEL → 锁过期误删别人的锁 | 代码审查 + token 测试 | token + Lua compare-and-del | `test_release_lock_only_removes_own_token` |
+| B69 | 应修 | 每操作新建 Redis 连接（single-flight 等待 250ms/次 → 连接风暴） | 计数探针：3 次操作 3 条连接 | 进程内共享客户端（按事件循环） | `test_redis_client_is_reused` |
+| B70 | 应修 | 命中缓存仍新建 note（审计/候选）→ 审计表噪声 | 用例：2 次审计 → 2 条 note | note 创建进计算体、随结果缓存 | `test_cache_hit_does_not_duplicate_*` |
+| B71 | 应修 | 并发 apply 竞态：都能过 hash 校验各写一次 | 用例：2 并发 → save 2 次 | 每 note 一把互斥锁 + 锁内重读 | `test_concurrent_apply_writes_once` |
+| B72 | 应修 | 「按这条改」失败只闪 2.4s toast → 作者以为没反应 | LLM 限流实测：无候选、无提示 | 审计面板持久错误行 + L3 ㉓ 改为「候选或错误」二选一必现 | `L3 ㉓` |
+
+**未落地项补齐（方案② 清单对照）**：审计 `scope_hint`（原 0 处，现 schema+normalize+前端类型）；
+L1 章清单缓存真正接线（`_chapters_cached` + 章 CRUD 即时失效；此前 TinyTTLCache 定义了无调用方）；
+候选卡范围切换（整章 / 第 N 段）。**仍属可延后**：审计建议到「段」的自动定位（需段落级映射，与 ③ 一起做）。
+
+**收口审计（同批）**：路由 13 条全有落点（`/studio` 无 id 重定向）；`/studio/:sceneId` 为二级场精修页（有意保留）；
+临时脚本已清；`WorkspaceContext.stepLink`/主笔页/设定页三处旧入口统一到 `/write`。
+
+**验收（v1.70）**：pytest **468** · tsc 0 · build ok · L2 **25/25** · L3 **24/24**（㉓ 现同时覆盖「限流时错误持久可见」）。
 ## 4. 存量验收（S1–S4 / A2 / A3，仍在跑）
 
 ```powershell

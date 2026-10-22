@@ -1971,6 +1971,8 @@ export interface ChapterAuditItem {
   detail: string;
   suggest?: string;
   severity?: string;
+  /** v1.70：这条建议的作用范围（chapter/scene/para）——按段改的输入 */
+  scope_hint?: string;
 }
 
 export interface ChapterAudit {
@@ -2015,9 +2017,10 @@ export interface ChapterRewriteResult {
 
 /** 按一条审校建议产候选（不落库；采纳才写正文）。 */
 export async function rewriteChapter(
-  chapterId: string, instruction: string, scope = "chapter",
+  chapterId: string, instruction: string, scope = "chapter", paraIndex = 0,
 ): Promise<ChapterRewriteResult> {
-  return send("POST", `/api/v1/chapters/${chapterId}/rewrite`, { instruction, scope });
+  return send("POST", `/api/v1/chapters/${chapterId}/rewrite`,
+              { instruction, scope, para_index: paraIndex });
 }
 
 export interface ApplyNoteResult {
