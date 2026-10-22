@@ -850,6 +850,30 @@ pytest backend/tests/test_chapter_scope.py -q
 
 **旧入口清单（v1.66 已统一）**：侧栏第 3 项 → `/write/{当前章}`；stepLink 的 director/dashboard/write 下一站 →
 `toWrite`；主笔页 章选中 → 「✍ 去写这一章」，场选中 → 「✍ 写这一章 / ✎ 场级精修」；设定页空态 → `/write`。
+
+### 3.32 章级骨架遵循度审计（v1.67 · prose.audit，只读）
+
+> 主笔要「能看到正文」，但不能「改正文」。这条链路只有报告：0-token 判定 + 模型判定；
+> 写库仅一条章级审计 note，正文一字不动（有测试断言）。
+
+```bash
+CH=chapter-c08f2b6b
+
+# 审计（0-token + LLM；LLM 不可用时也必须返回 0-token 结论，不 500）
+curl -s -X POST "http://127.0.0.1:8001/api/v1/chapters/$CH/audit" | head -c 600
+# 期望：{ goal:{chapter,tension_curve,volume,climax}, checks:[...], deviation:{verdict,score,items,keep}, rendered }
+
+# 只读证据：调用前后正文完全一致（测试也这么断言）
+curl -s "http://127.0.0.1:8001/api/v1/chapters/$CH/prose" | head -c 80
+```
+
+**0-token 判定码**：`empty` / `words_under` / `words_over` / `no_target` / `no_curve` / `no_goal` /
+`beats_unmet`（来自各场 `plan_cfg_json.beats_status`）/ `scene_not_merged` / `protagonist_absent` / `volume_no_goal`。
+
+**UI**：写作页右栏第三个 tab「遵循度」（结论 + 章目标/本卷目标 + 0-token 清单 + 偏离项与建议 + 保持项），
+顶栏另有「🧭 遵循度」按钮。截图：`docs/mockups/p3/ink/47-write-adherence-audit.png`
+
+**L3 永久回归**：㉑ 章级副页「骨架遵循度」可跑、有结论（0-token 必在）；**只读**由 pytest + 工具声明双重保证。
 ## 4. 存量验收（S1–S4 / A2 / A3，仍在跑）
 
 ```powershell

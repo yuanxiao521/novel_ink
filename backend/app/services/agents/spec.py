@@ -30,7 +30,9 @@ CHIEF = AgentSpec(
     reads=("book_tree", "memories", "inspirations", "ledgers", "writing_signals"),
     writes=("outline", "characters", "worldview", "memories", "constraints"),
     tools=("outline.plan", "outline.commit", "characters.generate", "memory.write",
-            "memory.search", "book.brief", "chapter.production"),
+            "memory.search", "book.brief", "chapter.production",
+            # v1.67：主笔能看到正文（只读审计），但**不能改字** —— 边界由 side_effect=read 保证
+            "prose.audit"),
     emits=("plan.preview", "outline.committed"),
     can_initiate_tasks=True,
     needs_confirm=("outline.commit",),

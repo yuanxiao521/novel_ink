@@ -190,6 +190,12 @@ class MergeScenesIn(BaseModel):
     confirm: bool = False
 
 
+@router.post("/chapters/{chapter_id}/audit")
+async def chapter_audit(chapter_id: str, svc: SimulationService = Depends(get_service)):
+    """骨架遵循度审计（v1.67 · 只读）：0-token 判定 + LLM 语义判定 → 偏离项 + 建议，不改正文。"""
+    return await svc.chapter_prose_audit(chapter_id)
+
+
 @router.post("/chapters/{chapter_id}/merge-scenes")
 async def chapter_merge_scenes(chapter_id: str, body: MergeScenesIn,
                                svc: SimulationService = Depends(get_service)):

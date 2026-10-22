@@ -7,7 +7,7 @@ import { useDialog } from '../components/common/Dialog';
 import { useWorkspace } from '../context/WorkspaceContext';
 import {
   chapterDraftStream, enqueueChapterInspect, fetchBookMemoryStats, fetchChapterProse,
-  fetchChapterNotes, fetchChapterRecall, generateChapterSettings, listScenes,
+  auditChapter, fetchChapterNotes, fetchChapterRecall, generateChapterSettings, listScenes,
   mergeChapterScenes, pollJob, reindexBookMemory, saveChapterProse,
 } from '../api/novel';
 import {
@@ -15,7 +15,7 @@ import {
   regenerateChapterDigest, restoreChapterRevision,
 } from '../api/novel';
 import type {
-  ChapterPrior, ChapterProductionPlan, ChapterRecall, ChapterRevisionMeta,
+  ChapterAudit, ChapterPrior, ChapterProductionPlan, ChapterRecall, ChapterRevisionMeta,
   MemoryStats, RecallItem,
 } from '../api/novel';
 
@@ -117,7 +117,10 @@ export function WritePage() {
   const [memStats, setMemStats] = useState<MemoryStats | null>(null);
   const [memOpen, setMemOpen] = useState(false);
   /** v1.65：右栏 tab —— 责编（章级副驾）/ 进度与审校（原来的巡检结果） */
-  const [sideTab, setSideTab] = useState<'editor' | 'stats'>('editor');
+  const [sideTab, setSideTab] = useState<'editor' | 'stats' | 'audit'>('editor');
+  /** v1.67：骨架遵循度审计（只读；主笔能力，作者在章页直接能跑） */
+  const [audit, setAudit] = useState<ChapterAudit | null>(null);
+  const [auditBusy, setAuditBusy] = useState(false);
   /** v1.65：顶栏工具按钮 → 派给右栏责编流（与 StudioPage 的 v1.43 机制同一条路） */
   const [pendingTool, setPendingTool] = useState('');
   /** v1.65：章级审校记录（体检/质检/润色/AI 味/并入 的留痕） */
@@ -268,6 +271,22 @@ export function WritePage() {
     }
   }, [chapterId]);
 
+  /** v1.67：跑一次骨架遵循度审计（只读：对照章目标/张力曲线/卷目标，输出偏离+建议） */
+  const runAudit = async () => {
+    if (!chapterId || auditBusy) return;
+    setSideTab('audit');
+    setAuditBusy(true);
+    try {
+      const r = await auditChapter(chapterId);
+      setAudit(r);
+      void loadChapterNotes();
+      flash(r.deviation ? `审计完成：遵循度 ${r.deviation.score ?? '—'} 分` : '已给出 0-token 结论（LLM 未参与）');
+    } catch (e) {
+      flash(`审计失败：${String(e instanceof Error ? e.message : e)}`);
+    } finally {
+      setAuditBusy(false);
+    }
+  };
   /** v1.65：顶栏工具按钮 → 切到副驾 tab 并派活（过程与明细都在那条流里） */
   const askTool = (tool: string) => {
     setSideTab('editor');
@@ -480,6 +499,10 @@ export function WritePage() {
             <button className="ws-btn" disabled={busy || words === 0} onClick={() => askTool('chapter.inspect')}
                     title="章后巡检：体检 ∥ 质检 → 评分 → 裁决 → 自动记账">
               🗂 审稿会
+            </button>
+            <button className="ws-btn" disabled={busy || words === 0 || auditBusy} onClick={() => void runAudit()}
+                    title="骨架遵循度（只读）：对照章目标/张力曲线/卷目标，看这一章有没有写偏">
+              🧭 {auditBusy ? "审计中…" : "遵循度"}
             </button>
             <details className="s2-more">
               <summary>精修工具 ▾</summary>
@@ -780,6 +803,8 @@ export function WritePage() {
                 <div className="tab-switch" style={{ marginLeft: 'auto' }}>
                   <button className={'tab ' + (sideTab === 'editor' ? 'active' : '')}
                           onClick={() => setSideTab('editor')}>责编</button>
+                  <button className={'tab ' + (sideTab === 'audit' ? 'active' : '')}
+                          onClick={() => void runAudit()}>遵循度</button>
                   <button className={'tab ' + (sideTab === 'stats' ? 'active' : '')}
                           onClick={() => setSideTab('stats')}>进度 · 审校</button>
                 </div>
@@ -790,6 +815,57 @@ export function WritePage() {
                             onRefresh={() => { void load(); void loadChapterNotes(); }}
                             pendingTool={pendingTool}
                             onPendingConsumed={() => setPendingTool('')} />
+              ) : sideTab === 'audit' ? (
+                <div className="s2-quality">
+                  <div className="s2-side-head">
+                    <span className="ec-title">骨架遵循度（只读）</span>
+                    <button className="ws-btn" style={{ marginLeft: "auto", padding: "2px 8px", fontSize: 11 }}
+                            disabled={auditBusy || busy} onClick={() => void runAudit()}>
+                      {auditBusy ? "审计中…" : audit ? "↻ 重新审计" : "🧭 跑一次"}
+                    </button>
+                  </div>
+                  {!audit && (
+                    <div className="s2-hint">
+                      对照「章目标 / 张力曲线 / 卷目标」看这一章有没有写偏：0-token 判定（字数、必然事件、场并入、主角在场）
+                      + 模型判定（偏离项与改法）。**只出意见，不改一个字**。
+                    </div>
+                  )}
+                  {audit && (
+                    <>
+                      {audit.deviation?.verdict && (
+                        <div className="s2-kv"><span>结论</span>
+                          <b>{audit.deviation.verdict}
+                            {audit.deviation.score != null ? `（遵循度 ${audit.deviation.score}）` : ""}</b>
+                        </div>
+                      )}
+                      {audit.goal.chapter && <div className="s2-hint">章目标：{audit.goal.chapter}</div>}
+                      {audit.goal.volume && <div className="s2-hint">本卷目标：{audit.goal.volume}</div>}
+                      {audit.skipped && <div className="s2-hint">{String(audit.skipped)}</div>}
+                      {audit.checks.map((c, i) => (
+                        <div className="s2-ann-mini" key={"chk" + i}>
+                          <span className="s2-ann-no">{c.level}</span>
+                          <span title={c.suggest || ""}>{c.detail}
+                            {c.suggest ? <em style={{ display: "block", fontStyle: "normal", color: "var(--text-muted)" }}>→ {c.suggest}</em> : null}
+                          </span>
+                        </div>
+                      ))}
+                      {(audit.deviation?.items ?? []).map((it, i) => (
+                        <div className="s2-ann-mini" key={"dev" + i}>
+                          <span className="s2-ann-no">{it.severity || "mid"}</span>
+                          <span>{it.detail}
+                            {it.suggest ? <em style={{ display: "block", fontStyle: "normal", color: "var(--text-muted)" }}>→ {it.suggest}</em> : null}
+                          </span>
+                        </div>
+                      ))}
+                      {(audit.deviation?.keep?.length ?? 0) > 0 && (
+                        <div className="s2-hint">保持：{(audit.deviation?.keep ?? []).join("；")}</div>
+                      )}
+                      {audit.checks.length === 0 && !audit.deviation?.verdict && (
+                        <div className="s2-hint">（这次没发现偏离）</div>
+                      )}
+                    </>
+                  )}
+                </div>
               ) : (
               <>
               <div className="s2-side-head"><span className="ec-title">本章进度</span></div>

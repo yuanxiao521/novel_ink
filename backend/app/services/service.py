@@ -2419,6 +2419,63 @@ class SimulationService:
             "beats": self._chapter_beats_summary(ctx.get("scenes") or []),
         }
 
+
+    async def chapter_prose_audit(self, chapter_id: str, text: str = "") -> dict:
+        """**骨架遵循度审计**（v1.67 · 只读）：0-token 判定 + LLM 语义判定，不改一个字。
+
+        作者诉求：主笔要能"看正文"，但不能改正文。所以这条链路只产出报告：
+        偏离项 + 改法建议 + 该保持的东西；写库只写一条章级审计 note（kind=chief）。
+        """
+        from app.services.engine.chapter_audit import (
+            AUDIT_SCHEMA, audit_prompt, checks_zero_token, normalize_audit,
+            render_audit, validate_audit,
+        )
+        from app.services.engine.schema_retry import validate_and_retry
+
+        chapter, body, book_id = await self._chapter_and_body(chapter_id, text)
+        scenes = await self.repo.list_scenes_by_chapter(chapter_id)
+        no = int(chapter.get("order_no") or 0)
+        volumes = (await self.repo.list_book_volumes(book_id)) if book_id else []
+        volume = next((v for v in volumes
+                       if int(v.get("range_from") or 0) <= no <= int(v.get("range_to") or 0)), None)
+        characters = (await self.repo.list_characters_by_book(book_id)) if book_id else []
+        protags = [str(c.get("name") or "") for c in characters
+                   if str(c.get("role_tier") or "") in ("protagonist", "主角")]
+        checks = checks_zero_token(chapter=chapter, body=body, scenes=scenes,
+                                   volume=volume, protagonist_names=protags)
+        deviation: dict | None = None
+        skipped = ""
+        if not body:
+            skipped = "章正文为空（先写正文再审计）"
+        elif not llm_client.available:
+            skipped = "LLM 未接入（只跑 0-token 判定）"
+        else:
+            try:
+                raw = await validate_and_retry(
+                    llm_client,
+                    audit_prompt(chapter=chapter, body=body, volume=volume, checks=checks),
+                    AUDIT_SCHEMA, validate_audit,
+                )
+                if isinstance(raw, dict):
+                    deviation = normalize_audit(raw)
+            except Exception as e:  # noqa: BLE001  审计失败不该 500：0-token 结果照样有用
+                logger.warning("[audit] LLM 判定失败 chapter=%s：%s", chapter_id, e)
+                skipped = f"LLM 判定失败（{type(e).__name__}）：已给出 0-token 结论"
+        report = {"chapter_id": chapter_id, "chapter_no": no,
+                  "goal": {"chapter": str(chapter.get("summary") or ""),
+                           "tension_curve": str(chapter.get("tension_curve") or ""),
+                           "volume": str((volume or {}).get("arc_goal") or ""),
+                           "climax": str((volume or {}).get("climax") or "")},
+                  "checks": checks, "deviation": deviation, "skipped": skipped}
+        report["rendered"] = render_audit(report)
+        if body:
+            note_id = await self._save_chapter_note(
+                chapter_id, kind="chief", created_by="chief",
+                suggestion=(report["rendered"] or "骨架遵循度审计")[:600],
+                before="", payload={"audit": {k: report[k] for k in ("goal", "checks", "deviation")}},
+            )
+            report["note_id"] = note_id
+        return report
     # ---------------------------------------------------------------- 章级审校工具（v1.65）
     # 为什么在 service 而不是 engine：与场级 prose.* 一一对应（同一台引擎），差别只在
     # "单位是章 + 落章级审计（prose_notes.chapter_id）"。合并进章级工作台后，责编在章级

@@ -574,6 +574,35 @@ try {
   step("⑳ 不留空路由：/studio 重定向到章级工作台（有正文、有标题）",
     String(rd.path).indexOf("/write/") === 0 && String(rd.title).length > 0,
     JSON.stringify(rd));
+
+  // ㉑ 章级副页「骨架遵循度」（v1.67 · prose.audit）：主笔能看到正文但不改字。
+  //    断言：右栏有「遵循度」tab、顶栏有按钮；点一次能出结论（LLM 不可用时也必须有 0-token 判定）。
+  if (!proseChapter) {
+    skip("㉑ 章级副页「骨架遵循度」", "没有「章正文非空」的章作夹具");
+  } else {
+    await goto(WEB + "/write/" + proseChapter.id + "?book=" + proseBookId, 8000);
+    const au = JSON.parse((await ev("(async () => {"
+      + "const tabs = Array.from(document.querySelectorAll('.s2-side .tab')).map((b) => b.textContent.trim());"
+      + "const btn = Array.from(document.querySelectorAll('.s2-actions .ws-btn')).find((b) => b.textContent.indexOf('遵循度') >= 0);"
+      + "if (!btn) return JSON.stringify({ tabs, hasBtn: false });"
+      + "btn.click();"
+      + "const t0 = Date.now();"
+      + "while (Date.now() - t0 < 45000) {"
+      + "  await new Promise((r) => setTimeout(r, 500));"
+      + "  const b = document.querySelector('.s2-quality');"
+      + "  if (b && b.textContent.length > 40 && (b.querySelectorAll('.s2-ann-mini').length > 0 || b.textContent.indexOf('章目标') >= 0)) break;"
+      + "}"
+      + "const box = document.querySelector('.s2-quality');"
+      + "return JSON.stringify({ tabs, hasBtn: true,"
+      + "  items: box ? box.querySelectorAll('.s2-ann-mini').length : 0,"
+      + "  text: box ? box.textContent.replace(/\\s+/g, ' ').slice(0, 140) : '' });"
+      + "})()")) || "{}");
+    step("㉑ 章级副页「骨架遵循度」：可跑、有结论（0-token 判定必在，只读不改字）",
+      !au.err && au.hasBtn === true
+        && (au.tabs || []).some((t) => String(t).indexOf("遵循度") >= 0)
+        && (Number(au.items) > 0 || String(au.text || "").length > 20),
+      JSON.stringify(au));
+  }
 } catch (e) {
   step("UI 剧本异常", false, String(e));
 } finally {

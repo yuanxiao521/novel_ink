@@ -1963,3 +1963,27 @@ export async function mergeChapterScenes(
   return send(`POST`, `/api/v1/chapters/${chapterId}/merge-scenes`, { scene_id: sceneId, confirm });
 }
 
+
+
+/** 章级骨架遵循度审计（v1.67 · 只读）：0-token 判定 + LLM 偏离判定，不改正文。 */
+export interface ChapterAuditItem {
+  kind?: string;
+  detail: string;
+  suggest?: string;
+  severity?: string;
+}
+
+export interface ChapterAudit {
+  chapter_id: string;
+  chapter_no: number;
+  goal: { chapter: string; tension_curve: string; volume: string; climax: string };
+  checks: Array<{ code: string; level: string; detail: string; suggest: string }>;
+  deviation: { verdict: string; score: number | null; items: ChapterAuditItem[]; keep: string[] } | null;
+  skipped?: string;
+  rendered?: string;
+  note_id?: string;
+}
+
+export async function auditChapter(chapterId: string): Promise<ChapterAudit> {
+  return send("POST", `/api/v1/chapters/${chapterId}/audit`, {});
+}

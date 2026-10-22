@@ -176,6 +176,12 @@ TOOLS.update({
     # ---------- 章级审校（v1.65 · 两个页面合并：责编在章级要能真的动手）----------
     # 与场级 prose.* 一一对应，差别只有两点：单位是**章正文**（chapters.prose_md，唯一真源）、
     # 审计落 prose_notes.chapter_id。参数不再要 scene_id —— 章级不依赖拆场。
+    # v1.67：主笔的「只读眼睛」——看正文但不改字（路线图 P3.7-B）
+    "prose.audit": ToolDecl(
+        "prose.audit", "骨架遵循度审计（只读）：对照章目标/张力曲线/卷目标，输出偏离项与建议，不改字",
+        "read", params=("chapter_id",), optional=("text",),
+        handler="chapter_prose_audit", group="chief",
+    ),
     "chapter.review": ToolDecl(
         "chapter.review", "体检整章：问题清单 + 口吻发现（章级）", "write",
         params=("chapter_id",), optional=("text",), handler="chapter_prose_review", group="chapter",
