@@ -390,6 +390,37 @@ try {
         && mr.items >= 1 && (mr.actions || []).some((a) => String(a).indexOf("检索") >= 0),
       JSON.stringify(mr));
   }
+
+  // ⑭ 全局脉络 + 骨架体检（v1.50 · 0-token）：主笔页必须能读到"这本书现在什么形状"
+  //    动机：主笔"掌管全局"不能靠把全文塞进 prompt，也不能靠模型凭印象——要靠确定性台账。
+  //    永久回归：面板出现、章行 ≥1、每章有生产方式（直写/涌现/混合）、有体检结论（问题或"没问题"）。
+  if (!books.length) {
+    skip("⑭ 全局脉络（骨架体检 + 生产方式）", "没有书作夹具");
+  } else {
+    const bm = books[0];
+    await goto(WEB + "/maestro?book=" + bm.id, 8000);
+    const br = JSON.parse((await ev("(async () => {"
+      + "const btn = Array.from(document.querySelectorAll('.outline-actions button')).find((x) => x.textContent.indexOf('全局脉络') >= 0);"
+      + "if (!btn) return JSON.stringify({ err: 'no brief button' });"
+      + "btn.click();"
+      + "const t0 = Date.now();"
+      + "while (!document.querySelector('.mk-brief') && Date.now() - t0 < 15000) { await new Promise((r) => setTimeout(r, 200)); }"
+      + "const box = document.querySelector('.mk-brief');"
+      + "if (!box) return JSON.stringify({ err: 'no brief panel' });"
+      + "return JSON.stringify({"
+      + "  head: ((box.querySelector('.mk-brief-head') || {}).innerText || '').replace(/\\s+/g, ' ').slice(0, 80),"
+      + "  rows: box.querySelectorAll('.mk-brief-ch').length,"
+      + "  modes: Array.from(box.querySelectorAll('.mk-brief-ch .mode')).map((x) => x.textContent.trim()),"
+      + "  score: (box.querySelector('.mk-brief-score') || {}).innerText || '',"
+      + "  hasIssuesOrOk: !!(box.querySelector('.mk-brief-issue') || box.querySelector('.mk-brief-ok')) });"
+      + "})()")) || "{}");
+    step("⑭ 全局脉络：主笔页可读骨架体检 + 每章生产方式（0-token）",
+      !br.err && br.rows >= 1 && String(br.score).indexOf("分") >= 0
+        && (br.modes || []).length >= 1
+        && (br.modes || []).every((m) => ["直写", "涌现", "混合"].indexOf(String(m)) >= 0)
+        && br.hasIssuesOrOk === true,
+      JSON.stringify(br));
+  }
 } catch (e) {
   step("UI 剧本异常", false, String(e));
 } finally {

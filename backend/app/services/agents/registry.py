@@ -137,6 +137,28 @@ TOOLS.update({
 
 
 TOOLS.update({
+    # ---------- 全局脉络 / 章级制作单（v1.50 · 主笔"掌管全局"的两只手）----------
+    # book.brief：0-token 派生的一页纸（章状态/字数/伏笔回收/角色断档/缺制作单的章），
+    # 主笔不用"凭印象"排骨架；页面与对话共用同一份，口径不分叉。
+    "book.brief": ToolDecl(
+        "book.brief",
+        "读全局脉络 + 骨架体检（0-token）：每章状态/字数/伏笔回收率/角色断档/缺制作单的章",
+        "read",
+        params=("book_id",), handler="get_book_brief", group="chief",
+    ),
+    # chapter.production：结构决策（这一章走直写/涌现/混合）——主笔写结构、不写正文。
+    "chapter.production": ToolDecl(
+        "chapter.production",
+        "写章级制作单：mode=draft/emerge/hybrid + 必须推演的场 + 钩子（只改结构，不碰正文）",
+        "write",
+        params=("book_id", "chapter_no"),
+        optional=("mode", "production", "chapter_id"),
+        handler="set_chapter_mode", group="chief", writes="chapters:production",
+    ),
+})
+
+
+TOOLS.update({
     # ---------- 记忆检索（v1.49 · RAG）----------
     # 与写作页「记忆」面板同一份检索实现（rag.recall），所以对话里问到的
     # 「前情/这个角色/世界观/有哪些没收的伏笔」和写手 prompt 看到的是同一批素材，

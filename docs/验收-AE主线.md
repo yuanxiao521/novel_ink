@@ -388,6 +388,37 @@ curl -s -X PUT "http://127.0.0.1:8001/api/v1/chapters/$CH/prose" \
 # 再查：curl .../chapters/$CH/prose → prose_md 应为刚保存的内容（刷新不丢）
 ```
 
+### 3.16 全局脉络 + 骨架体检 + 章级制作单（v1.50 · 0-token）
+
+```bash
+B=book-14b4b312; CH=chapter-c08f2b6b
+
+# ① 全局脉络 + 骨架体检（0-token，零 LLM）
+curl -s "http://127.0.0.1:8001/api/v1/books/$B/brief"
+# 期望：{score, counts{high,mid,low}, issues[], chapters[{no,label,mode,mode_label,word_target,chars,status,must_rehearse,hook}],
+#        metrics{chapters,written,total_words,target_sum,modes}, foreshadows{...recovery_rate,overdue}, text}
+# 实测：新书 100 分（1 章 · 已写 6636 / 目标 2500）；异能007 58 分（2 章、目标字数 0 → 报 no_target）
+
+# ② 写章级制作单（主笔裁决：这一章走直写还是涌现）
+curl -s -X PUT "http://127.0.0.1:8001/api/v1/chapters/$CH/production" \
+  -H "Content-Type: application/json" \
+  -d "{\"mode\":\"emerge\",\"production\":{\"must_rehearse\":[\"scene-8308b5c0\"],\"hook\":\"章末留一盏没熄的灯\"}}"
+# 期望：{chapter_id, mode:"emerge", production:{...}}；再查 brief → 该章 mode_label=涌现、hook 进章表；
+#      GET /chapters/$CH/prose 也带 mode/production
+
+# ③ 清空制作单的键（合并语义下 null = 删除该键，否则改回 draft 后 must_rehearse 还挂着）
+curl -s -X PUT "http://127.0.0.1:8001/api/v1/chapters/$CH/production" \
+  -H "Content-Type: application/json" -d "{\"mode\":\"draft\",\"production\":{\"must_rehearse\":null,\"hook\":null}}"
+# 期望：production = {}
+
+# ④ 前端：主笔页「全局脉络（N 分）」面板；写作页页头「方式：直写/涌现/混合」
+node scripts/ui-spec.mjs   # ⑭ 永久回归
+```
+
+**骨架体检能查出的 8 类缺陷（确定性规则，不是模型猜）**：无字数目标 · 无节奏声明 · mode 取值非法 ·
+涌现章没指定必须推演的场 · 伏笔只埋不收（已写 ≥3 章且 closed=0）· 伏笔逾期未收 ·
+角色连续 ≥3 章断档 · 角色从未出场。评分 = 100 − 高危×20 − 中等×8 − 轻微×3。
+
 ## 4. 存量验收（S1–S4 / A2 / A3，仍在跑）
 
 ```powershell

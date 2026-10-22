@@ -123,6 +123,16 @@ async def list_chapters(book_id: str, svc: SimulationService = Depends(get_servi
     return await svc.list_chapters(book_id)
 
 
+@router.get("/books/{book_id}/brief")
+async def book_brief(book_id: str, svc: SimulationService = Depends(get_service)):
+    """全局脉络 + 骨架体检（v1.50 · 0-token，零 LLM）。
+
+    主笔"掌管全局"看的就是这一页：每章写了没/多少字/走哪种生产方式(mode)，
+    伏笔回收率与逾期项，角色出场断档，骨架缺陷清单（不是模型猜的，是规则查的）。
+    """
+    return await svc.get_book_brief(book_id)
+
+
 @router.get("/books/{book_id}/tree")
 async def book_tree(book_id: str, svc: SimulationService = Depends(get_service)):
     """聚合树：书 → 章 → 场景（含角色），一次拉全防客户端 N+1。"""
@@ -260,6 +270,19 @@ async def create_chapter(book_id: str, body: ChapterBody, svc: SimulationService
 @router.put("/chapters/{chapter_id}")
 async def update_chapter(chapter_id: str, body: ChapterBody, svc: SimulationService = Depends(get_service)):
     return await svc.update_chapter(chapter_id, body.model_dump(exclude_none=True))
+
+
+class ProductionIn(models.BaseModel):
+    """章级制作单（v1.50）：mode + must_rehearse/beats/hook/word_split。"""
+    mode: str = ""
+    production: dict = {}
+
+
+@router.put("/chapters/{chapter_id}/production")
+async def set_chapter_production(chapter_id: str, body: ProductionIn,
+                                 svc: SimulationService = Depends(get_service)):
+    """写章级制作单（主笔裁决 / 作者覆盖）。边界：只改结构，不碰正文。"""
+    return await svc.set_chapter_mode(chapter_id, body.mode, body.production or None)
 
 
 @router.delete("/chapters/{chapter_id}", status_code=status.HTTP_204_NO_CONTENT)

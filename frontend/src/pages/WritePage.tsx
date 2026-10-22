@@ -59,6 +59,8 @@ export function WritePage() {
   const [tone, setTone] = useState('');
   const [summary, setSummary] = useState('');
   const [wordTarget, setWordTarget] = useState(0);
+  /** v1.50：这一章的生产方式（主笔裁决）：draft 直写 / emerge 涌现 / hybrid 混合 */
+  const [mode, setMode] = useState("draft");
   const [savedText, setSavedText] = useState('');
   const [scenes, setScenes] = useState<SceneRow[]>([]);
   const [editing, setEditing] = useState(false);
@@ -100,6 +102,7 @@ export function WritePage() {
       setTone(d.tone || '');
       setSummary(d.summary || '');
       setWordTarget(d.word_target || 0);
+      setMode(d.mode || "draft");
       setText(d.prose_md || d.prose || '');
       setSavedText(d.prose_md || d.prose || '');
     } catch { /* 保持现状 */ }
@@ -234,6 +237,10 @@ export function WritePage() {
               {dirty && <b className="s2-dirty"> · 未保存</b>}
             </span>
             <span className="s2-src">基调：<b>{tone || '未定'}</b></span>
+            {/* v1.50：生产方式徽标——作者一眼看出这章走直写还是涌现（主笔裁决） */}
+            <span className="s2-src" title="主笔裁决的生产方式：emerge 需先把指定场推演完再渲染">
+              方式：<b>{mode === "emerge" ? "涌现" : mode === "hybrid" ? "混合" : "直写"}</b>
+            </span>
           </header>
 
           <div className="s2-actions">

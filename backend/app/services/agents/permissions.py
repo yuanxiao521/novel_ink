@@ -14,6 +14,7 @@ from __future__ import annotations
 # target → (唯一写者, 说明)
 FIELD_OWNERS: dict[str, tuple[str, str]] = {
     "chapters": ("chief", "章节结构：主笔规划产物（作者经 UI 可改）"),
+    "chapters:production": ("chief", "章级制作单：这一章走直写/涌现/混合（主笔裁决，作者可改）"),
     "scenes:structure": ("chief", "场景结构/舞台/目标：主笔产物（作者可改）"),
     "scenes:final_prose": ("editor", "正文：责编/作者写入（写手只出候选）"),
     "characters": ("chief", "角色卡：主笔生成（作者可改）"),
@@ -34,6 +35,7 @@ _WRITE_ALLOWED: dict[str, set[str]] = {
     "scenes:final_prose": {"editor"},
     "prose_annotations": {"editor"},   # annotation.resolve 只改状态（作者创建走 UI）
     "chapters": {"chief"},             # outline.commit（v1.40 补：此前主笔走散装 API 不过闸门）
+    "chapters:production": {"chief"},  # v1.50：章级制作单（mode/must_rehearse/hook）
     "characters": {"chief"},           # characters.generate
     "book_memories": {"chief"},        # memory.write
 }
@@ -49,6 +51,7 @@ _ENFORCE_WHERE: dict[str, str] = {
 _ENFORCE_WHERE["chapters"] = "ToolExecutor 字段级闸门（outline.commit）"
 _ENFORCE_WHERE["characters"] = "ToolExecutor 字段级闸门（characters.generate）"
 _ENFORCE_WHERE["book_memories"] = "ToolExecutor 字段级闸门（memory.write）"
+_ENFORCE_WHERE["chapters:production"] = "ToolExecutor 字段级闸门（chapter.production）"
 
 
 def check_write(agent_id: str, target: str) -> str | None:

@@ -320,6 +320,8 @@ class Repo:
                 "summary": r.summary, "order_no": r.order_no,
                 "tone": r.tone, "tension_curve": r.tension_curve, "word_target": r.word_target,
                 "prose_md": r.prose_md or "",
+                "mode": getattr(r, "mode", "") or "draft",
+                "production_json": getattr(r, "production_json", "") or "{}",
                 "updated_at": r.updated_at.isoformat() if r.updated_at else "",
             } for r in rows]
 
@@ -335,6 +337,8 @@ class Repo:
                 "summary": r.summary, "order_no": r.order_no,
                 "tone": r.tone, "tension_curve": r.tension_curve, "word_target": r.word_target,
                 "prose_md": r.prose_md or "",
+                "mode": getattr(r, "mode", "") or "draft",
+                "production_json": getattr(r, "production_json", "") or "{}",
                 "updated_at": r.updated_at.isoformat() if r.updated_at else "",
             }
 

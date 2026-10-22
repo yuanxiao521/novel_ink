@@ -34,6 +34,17 @@ from app.services.llm.client import client as llm_client  # 模块级引用：�
 logger = logging.getLogger(__name__)
 
 
+def _parse_json_obj(raw: object) -> dict:
+    """把 JSON 对象字符串解析成 dict（坏数据一律当空，不抛）。"""
+    if isinstance(raw, dict):
+        return dict(raw)
+    try:
+        data = json.loads(str(raw or "{}"))
+    except Exception:  # noqa: BLE001
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def _ensure_cast(sim: models.SimulationState) -> None:
     """空 cast 硬拦（P0）：没有上场角色时**不许推演**。
 
@@ -1035,7 +1046,83 @@ class SimulationService:
         except Exception:  # noqa: BLE001
             pass
 
+        # v1.50：全局脉络一页纸（0-token 派生）——主笔"掌管全局"靠这个，不靠把全文塞进来。
+        # 只在主笔/对话侧注入（include_world_states=True）；写手侧已有按章召回的素材，别重复。
+        if include_world_states:
+            try:
+                from app.services.engine.book_brief import render_brief
+
+                brief = await self.get_book_brief(book_id)
+                text = render_brief(brief, budget=1200)
+                if text:
+                    parts.append(text)
+            except Exception as e:  # noqa: BLE001  脉络失败不能挡住主笔对话
+                logger.warning("[brief] 装配失败 book=%s：%s", book_id, e)
+
         return "\n\n".join(parts)
+
+    # ---------------------------------------------------------------- 全局脉络（v1.50 · 0-token）
+    async def get_book_brief(self, book_id: str) -> dict:
+        """全书脉络一页纸 + 骨架体检（0-token，零 LLM；主笔与页面共用同一份）。"""
+        from app.services.engine.book_brief import build_brief, render_brief
+
+        book = await self.repo.get_book(book_id)
+        if book is None:
+            raise BookNotFoundError(f"未找到书籍: {book_id}")
+        chapters = await self.repo.list_chapters_by_book(book_id)
+        scenes_by_chapter: dict[str, list[dict]] = {}
+        for ch in chapters:
+            cid = str(ch.get("id") or "")
+            scenes_by_chapter[cid] = await self.repo.list_scenes_by_chapter(cid) if cid else []
+        brief = build_brief(
+            book=book, chapters=chapters, scenes_by_chapter=scenes_by_chapter,
+            characters=await self.repo.list_characters_by_book(book_id),
+            foreshadows=await self.repo.list_foreshadows(book_id),
+            world_states=await self.repo.list_world_states(book_id),
+            beliefs=await self.repo.list_beliefs(book_id),
+        )
+        brief["text"] = render_brief(brief)
+        brief["book_id"] = book_id
+        return brief
+
+    async def set_chapter_mode(self, chapter_id: str = "", mode: str = "",
+                               production: dict | None = None, book_id: str = "",
+                               chapter_no: int = 0) -> dict:
+        """写章级制作单（主笔裁决 / 作者覆盖）：mode + must_rehearse/beats/hook。
+
+        边界：主笔**只写结构**（这一章怎么生产），不碰正文——正文仍由执行层写。
+        """
+        from app.services.engine.book_brief import MODES
+
+        # 工具调用侧只有「第几章」（模型不该被要求背 chapter_id），这里按书+章号解析
+        if not chapter_id and book_id and chapter_no:
+            for ch in await self.repo.list_chapters_by_book(book_id):
+                if int(ch.get("order_no") or 0) == int(chapter_no):
+                    chapter_id = str(ch.get("id") or "")
+                    break
+        if not chapter_id:
+            raise ChapterNotFoundError("缺少 chapter_id（或 book_id + chapter_no）")
+        chapter = await self.repo.get_chapter(chapter_id)
+        if chapter is None:
+            raise ChapterNotFoundError(f"未找到章节: {chapter_id}")
+        cur_mode = str(chapter.get("mode") or "draft")
+        new_mode = str(mode or cur_mode).strip() or "draft"
+        if new_mode not in MODES:
+            raise InvalidActionError(f"非法 mode: {new_mode!r}（可选 {list(MODES)}）")
+        prod = _parse_json_obj(chapter.get("production_json"))
+        if production:
+            if not isinstance(production, dict):
+                raise InvalidActionError("production 必须是对象")
+            for k, v in production.items():
+                # None = **删除这个键**：否则"清空制作单"永远做不到（merge 会把旧值留着，
+                # 实测把 mode 改回 draft 后 must_rehearse/hook 还挂在那儿）
+                if v is None:
+                    prod.pop(k, None)
+                else:
+                    prod[k] = v
+        await self.repo.save_chapter({**chapter, "mode": new_mode,
+                                      "production_json": json.dumps(prod, ensure_ascii=False)})
+        return {"chapter_id": chapter_id, "mode": new_mode, "production": prod}
 
     # ---------------------------------------------------------------- 正文协作工作区（阶段④）
     async def _scene_and_book(self, scene_id: str):
@@ -2164,6 +2251,9 @@ class SimulationService:
             "word_target": int(ch.get("word_target") or 0),
             "tone": ch.get("tone") or "",
             "summary": ch.get("summary") or "",
+            # v1.50：章级制作单（这一章走直写还是涌现，页头徽标+执行层据此选路）
+            "mode": ch.get("mode") or "draft",
+            "production": _parse_json_obj(ch.get("production_json")),
             "scenes": [
                 {
                     "scene_id": s["id"], "title": s.get("title", ""),

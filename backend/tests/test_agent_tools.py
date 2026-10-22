@@ -550,8 +550,11 @@ async def test_write_matrix_enforced_rows_are_honest():
     assert owners["chapters"] == "chief"               # 结构归主笔
     enforced = {r["target"] for r in rows if r["enforced"]}
     # v1.40：主笔工具治理补齐 → chapters/characters/book_memories 也由 ToolExecutor 强制
+    # v1.50：章级制作单（mode/must_rehearse/hook）同样是主笔结构职权 → chapters:production
     assert enforced == {"scenes:final_prose", "prose_annotations", "agent_tasks",
-                        "chapters", "characters", "book_memories"}
+                        "chapters", "characters", "book_memories", "chapters:production"}
+    # 制作单必须归主笔（否则会出现"执行层自己决定这一章怎么生产"的越权）
+    assert owners["chapters:production"] == "chief"
     # 每个 enforced 行必须写明强制位置（不假装一道闸门管全部）
     for r in rows:
         if r["enforced"]:

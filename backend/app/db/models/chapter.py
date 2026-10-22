@@ -27,6 +27,9 @@ class Chapter(TimestampMixin, Base):
     word_target: Mapped[int] = mapped_column(Integer, default=0)           # 本章字数目标
     # ---- 直写链路（v1.46 / 0018）：章是最小可写单位，场是可选细分 ----
     prose_md: Mapped[str] = mapped_column(Text, default="")                # 本章正文（权威存储）
+    # ---- 章级制作单（v1.50 / 0020）：主笔裁决"这一章怎么生产" ----
+    mode: Mapped[str] = mapped_column(String(16), default="draft")         # draft/emerge/hybrid
+    production_json: Mapped[str] = mapped_column(Text, default="{}")       # must_rehearse/beats/hook/word_split
 
     book: Mapped["Book"] = relationship(back_populates="chapters")
     scenes: Mapped[list["Scene"]] = relationship(back_populates="chapter", cascade="all, delete-orphan")

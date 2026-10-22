@@ -197,6 +197,75 @@ export interface ChapterProse {
   word_target?: number;
   tone?: string;
   summary?: string;
+  /** v1.50 章级制作单：这一章走直写/涌现/混合（页头徽标用） */
+  mode?: string;
+  production?: Record<string, unknown>;
+}
+
+/* ---------- v1.50 全局脉络（book.brief）与章级制作单 ---------- */
+
+export interface BriefChapter {
+  no: number;
+  id: string;
+  title: string;
+  /** 完整章名（标题已含「第 N 章」时不重复前缀） */
+  label: string;
+  tone: string;
+  /** draft 直写 / emerge 涌现 / hybrid 混合 */
+  mode: string;
+  mode_label: string;
+  word_target: number;
+  chars: number;
+  /** written = 有正文；planned = 还没写 */
+  status: string;
+  scenes: number;
+  has_curve: boolean;
+  hook: string;
+  must_rehearse: string[];
+}
+
+export interface BriefIssue {
+  level: "high" | "mid" | "low" | string;
+  code: string;
+  msg: string;
+  where?: string;
+}
+
+export interface BookBrief {
+  book_id?: string;
+  book: { id?: string; title: string; genre: string; synopsis: string };
+  chapters: BriefChapter[];
+  foreshadows: {
+    total: number; buried: number; in_progress: number; closed: number; open: number;
+    recovery_rate: number | null;
+    overdue: Array<{ id?: string; text?: string; due_chapter?: number; status?: string }>;
+  };
+  characters: { total: number; entries: Array<{ name: string; appears_in: number[]; worst_gap: number }> };
+  facts: { world_states: number; beliefs: number };
+  metrics: {
+    chapters: number; written: number; planned: number;
+    total_words: number; target_sum: number; target_progress: number | null;
+    modes: Record<string, number>;
+  };
+  issues: BriefIssue[];
+  counts: { high: number; mid: number; low: number };
+  score: number;
+  /** 后端渲染好的一页纸（与主笔 prompt 同一份，便于对照） */
+  text: string;
+}
+
+/** 全局脉络 + 骨架体检（0-token，零 LLM）。 */
+export async function fetchBookBrief(bookId: string): Promise<BookBrief> {
+  return getJson<BookBrief>(`${API_BASE}/api/v1/books/${bookId}/brief`);
+}
+
+/** 写章级制作单（主笔裁决 / 作者覆盖）：只改结构，不碰正文。 */
+export async function setChapterProduction(
+  chapterId: string,
+  body: { mode?: string; production?: Record<string, unknown> },
+): Promise<{ chapter_id: string; mode: string; production: Record<string, unknown> }> {
+  return send<{ chapter_id: string; mode: string; production: Record<string, unknown> }>(
+    "PUT", `/api/v1/chapters/${chapterId}/production`, body);
 }
 
 /** 作者手动定稿：聚合该 sim 回合成文 → 写入场景 final_prose（幂等覆盖）。 */

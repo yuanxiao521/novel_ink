@@ -8,8 +8,10 @@ import { TensionPanel } from '../components/dashboard/TensionPanel';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { useDialog } from '../components/common/Dialog';
 import { API_BASE } from '../types/types';
+import type { BookBrief } from '../api/novel';
 import {
   createAgentTask,
+  fetchBookBrief,
   fetchBookTree,
   fetchMaterialUsage,
   fetchRehearsalPlan,
@@ -145,6 +147,10 @@ export function MaestroPage() {
     }
   });
   const [batchHint, setBatchHint] = useState<{ from: number; to: number; total: number } | null>(null);
+  // v1.50 全局脉络（0-token）：骨架体检 + 每章生产方式，主笔与作者看同一份
+  const [brief, setBrief] = useState<BookBrief | null>(null);
+  const [briefOpen, setBriefOpen] = useState(false);
+  const [briefBusy, setBriefBusy] = useState(false);
 
   const [drawerOpen, setDrawerOpen] = useState(true);
 
@@ -479,6 +485,23 @@ export function MaestroPage() {
 
   // A4 分批交付：默认把本批**追加**到书末（不动已有章节与正文）；
   // 需要推翻重排时走 mode=replace，必须先经作者确认（后端已有正文还会再拦一道 409 · B33）。
+  /** v1.50：读全局脉络 + 骨架体检（0-token，零 LLM）。
+   *  这份数据同时也会被注入主笔感知（chief_perceive），所以页面上看到的就是主笔看到的。 */
+  const openBrief = async () => {
+    if (briefBusy) return;
+    if (!bookId) { briefFlash('先选一本书'); return; }
+    setBriefBusy(true);
+    try {
+      const b = await fetchBookBrief(bookId);
+      setBrief(b);
+      setBriefOpen(true);
+      if (b.issues.length === 0) briefFlash(`骨架体检 ${b.score} 分：没查出问题`);
+      else briefFlash(`骨架体检 ${b.score} 分：${b.counts.high} 高危 / ${b.counts.mid} 中等 / ${b.counts.low} 轻微`);
+    } catch (e) {
+      briefFlash(`读全局脉络失败：${String(e instanceof Error ? e.message : e)}`);
+    } finally { setBriefBusy(false); }
+  };
+
   const commitPlan = async (mode: 'append' | 'replace' = 'append') => {
     if (!tree || !planPreview || committing) return;
     const chapterCount = (tree.chapters ?? []).length;
@@ -870,6 +893,14 @@ export function MaestroPage() {
                     全部展开
                   </button>
                   <button className="btn-text" onClick={() => setOutlineExpanded({})}>全部折叠</button>
+                  <button
+                    className="btn-text"
+                    onClick={() => void openBrief()}
+                    disabled={briefBusy || !bookId}
+                    title="全局脉络 + 骨架体检（0-token）：每章生产方式/字数/伏笔回收/角色断档，主笔看的就是这一份"
+                  >
+                    {briefBusy ? '读脉络…' : `全局脉络${brief ? `（${brief.score} 分）` : ''}`}
+                  </button>
                   <button className="btn-text" onClick={() => void onAddChapter()} disabled={!tree} title={tree ? '新增章节' : '先选一本书'}>
                     ＋ 加章
                   </button>
@@ -890,6 +921,62 @@ export function MaestroPage() {
                       <button className="btn-adopt" onClick={() => void runIdeation({ next: true })} disabled={ideating}>
                         ✦ 继续下一批（第 {batchHint.total + 1}–{batchHint.total + batchSize} 章）
                       </button>
+                    </div>
+                  )}
+
+                  {/* v1.50 全局脉络 + 骨架体检（0-token）：主笔"掌管全局"看的就是这一份 */}
+                  {briefOpen && brief && (
+                    <div className="mk-brief">
+                      <div className="mk-brief-head">
+                        <b>全局脉络</b>
+                        <span className={`mk-brief-score ${brief.score >= 80 ? "ok" : brief.score >= 60 ? "warn" : "bad"}`}>
+                          骨架体检 {brief.score} 分
+                        </span>
+                        <span className="mk-brief-sub">
+                          {brief.metrics.chapters} 章 · 已写 {brief.metrics.written} · {brief.metrics.total_words} 字 / 目标 {brief.metrics.target_sum}
+                        </span>
+                        <button className="mk-brief-x" onClick={() => setBriefOpen(false)} title="收起">✕</button>
+                      </div>
+                      {brief.issues.length === 0 ? (
+                        <div className="mk-brief-ok">没查出问题：目标字数、节奏声明、伏笔回收、角色出场都对得上。</div>
+                      ) : (
+                        <div className="mk-brief-issues">
+                          {brief.issues.slice(0, 8).map((it, i) => (
+                            <div className={`mk-brief-issue ${it.level}`} key={`${it.code}-${i}`}>
+                              <span className="lv">{it.level === "high" ? "高危" : it.level === "mid" ? "中等" : "轻微"}</span>
+                              <span className="msg">{it.msg}{it.where ? `（${it.where}）` : ""}</span>
+                            </div>
+                          ))}
+                          {brief.issues.length > 8 && (
+                            <div className="mk-brief-more">另有 {brief.issues.length - 8} 条…</div>
+                          )}
+                        </div>
+                      )}
+                      <div className="mk-brief-chapters">
+                        {brief.chapters.map((c) => (
+                          <div className="mk-brief-ch" key={c.id}>
+                            <span className="ttl" title={c.label || c.title}>{c.label || c.title || `第 ${c.no} 章`}</span>
+                            <span className={`mode ${c.mode}`} title="这一章的生产方式（主笔裁决，可改）">{c.mode_label}</span>
+                            <span className="num">
+                              {c.chars ? `${c.chars} 字` : "未写"}
+                              {c.word_target ? ` / 目标 ${c.word_target}` : " · 无目标"}
+                            </span>
+                            {c.must_rehearse.length > 0 && <span className="reh" title="必须先推演的场">需推演 {c.must_rehearse.length}</span>}
+                            {c.hook && <span className="hook" title={c.hook}>有钩子</span>}
+                          </div>
+                        ))}
+                      </div>
+                      {(brief.foreshadows.total > 0 || brief.characters.total > 0) && (
+                        <div className="mk-brief-facts">
+                          {brief.foreshadows.total > 0 && (
+                            <span>
+                              伏笔 {brief.foreshadows.total} 条 · 埋着 {brief.foreshadows.buried} · 进行中 {brief.foreshadows.in_progress} · 已收 {brief.foreshadows.closed}
+                              {brief.foreshadows.recovery_rate !== null ? `（回收率 ${Math.round(brief.foreshadows.recovery_rate * 100)}%）` : ""}
+                            </span>
+                          )}
+                          {brief.characters.total > 0 && <span>角色 {brief.characters.total} 位 · 事实（账本 {brief.facts.world_states} / 信念 {brief.facts.beliefs}）</span>}
+                        </div>
+                      )}
                     </div>
                   )}
 
