@@ -182,3 +182,42 @@ def test_chapter_agent_routes_exist():
               "/api/v1/chapters/{chapter_id}/agent/notes",
               "/api/v1/chapters/{chapter_id}/merge-scenes"):
         assert p in paths, p
+
+
+# ---------------------------------------------------------------- 5. 收口守卫（v1.66）
+def test_chapter_tools_never_require_scene_id():
+    '''章级工具一律以 chapter_id 为单位：不许再要 scene_id（否则合并又变成「必须拆场」）。'''
+    from app.services.agents.registry import TOOLS
+
+    for name, decl in TOOLS.items():
+        if decl.group != "chapter":      # chapter.production 是主笔的结构工具，不属章级审校
+            continue
+        assert "chapter_id" in decl.params, name
+        assert "scene_id" not in decl.params, name
+        assert decl.group == "chapter", name
+
+
+def test_chapter_tools_do_not_write_scene_prose():
+    '''章级工具不得写 scenes:final_prose（那是场级页的事）——章级只碰章正文与审计。'''
+    from app.services.agents.registry import TOOLS
+
+    for name, decl in TOOLS.items():
+        if decl.group != "chapter":
+            continue
+        assert decl.writes != "scenes:final_prose", name
+
+
+@pytest.mark.asyncio
+async def test_merge_keeps_previous_prose_as_revision():
+    '''并入 = 改写章正文 → 必须先存旧版（v1.61 稿本），否则并错了无从回退。'''
+    from app.services.service import SimulationService
+
+    repo = await _book_with_chapter_and_scenes()
+    await repo.save_chapter_prose("c-ch-1", "作者手写的一段开头。")
+    svc = SimulationService(repo)
+    await svc.merge_scene_into_chapter("c-ch-1", "")
+    body = (await repo.get_chapter("c-ch-1"))["prose_md"]
+    assert body.startswith("作者手写的一段开头。")
+    versions = await repo.list_chapter_revisions("c-ch-1")
+    assert versions, "并入覆盖了章正文却没留版本"
+

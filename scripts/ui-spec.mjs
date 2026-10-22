@@ -529,14 +529,14 @@ try {
   await goto(WEB + "/dashboard?book=" + host.book.id, 7000);
   const navW = JSON.parse((await ev("(async () => {"
     + "const items = Array.from(document.querySelectorAll('.nav-item'));"
-    + "const t = items.find((x) => (x.textContent || '').indexOf('正文协作') >= 0);"
+    + "const t = items.find((x) => (x.textContent || '').indexOf('章级写作') >= 0);"
     + "return JSON.stringify({ href: t ? t.getAttribute('href') : null, items: items.length });"
     + "})()")) || "{}");
   await goto(WEB + "/write?book=" + host.book.id, 7000);
   const wr2 = JSON.parse((await ev("JSON.stringify({"
     + "path: location.pathname, title: (document.querySelector('.s2-title') || {}).textContent || '',"
     + "btns: Array.from(document.querySelectorAll('.s2-actions .ws-btn')).map((b) => b.textContent.trim()) })")) || "{}");
-  step("⑱ 章级写作页可直达：/write 自动落到当前章 + 侧栏「正文协作」指向它 + 页内有场景精修入口",
+  step("⑱ 章级写作页可直达：/write 自动落到当前章 + 侧栏「章级写作」指向它 + 页内有场景精修入口",
     !navW.err && String(navW.href || "").indexOf("/write/") === 0
       && !wr2.err && String(wr2.path).indexOf("/write/chapter-") === 0
       && (wr2.btns || []).some((b) => String(b).indexOf("场景精修") >= 0),
@@ -563,6 +563,17 @@ try {
         && (wb.toolbar || []).some((t) => String(t).indexOf("精修工具") >= 0),
       JSON.stringify(wb));
   }
+
+  // ⑳ 不留空路由（v1.66 收口）：/studio 已无独立页 → 必须重定向到章级工作台，而不是白页/空态。
+  //    背景：v1.65 把场级页降级为二级页后，/studio 这条只带 query 的入口最容易留成空路由。
+  await goto(WEB + "/studio?book=" + host.book.id, 8000);
+  const rd = JSON.parse((await ev("JSON.stringify({"
+    + "path: location.pathname,"
+    + "title: (document.querySelector('.s2-title') || {}).textContent || '',"
+    + "paras: document.querySelectorAll('.wp-para').length })")) || "{}");
+  step("⑳ 不留空路由：/studio 重定向到章级工作台（有正文、有标题）",
+    String(rd.path).indexOf("/write/") === 0 && String(rd.title).length > 0,
+    JSON.stringify(rd));
 } catch (e) {
   step("UI 剧本异常", false, String(e));
 } finally {

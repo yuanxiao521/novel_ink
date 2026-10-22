@@ -826,6 +826,30 @@ curl -s -X POST "http://127.0.0.1:8001/api/v1/chapters/$CH/merge-scenes" \
 
 **L3 永久回归**：⑲ 章级工作台（右栏副驾在场 + 章级工具在顶栏 + 场块可见）；⑱ /write 可直达且侧栏指向它。
 **截图**：`docs/mockups/p3/ink/46-write-chapter-copilot.png`
+
+### 3.31 章级收口（v1.66）
+
+```bash
+cd E:/novel_desk-agent/backend && ../.venv/Scripts/python.exe -m alembic current
+
+# 迁移可回滚性（0025：prose_notes.chapter_id + scene_id 可空）
+cd E:/novel_desk-agent/backend
+PY=../.venv/Scripts/python.exe
+$PY -m alembic downgrade -1   # → 0024：chapter_id 列与索引消失，scene_id 回到 NOT NULL
+$PY -m alembic upgrade head   # → 0025：chapter_id 回来（可空）、scene_id 可空、ix_prose_notes_chapter 重建
+```
+
+```bash
+# 章级工具守卫（不许要 scene_id / 不许写场正文 / 并入必须留版本）
+pytest backend/tests/test_chapter_scope.py -q
+# 期望 11 passed
+```
+
+**UI 收口（L3 永久回归）**：⑳ `/studio`（无 id）必须重定向到 `/write/{当前章}`（不留空路由）；
+⑱ `/write` 可直达且侧栏「章级写作」指向它；⑲ 章级工作台副驾与章级工具在场。
+
+**旧入口清单（v1.66 已统一）**：侧栏第 3 项 → `/write/{当前章}`；stepLink 的 director/dashboard/write 下一站 →
+`toWrite`；主笔页 章选中 → 「✍ 去写这一章」，场选中 → 「✍ 写这一章 / ✎ 场级精修」；设定页空态 → `/write`。
 ## 4. 存量验收（S1–S4 / A2 / A3，仍在跑）
 
 ```powershell

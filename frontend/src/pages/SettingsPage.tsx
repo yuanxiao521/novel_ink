@@ -421,7 +421,7 @@ export function SettingsPage() {
                             ? { label: '去主笔创作', onClick: () => nav('/maestro') }
                             : { label: '＋ 手写一条', onClick: startNewWs }
                         }
-                        secondary={{ label: '去正文协作', onClick: () => nav(ws.sceneId ? `/studio/${ws.sceneId}` : '/studio') }}
+                        secondary={{ label: '去写正文', onClick: () => nav(ws.chapterId ? `/write/${ws.chapterId}` : '/write') }}
                       />
                     )}
                     {worldStates.map((s) => (

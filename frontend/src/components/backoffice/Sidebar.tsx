@@ -16,7 +16,7 @@ type SidebarKey = StepKey | 'home' | 'characters';
 const STEPS: Array<{ key: StepKey; no: string; text: string }> = [
   { key: 'maestro', no: '1', text: '主笔创作' },
   { key: 'director', no: '2', text: '导演台' },
-  { key: 'studio', no: '3', text: '正文协作' },
+  { key: 'studio', no: '3', text: '章级写作' },   // v1.65 合并：这一项进 /write（章级工作台），场级精修是二级页
   { key: 'dashboard', no: '4', text: '概览复盘' },
   { key: 'proofread', no: '5', text: '校对成书' },
 ];

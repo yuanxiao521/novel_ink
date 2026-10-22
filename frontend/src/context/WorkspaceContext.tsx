@@ -392,7 +392,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const stepLink = useCallback(
     (from: StepKey, dir: 'prev' | 'next'): StepLink | null => {
       const toDirector = sceneId ? `/director/${sceneId}` : '/director';
-      const toStudio = sceneId ? `/studio/${sceneId}` : '/studio';
+      // v1.66：正文主入口是**章级写作台**（v1.65 两页合并）；场级页降级为二级「场级精修」
+      const toWrite = chapterId ? `/write/${chapterId}` : '/write';
+
       const idx = allScenes.findIndex((s) => s.id === sceneId);
       const nextScene = idx >= 0 && idx + 1 < allScenes.length ? allScenes[idx + 1] : null;
       const table: Record<StepKey, { prev: StepLink | null; next: StepLink | null }> = {
@@ -402,7 +404,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         },
         director: {
           prev: { label: '主笔创作', to: '/maestro' },
-          next: { label: '正文协作', to: toStudio },
+          next: { label: '章级写作', to: toWrite },
         },
         studio: {
           prev: { label: '导演台', to: toDirector },
@@ -413,11 +415,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         // v1.46 章级写作主线：这里 next 不再是「下一场」（那是场景视图的语义），
         // 章视图写完之后该去的地方是「概览复盘」。
         write: {
-          prev: { label: '正文协作', to: toStudio },
+          prev: { label: '导演台', to: toDirector },
           next: { label: '概览复盘', to: `/dashboard?book=${bookId}` },
         },
         dashboard: {
-          prev: { label: '正文协作', to: toStudio },
+          prev: { label: '章级写作', to: toWrite },
           next: { label: '逐章校对', to: `/proofread?book=${bookId}` },
         },
         proofread: {
@@ -431,7 +433,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       };
       return table[from][dir];
     },
-    [sceneId, allScenes, bookId],
+    [sceneId, allScenes, bookId, chapterId],
   );
 
   /* ---------- 前置条件（可点击直达修复）---------- */

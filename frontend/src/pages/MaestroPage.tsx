@@ -1291,7 +1291,7 @@ export function MaestroPage() {
                                       </button>
                                     )}
                                     <button title="进入导演台" onClick={(e) => { e.stopPropagation(); nav(`/director/${s.id}`); }}>▶</button>
-                                    <button title="正文协作" onClick={(e) => { e.stopPropagation(); nav(`/studio/${s.id}`); }}>✎</button>
+                                    <button title="场级精修（批注 / 选中问责编）" onClick={(e) => { e.stopPropagation(); nav(`/studio/${s.id}`); }}>✎</button>
                                   </span>
                                 </div>
                               ))}
@@ -1366,6 +1366,8 @@ export function MaestroPage() {
                         <div className="node-drawer-actions">
                           {selKind === 'chapter' ? (
                             <>
+                              {/* v1.66：章级写作台是正文主入口 —— 选中章就能直接去写（原来主笔页没有写作入口） */}
+                              <button className="btn-adopt primary" onClick={() => nav('/write/' + selId)}>✍ 去写这一章</button>
                               <button className="btn-adopt" onClick={() => void onAddScene()}>＋ 加场景</button>
                               <button className="btn-adopt" onClick={openSceneEditor}>✎ 编辑场景列表</button>
                               <button className="btn-adopt" onClick={() => letDraft('chapter', selId)}>✎ 编辑章节</button>
@@ -1373,7 +1375,11 @@ export function MaestroPage() {
                           ) : (
                             <>
                               <button className="btn-adopt primary" onClick={() => selScene && nav(`/director/${selScene.id}`)}>▶ 进入导演台</button>
-                              <button className="btn-adopt primary" onClick={() => selScene && nav(`/studio/${selScene.id}`)}>✎ 正文协作</button>
+                              {(sceneDetail?.chapter_id) && (
+                                <button className="btn-adopt primary" onClick={() => nav('/write/' + String(sceneDetail.chapter_id))}>✍ 写这一章</button>
+                              )}
+                              {/* 场级页在 v1.65 降级为二级「场级精修」（批注/选中问责编在这里） */}
+                              <button className="btn-adopt" onClick={() => selScene && nav(`/studio/${selScene.id}`)}>✎ 场级精修</button>
                               <button className="btn-adopt" onClick={() => letDraft('scene', selId)}>✎ 编辑</button>
                               <button className="btn-adopt" onClick={() => nav(bookId ? `/characters?book=${bookId}` : '/characters')}>配角色</button>
                             </>

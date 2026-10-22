@@ -22,7 +22,8 @@ import { WorkspaceProvider, useWorkspace } from './context/WorkspaceContext';
    上下文里已有场景 → 直接补到该场景（实现"一键直达"）；
    一本书都没有场景 → 明确引导，不留白页。
    ========================================================================== */
-function SceneEntry({ kind }: { kind: 'director' | 'studio' }) {
+/** 只服务 /director 的「先选场景再进」过渡页（studio 分支在 v1.65 合并后已无调用方，故收窄）。 */
+function SceneEntry({ kind }: { kind: 'director' }) {
   const ws = useWorkspace();
   const nav = useNavigate();
 
