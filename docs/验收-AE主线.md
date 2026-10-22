@@ -874,6 +874,27 @@ curl -s "http://127.0.0.1:8001/api/v1/chapters/$CH/prose" | head -c 80
 顶栏另有「🧭 遵循度」按钮。截图：`docs/mockups/p3/ink/47-write-adherence-audit.png`
 
 **L3 永久回归**：㉑ 章级副页「骨架遵循度」可跑、有结论（0-token 必在）；**只读**由 pytest + 工具声明双重保证。
+
+### 3.33 主笔对话直连骨架审计（v1.68）
+
+```bash
+B=book-0938c02c      # 有章节的书
+
+# 问一句就出报告（中文数字也认：「第十二章写得好不好」）
+curl -s -X POST "http://127.0.0.1:8001/api/v1/books/$B/chief/tools" \
+  -H "Content-Type: application/json" \
+  -d '{"messages":[{"role":"user","content":"看看第 1 章写得对不对"}]}'
+# 期望：fast_path=prose.audit · executed[0].tool=prose.audit · reply 含「骨架遵循度审计完成（遵循度 N）」
+
+# 只读证据：正文前后一致（pytest 也断言）
+curl -s "http://127.0.0.1:8001/api/v1/chapters/chapter-f89891c8/prose" | head -c 60
+```
+
+**L3 永久回归**：㉒ 主笔页有「🧭 第 N 章遵循度」chips → 点一次得到含「遵循度」的回答 + `prose.audit` 执行芯片。
+**截图**：`docs/mockups/p3/ink/48-maestro-audit-chat.png`
+
+**为什么不是「让模型自己选工具」**：模型不知道内部 chapter_id；LLM 不可用时也必须给结论；行为要可测。
+所以对话层做意图识别 + 快速路径，模型路径同时保留（提示词里带章清单，模型可用 chapter_no 调 `prose.audit`）。
 ## 4. 存量验收（S1–S4 / A2 / A3，仍在跑）
 
 ```powershell

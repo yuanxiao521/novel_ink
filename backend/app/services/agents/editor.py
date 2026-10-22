@@ -388,6 +388,81 @@ async def tool_run_stream(service, scene_id: str = "", tool: str = "", args: dic
     yield {"event": "done", "data": {"executed": [payload]}}
 
 
+# ---------------------------------------------------------------- 主笔对话：遵循度审计快速路径（v1.68）
+_CN_DIGITS = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+_CHAPTER_NO_PAT = re.compile(r"第\s*([0-9]+|[一二两三四五六七八九十]+)\s*章")
+_AUDIT_WORDS = ("写得", "写对", "对不对", "合不合", "遵循", "偏离", "跑偏", "骨架", "符合", "有没有问题")
+
+
+def _cn_to_int(text: str) -> int:
+    """「三」「十二」「二十一」→ 整数；失败返回 0（不抛）。"""
+    s = str(text or "").strip()
+    if not s:
+        return 0
+    if s.isdigit():
+        return int(s)
+    if s == "十":
+        return 10
+    if "十" in s:
+        head, _, tail = s.partition("十")
+        tens = _CN_DIGITS.get(head[:1], 0) if head else 1     # 「十二」= 一十 二
+        ones = _CN_DIGITS.get(tail[:1], 0) if tail else 0
+        return tens * 10 + ones
+    return _CN_DIGITS.get(s[:1], 0)
+
+
+def detect_audit_request(message: str) -> dict | None:
+    """识别「看看第 3 章写得对不对」这类请求 → {"chapter_no": 3}。
+
+    为什么要在对话里做意图识别（而不是只靠模型选工具）：
+      ① 模型可能不知道内部 chapter_id，只会说"第 3 章"；
+      ② LLM 不可用时作者也得能拿到 0-token 结论；
+      ③ 意图明确时直接调工具比"让模型决定"更快、更可测。
+    """
+    text = str(message or "")
+    if not text or not any(w in text for w in _AUDIT_WORDS):
+        return None
+    hit = _CHAPTER_NO_PAT.search(text)
+    if not hit:
+        return None
+    no = _cn_to_int(hit.group(1))
+    return {"chapter_no": no} if no > 0 else None
+
+
+def _audit_reply_text(data: dict) -> str:
+    """把审计结果折成一段人话（主笔对话气泡里直接可读）。"""
+    d = data or {}
+    if d.get("error"):
+        return "没找到要审的章：" + str(d["error"])
+    dev = d.get("deviation") or {}
+    head = "骨架遵循度审计完成"
+    if dev.get("score") is not None:
+        head += f"（遵循度 {dev['score']}）"
+    lines = [head + "。这一章对照「章目标 / 张力曲线 / 卷目标」的结果如下："]
+    rendered = str(d.get("rendered") or "").strip()
+    if rendered:
+        lines.append(rendered)
+    else:
+        checks = d.get("checks") or []
+        lines.append("；".join(str(c.get("detail") or "") for c in checks[:4]) or "没发现偏离。")
+    if d.get("skipped"):
+        lines.append("（" + str(d["skipped"]) + "）")
+    lines.append("我只读正文出意见，一个字没改；要动手改正文请去「章级写作」的责编或直接编辑。")
+    return chr(10).join(lines)
+
+
+def _chapters_block(chapters: list[dict]) -> str:
+    """给主笔的章清单：让它能把「第 3 章」映射成 chapter_no（而不是猜内部 id）。"""
+    if not chapters:
+        return "【本书章节】（还没有章节）"
+    lines = ["【本书章节】（用 chapter_no 指代，如「第 3 章」→ chapter_no=3）"]
+    for ch in chapters[:24]:
+        chars = len(str(ch.get("prose_md") or "").replace(" ", "").replace(chr(10), ""))
+        target = int(ch.get("word_target") or 0)
+        lines.append(f"- 第 {int(ch.get('order_no') or 0)} 章《{ch.get('title') or ''}》"
+                     f" 已写 {chars} 字 / 目标 {target or '—'} · 方式 {ch.get('mode') or 'draft'}")
+    return chr(10).join(lines)
+
 # ---------------------------------------------------------------- 主笔（v1.40）：计划式工具对话
 _CHIEF_PLAN_SCHEMA = {
     "reply": "str 给作者的中文说明",
@@ -427,6 +502,10 @@ async def chief_chat_with_tools(service, book_id: str, message: str, who: str = 
     memory.write/outline.commit），感知是 chief_perceive 的文本（书级）。
     """
     perceived = await service.chief_perceive(book_id)
+    try:
+        chapters = await service.repo.list_chapters_by_book(book_id)
+    except Exception:  # noqa: BLE001  章清单读不到不影响其它对话
+        chapters = []
     tool_lines = [
         f"- {t.name}（{t.side_effect}{'·需确认' if t.needs_confirm else ''}）：{t.desc}"
         for t in TOOLS.values() if t.group == "chief"
@@ -434,13 +513,38 @@ async def chief_chat_with_tools(service, book_id: str, message: str, who: str = 
     prompt = (
         _CHIEF_TOOLS_PROMPT_HEAD + chr(10) + chr(10).join(tool_lines)
         + _CHIEF_TOOLS_PROMPT_TAIL.format(message=message.strip() or "（无，按你的判断给建议）")
+        + "\n\n" + _chapters_block(chapters)
         + "\n\n【当前书的感知上下文】\n" + (perceived or "（暂无）")
     )
     executed: list[dict] = []
 
+    # v1.68：意图明确的「看看第 N 章写得对不对」直接调 prose.audit ——
+    # 不等模型决定（模型不知道内部 id；LLM 挂掉时作者也该拿到 0-token 结论）。
+    audit_req = detect_audit_request(message)
+    if audit_req:
+        no = int(audit_req["chapter_no"])
+        try:
+            res = await call_tool(
+                service, "chief", "prose.audit",
+                {"book_id": book_id, "chapter_no": no},
+                who=f"{who}:chief" if who else "chief", confirm=False, book_id=book_id,
+            )
+            data = res.data if isinstance(res.data, dict) else {}
+            return {
+                "reply": _audit_reply_text(data),
+                "actions": [{"tool": "prose.audit", "args": {"chapter_no": no},
+                             "why": "作者要求看这一章有没有偏离骨架"}],
+                "executed": [{**res.to_dict(), "why": "作者要求看这一章有没有偏离骨架"}],
+                "fast_path": "prose.audit",
+            }
+        except Exception as e:  # noqa: BLE001  审计失败要如实说，不能装没事
+            logger.warning("[chief] 章级审计快速路径失败 chapter_no=%s：%s", no, e)
+            return {"reply": f"审计没跑完：{type(e).__name__}: {e}", "executed": []}
+
     if not getattr(llm_client, "available", False):
         return {
-            "reply": "（模型未接入：排骨架/生成角色卡可以直接点界面上按钮；接入后我就能在对话里替你连起来做。）",
+            "reply": "（模型未接入：排骨架/生成角色卡可以直接点界面上按钮；"
+                     "但「看看第 N 章写得对不对」这类骨架审计不依赖模型 —— 直接问我即可。）",
             "executed": [],
         }
 

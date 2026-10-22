@@ -1583,11 +1583,23 @@ export function MaestroPage() {
                     })}
                   </div>
                   <div className="chat-input-area">
+                    {/* v1.68：主笔能直连骨架审计 —— 点一下就是「看看第 N 章写得对不对」 */}
+                    {(tree?.chapters ?? []).length > 0 && (
+                      <div className="chief-quick">
+                        {(tree?.chapters ?? []).slice(0, 2).map((c, i) => (
+                          <button key={c.id} className="chief-quick-chip"
+                                  title="主笔只读正文出报告：对照章目标/张力曲线/卷目标，不改字"
+                                  onClick={() => setChatInput(`看看第 ${i + 1} 章写得对不对`)}>
+                            🧭 第 {i + 1} 章遵循度
+                          </button>
+                        ))}
+                      </div>
+                    )}
                     <div className="chat-input-wrap">
                       <input
                         type="text"
                         className="chat-input"
-                        placeholder="让主笔调整方向、补设定、排骨架……"
+                        placeholder="让主笔调整方向、补设定、排骨架……也可以问「第 3 章写得对不对」"
                         value={chatInput}
                         onChange={(e) => setChatInput(e.target.value)}
                         onKeyDown={(e) => { if (e.key === 'Enter') sendMessage(); }}

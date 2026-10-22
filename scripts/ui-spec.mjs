@@ -603,6 +603,46 @@ try {
         && (Number(au.items) > 0 || String(au.text || "").length > 20),
       JSON.stringify(au));
   }
+
+  // ㉒ 主笔对话直连骨架审计（v1.68）：点「第 N 章遵循度」→ 主笔读正文出报告（不改字）。
+  //    断言：对话里有快速问 chips；点一次能拿到含「遵循度」的回答 + prose.audit 执行芯片。
+  if (!books.length) {
+    skip("㉒ 主笔对话直连骨架审计", "没有书作夹具");
+  } else {
+    let chatBook = books[0];
+    for (const b of books) {
+      const cs = await (await fetch(BASE + "/api/v1/books/" + b.id + "/chapters")).json().catch(() => null);
+      if (Array.isArray(cs) && cs.length > 0) { chatBook = b; break; }
+    }
+    await goto(WEB + "/maestro?book=" + chatBook.id, 8000);
+    const ca = JSON.parse((await ev("(async () => {"
+      + "const out = { chips: [], expanded: false };"
+      + "const expand = document.querySelector('[title=\"展开共创\"]');"
+      + "if (expand) { expand.click(); await new Promise((r) => setTimeout(r, 400)); out.expanded = true; }"
+      + "out.chips = Array.from(document.querySelectorAll('.chief-quick-chip')).map((b) => b.textContent.trim());"
+      + "const chip = document.querySelector('.chief-quick-chip');"
+      + "if (!chip) return JSON.stringify({ ...out, err: 'no quick chip' });"
+      + "chip.click(); await new Promise((r) => setTimeout(r, 250));"
+      + "const input = document.querySelector('.chat-input');"
+      + "out.input = input ? input.value : '';"
+      + "const send = document.querySelector('.btn-send');"
+      + "if (send) send.click();"
+      + "const t0 = Date.now();"
+      + "while (Date.now() - t0 < 70000) {"
+      + "  await new Promise((r) => setTimeout(r, 600));"
+      + "  const bubbles = Array.from(document.querySelectorAll('.chat-bubble.agent .bubble-text'));"
+      + "  const last = bubbles[bubbles.length - 1];"
+      + "  if (last && /遵循度|骨架遵循/.test(last.textContent || '')) { out.reply = last.textContent.slice(0, 120); break; }"
+      + "}"
+      + "out.execChips = Array.from(document.querySelectorAll('.chief-exec-chip')).map((x) => x.textContent.trim());"
+      + "return JSON.stringify(out);"
+      + "})()")) || "{}");
+    step("㉒ 主笔对话直连骨架审计：问「第 N 章写得对不对」→ 出遵循度报告",
+      !ca.err && (ca.chips || []).length >= 1
+        && String(ca.input || "").indexOf("章") >= 0
+        && /遵循度|骨架遵循/.test(String(ca.reply || "")),
+      JSON.stringify(ca));
+  }
 } catch (e) {
   step("UI 剧本异常", false, String(e));
 } finally {

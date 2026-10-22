@@ -2420,7 +2420,34 @@ class SimulationService:
         }
 
 
-    async def chapter_prose_audit(self, chapter_id: str, text: str = "") -> dict:
+    async def _resolve_chapter_ref(self, *, chapter_id: str = "", chapter_no: object = 0,
+                                   book_id: str = "") -> tuple[dict | None, str]:
+        """把「第 N 章」或内部 id 统一解析成章 dict（解析不了就返回原因，不抛）。
+
+        为什么需要：主笔对话里作者只会说「第 3 章」，模型不可能知道内部 id
+        （形如 chapter-c08f2b6b）。所以工具层必须能吃章号。
+        """
+        cid = str(chapter_id or "").strip()
+        if cid:
+            chapter = await self.repo.get_chapter(cid)
+            return (chapter, "") if chapter else (None, f"未找到章节 {cid}")
+        try:
+            no = int(str(chapter_no).strip() or 0)
+        except (TypeError, ValueError):
+            no = 0
+        if no <= 0:
+            return None, "缺 chapter_id 或 chapter_no（章号，如 3）"
+        if not book_id:
+            return None, "缺 book_id（按章号审计需要知道是哪本书）"
+        chapters = await self.repo.list_chapters_by_book(book_id)
+        for ch in chapters:
+            if int(ch.get("order_no") or 0) == no:
+                return ch, ""
+        total = len(chapters)
+        return None, f"这本书没有第 {no} 章（当前共 {total} 章）"
+
+    async def chapter_prose_audit(self, chapter_id: str = "", text: str = "",
+                                  chapter_no: object = 0, book_id: str = "") -> dict:
         """**骨架遵循度审计**（v1.67 · 只读）：0-token 判定 + LLM 语义判定，不改一个字。
 
         作者诉求：主笔要能"看正文"，但不能改正文。所以这条链路只产出报告：
@@ -2432,9 +2459,18 @@ class SimulationService:
         )
         from app.services.engine.schema_retry import validate_and_retry
 
-        chapter, body, book_id = await self._chapter_and_body(chapter_id, text)
+        chapter, why = await self._resolve_chapter_ref(
+            chapter_id=chapter_id, chapter_no=chapter_no, book_id=book_id)
+        if chapter is None:
+            return {"chapter_id": str(chapter_id or ""), "error": why, "checks": [],
+                    "deviation": None, "goal": {}, "rendered": "", "skipped": why}
+        chapter_id = str(chapter.get("id") or "")
+        book_id = str(chapter.get("book_id") or "")
         scenes = await self.repo.list_scenes_by_chapter(chapter_id)
         no = int(chapter.get("order_no") or 0)
+        from app.services.text_metrics import chapter_body as _chapter_body
+
+        body = (text or "").strip() or _chapter_body(chapter, scenes)
         volumes = (await self.repo.list_book_volumes(book_id)) if book_id else []
         volume = next((v for v in volumes
                        if int(v.get("range_from") or 0) <= no <= int(v.get("range_to") or 0)), None)

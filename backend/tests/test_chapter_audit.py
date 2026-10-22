@@ -129,7 +129,10 @@ def test_audit_tool_is_read_only_and_chief_only():
     assert decl is not None
     assert decl.side_effect == "read"      # 只读：不改正文、不改骨架
     assert decl.writes == ""
-    assert decl.params == ("chapter_id",)
+    # v1.68：章号与 chapter_id 二选一 —— 主笔对话里作者只会说「第 3 章」，
+    # 模型不可能知道内部 id，所以 params 不能硬要求 chapter_id。
+    assert decl.params == ()
+    assert "chapter_no" in decl.optional and "chapter_id" in decl.optional
     assert can_use("chief", "prose.audit")          # 主笔能看正文（新能力）
     assert not can_use("editor", "prose.audit")     # 责编不需要；边界更窄更安全
 

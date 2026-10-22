@@ -1080,3 +1080,30 @@
 
 
 
+
+/* v1.68：主笔对话的「遵循度快速问」（prose.audit 直连） */
+.chief-quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.chief-quick-chip {
+  font-family: var(--font-ui);
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  color: var(--accent-gold);
+  background: rgba(232, 184, 96, 0.08);
+  border: 1px solid rgba(232, 184, 96, 0.45);
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.chief-quick-chip:hover {
+  background: rgba(232, 184, 96, 0.18);
+  border-color: var(--accent-gold);
+}
+

@@ -178,8 +178,12 @@ TOOLS.update({
     # 审计落 prose_notes.chapter_id。参数不再要 scene_id —— 章级不依赖拆场。
     # v1.67：主笔的「只读眼睛」——看正文但不改字（路线图 P3.7-B）
     "prose.audit": ToolDecl(
-        "prose.audit", "骨架遵循度审计（只读）：对照章目标/张力曲线/卷目标，输出偏离项与建议，不改字",
-        "read", params=("chapter_id",), optional=("text",),
+        "prose.audit",
+        "骨架遵循度审计（只读）：按 chapter_no（如「第 3 章」）或 chapter_id 审一章，"
+        "对照章目标/张力曲线/卷目标输出偏离项与建议，不改一个字",
+        "read",
+        params=(),                                  # 章号与 chapter_id 二选一（跨参数校验在 service）
+        optional=("chapter_id", "chapter_no", "book_id", "text"),
         handler="chapter_prose_audit", group="chief",
     ),
     "chapter.review": ToolDecl(
