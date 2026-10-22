@@ -22,7 +22,13 @@ class ProseNote(TimestampMixin, Base):
     __tablename__ = "prose_notes"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    scene_id: Mapped[str] = mapped_column(ForeignKey("scenes.id"), index=True, nullable=False)
+    # v1.65：章级审计（合并进章级工作台后，体检/质检/润色以"章"为单位也要留痕）。
+    # scene_id 因此改为可空：直写章可以不拆场，章级记录没有场可挂。
+    # 口径：一条记录要么挂场（场级审校），要么挂章（章级审校）。
+    scene_id: Mapped[str | None] = mapped_column(
+        ForeignKey("scenes.id"), index=True, nullable=True)
+    chapter_id: Mapped[str | None] = mapped_column(
+        ForeignKey("chapters.id", ondelete="CASCADE"), index=True, nullable=True)
     kind: Mapped[str] = mapped_column(String(20), default="writer")      # writer/editor/polisher/verifier
     status: Mapped[str] = mapped_column(String(20), default="pending")   # pending/approved/rejected
     suggestion: Mapped[str] = mapped_column(Text, default="")            # 问题/建议/改动摘要（JSON 摘要，≤200 字/条）
@@ -33,4 +39,4 @@ class ProseNote(TimestampMixin, Base):
     payload_json: Mapped[str] = mapped_column(Text, default="{}")  # 质检结构化明细（阶段⑤ 记账依据）
     ts: Mapped[int] = mapped_column(BigInteger, default=0)
 
-    scene: Mapped["Scene"] = relationship(back_populates="notes")
+    scene: Mapped["Scene | None"] = relationship(back_populates="notes")

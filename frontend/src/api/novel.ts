@@ -1917,3 +1917,49 @@ export async function searchMemory(
   if (kinds) params.set("kinds", kinds);
   return getJson(`${API_BASE}/api/v1/books/${bookId}/memory/search?${params.toString()}`);
 }
+/* ---------- 章级副驾（v1.65 · 两个页面合并：责编按整章干活） ---------- */
+
+/** 章级责编对话（SSE）：事件词汇与场级完全一致，前端复用同一张过程卡。 */
+export async function chapterEditorChatStream(
+  chapterId: string,
+  message: string,
+  text: string,
+  onStage: (s: EditorStage) => void,
+): Promise<void> {
+  await streamPost(
+    `${API_BASE}/api/v1/chapters/${chapterId}/agent/chat/stream`,
+    { message, text, who: 'author' },
+    (s) => onStage(s as EditorStage),
+  );
+}
+
+/** 章级按钮直调工具（SSE）：与对话同一事件词汇（tool_start / tick / tool_done / done）。 */
+export async function chapterToolRunStream(
+  chapterId: string,
+  tool: string,
+  args: Record<string, unknown>,
+  onStage: (s: ToolRunStage) => void,
+  confirm = false,
+): Promise<void> {
+  await streamPost(
+    `${API_BASE}/api/v1/chapters/${chapterId}/agent/run/stream`,
+    { tool, args, confirm },
+    (s) => onStage(s as ToolRunStage),
+  );
+}
+
+/** 章级审校记录（体检/质检/润色/AI 味/并入 的留痕），ts 倒序。 */
+export async function fetchChapterNotes(
+  chapterId: string, limit = 50,
+): Promise<{ chapter_id: string; notes: ProseNote[]; count: number }> {
+  return getJson(`${API_BASE}/api/v1/chapters/${chapterId}/agent/notes?limit=${limit}`);
+}
+
+/** 把已推演的场正文并入章正文（破坏性：confirm=true；覆盖前旧正文自动存版本）。 */
+export async function mergeChapterScenes(
+  chapterId: string, sceneId = "", confirm = true,
+): Promise<{ chapter_id: string; merged: number; chars: number; skipped?: string;
+             scenes?: Array<{ scene_id: string; title: string; chars: number }> }> {
+  return send(`POST`, `/api/v1/chapters/${chapterId}/merge-scenes`, { scene_id: sceneId, confirm });
+}
+

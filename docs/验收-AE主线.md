@@ -797,6 +797,35 @@ node scripts/shot.mjs --url="/studio/$S?book=$B" --js="...打开 .s2-more 后量
 **截图**：`docs/mockups/p3/ink/42-director-rail-characters.png`（角色栏真实名字）、
 `43-director-global-drawer.png`（全局视角完整）、`44-director-cast-drawer.png`（配置抽屉完整）、
 `45-studio-tools-menu.png`（墨模下拉）、`docs/mockups/p3/paper/25-studio-tools-menu.png`（纸模下拉）。
+
+### 3.30 章级写作台（两页合并，v1.65）
+
+> 作者拍板：**A 方案 · 合并成章级工作台**；「章正文唯一真源，场正文只是可选项、可并入」；
+> 「责编按整章干活，不用切作用域 —— 它可以按需查看那些部分的正文」。
+
+```bash
+CH=chapter-c08f2b6b
+
+# ① 章级工具（同一套过程流，事件词汇与场级一致）
+curl -sN -X POST "http://127.0.0.1:8001/api/v1/chapters/$CH/agent/run/stream" \
+  -H "Content-Type: application/json" -d '{"tool":"chapter.scan_tone","args":{},"confirm":false}'
+# 期望 event: tool_start → tool_done → done
+
+# ② 章级审计可回查（v1.65 迁移 0025 之前落不了：scene_id 是 NOT NULL）
+curl -s "http://127.0.0.1:8001/api/v1/chapters/$CH/agent/notes"
+# 期望 notes[].chapter_id == CH 且 scene_id == null
+
+# ③ 并入本章：不带 confirm → 409；带 confirm → 幂等追加（已并入的跳过）
+curl -s -X POST "http://127.0.0.1:8001/api/v1/chapters/$CH/merge-scenes" \
+  -H "Content-Type: application/json" -d '{"scene_id":"","confirm":false}'   # 409
+```
+
+**UI（章级写作台 /write/{章}）**：左栏 = 这一章（含进度条）/ 场 · N（状态 + ⇥ 并入本章）/ 前情概要 / 记忆五段；
+中栏 = 整章正文；右栏 = **本章副驾**（tab：责编 / 进度·审校，含章级审计记录）；
+顶栏 = 写这一章 / 补全设定 / 章后巡检 / 稿本 / **体检整章** / **审稿会** / **精修工具▾**（润色・质检・评审・AI 味・看上下文）/ 场景精修 / 编辑 / 保存。
+
+**L3 永久回归**：⑲ 章级工作台（右栏副驾在场 + 章级工具在顶栏 + 场块可见）；⑱ /write 可直达且侧栏指向它。
+**截图**：`docs/mockups/p3/ink/46-write-chapter-copilot.png`
 ## 4. 存量验收（S1–S4 / A2 / A3，仍在跑）
 
 ```powershell

@@ -46,6 +46,7 @@ async def call_tool(
     confirm: bool = False,
     scene_id: str = "",
     book_id: str = "",
+    chapter_id: str = "",
 ) -> ToolResult:
     args = dict(args or {})
     decl = get_tool(tool)
@@ -61,6 +62,9 @@ async def call_tool(
         args["scene_id"] = scene_id
     if book_id and "book_id" in decl.params and not args.get("book_id"):
         args["book_id"] = book_id
+    # v1.65：章级工具（chapter.*）由调用方带 chapter_id 进来，模型不必复述
+    if chapter_id and "chapter_id" in decl.params and not args.get("chapter_id"):
+        args["chapter_id"] = chapter_id
     # "谁发起"由 executor 提供（调用方身份），工具不必自己传
     if "from_agent" in (*decl.params, *decl.optional) and not args.get("from_agent"):
         args["from_agent"] = agent_id or "author"
@@ -84,7 +88,27 @@ async def call_tool(
         raise ToolDenied(f"{tool} 执行失败：{e}") from e
 
     sid = str(args.get("scene_id") or scene_id or "")
+    cid = str(args.get("chapter_id") or chapter_id or "")
     note_id = ""
+    if cid and not sid:
+        # v1.65：章级审校记录（scene_id 为空、挂 chapter_id）——合并后章级要看得到自己跑过什么
+        note_id = f"note-{uuid.uuid4().hex[:10]}"
+        try:
+            await service.repo.save_prose_note({
+                "id": note_id, "scene_id": None, "chapter_id": cid,
+                "kind": "tool", "status": "approved",
+                "suggestion": f"工具 {tool} · 发起 {who}",
+                "before": "", "after": "",
+                "created_by": who[:16],
+                "payload_json": json.dumps({"tool": tool, "args_keys": sorted(kwargs.keys())},
+                                           ensure_ascii=False),
+                "ts": int(time.time() * 1000),
+            })
+        except Exception:  # noqa: BLE001  审计失败不该让业务失败
+            note_id = ""
+        return ToolResult(tool=tool, ok=True, side_effect=decl.side_effect,
+                          data=data if isinstance(data, dict) else {"result": data},
+                          note_id=note_id)
     if sid:
         note_id = f"note-{uuid.uuid4().hex[:10]}"
         try:

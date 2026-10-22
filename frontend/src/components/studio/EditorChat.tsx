@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { editorChatStream, enqueueBookJob, listAnnotations, pollJob, toolRunStream } from '../../api/novel';
+import { chapterEditorChatStream, chapterToolRunStream, editorChatStream, enqueueBookJob,
+  listAnnotations, pollJob, toolRunStream } from '../../api/novel';
 import type { AgentExecuted, ProseAnnotation, ToolRunStage } from '../../api/novel';
 import { useDialog } from '../common/Dialog';
 import { useWorkspace } from '../../context/WorkspaceContext';
@@ -45,7 +46,13 @@ interface Stage {
 }
 
 interface Props {
-  sceneId: string;
+  /** 场级（拆了场的精修路径）——与 chapterId 二选一 */
+  sceneId?: string;
+  /**
+   * 章级（v1.65 · 两个页面合并后主线）：传它就按整章工作，不传才是场级。
+   * 责编同一套对话/过程卡，只是作用域不同（后端感知包与工具都按章装配）。
+   */
+  chapterId?: string;
   text: string;
   onApplyText: (t: string) => void;
   onRefresh: () => void;
@@ -66,6 +73,10 @@ const TOOL_LABEL: Record<string, string> = {
   'prose.review_meeting': '审稿会', 'character.voices': '角色在场感',
   'annotation.list': '读批注', 'annotation.resolve': '处理批注',
   'task.rehearsal': '请求彩排', 'task.list': '看任务', 'task.transition': '流转任务',
+  // 章级（v1.65）
+  'chapter.review': '体检整章', 'chapter.verify': '质检整章', 'chapter.polish': '润色整章',
+  'chapter.scan_tone': 'AI 味扫描（整章）', 'chapter.quality_score': '评审整章',
+  'chapter.inspect': '章后巡检', 'chapter.context': '看本章上下文', 'chapter.merge_scenes': '并入本章',
 };
 
 /** 后台队列类工具（长任务，刷新不断链）：走 /jobs 而不是 SSE。 */
@@ -93,8 +104,8 @@ function queuedSummary(tool: string, d: Record<string, unknown>): string {
   return '质量回环：未采纳';
 }
 
-export function EditorChat({ sceneId, text, onApplyText, onRefresh, seedMessage, onSeedConsumed,
-                             pendingTool, onPendingConsumed, onBusyChange }: Props) {
+export function EditorChat({ sceneId = '', chapterId = '', text, onApplyText, onRefresh, seedMessage,
+                             onSeedConsumed, pendingTool, onPendingConsumed, onBusyChange }: Props) {
   const { bookId } = useWorkspace();
   const { showConfirm } = useDialog();
   const [msgs, setMsgs] = useState<Msg[]>([]);
@@ -111,7 +122,7 @@ export function EditorChat({ sceneId, text, onApplyText, onRefresh, seedMessage,
 
   // 本场待处理批注：副驾的"待办"——有批注时快捷指令一键直达
   useEffect(() => {
-    if (!sceneId) { setOpenAnns([]); return; }
+    if (!sceneId || chapterId) { setOpenAnns([]); return; }   // 章级不聚合场批注（左栏场列表里有条数）
     listAnnotations(sceneId, 'open')
       .then(setOpenAnns)
       .catch(() => setOpenAnns([]));
@@ -160,7 +171,12 @@ export function EditorChat({ sceneId, text, onApplyText, onRefresh, seedMessage,
     const patch = (fn: (st: Stage[]) => Stage[]) => patchStages(procId, fn);
 
     try {
-      await editorChatStream(sceneId, message, text, (s) => {
+      const runChat = chapterId
+      ? (m: string, tx: string, cb: Parameters<typeof editorChatStream>[3]) =>
+          chapterEditorChatStream(chapterId, m, tx, cb)
+      : (m: string, tx: string, cb: Parameters<typeof editorChatStream>[3]) =>
+          editorChatStream(sceneId, m, tx, cb);
+    await runChat(message, text, (s) => {
         if (s.event === 'percept') {
           const c = (s.data as { counts?: Record<string, number> }).counts ?? {};
           patch((st) => [...st, { kind: 'percept', text: `读到：场景 ${c.scene ?? 0} · 角色 ${c.characters ?? 0} · 批注 ${c.annotations ?? 0} · 近期审计 ${c.recent_notes ?? 0}` }]);
@@ -202,7 +218,12 @@ export function EditorChat({ sceneId, text, onApplyText, onRefresh, seedMessage,
   const runStreamTool = async (procId: string, tool: string, confirm = false): Promise<string> => {
     let denied = '';
     let streamErr = '';
-    await toolRunStream(sceneId, tool, { text }, (s: ToolRunStage) => {
+    const runTool = chapterId
+      ? (tl: string, args: Record<string, unknown>, cb: (s: ToolRunStage) => void, cf = false) =>
+          chapterToolRunStream(chapterId, tl, args, cb, cf)
+      : (tl: string, args: Record<string, unknown>, cb: (s: ToolRunStage) => void, cf = false) =>
+          toolRunStream(sceneId, tl, args, cb, cf);
+    await runTool(tool, { text }, (s: ToolRunStage) => {
       if (s.event === 'tool_start') {
         patchStages(procId, (st) => [...st, { kind: 'tool_start', text: s.data.tool, label: TOOL_LABEL[s.data.tool] ?? s.data.tool, why: s.data.why }]);
       } else if (s.event === 'tick') {
@@ -248,7 +269,7 @@ export function EditorChat({ sceneId, text, onApplyText, onRefresh, seedMessage,
   };
 
   const runTool = async (tool: string) => {
-    if (!sceneId || busy) return;
+    if ((!sceneId && !chapterId) || busy) return;
     const procId = 'proc-' + Date.now();
     markBusy(tool);
     setMsgs((m) => [...m, { role: 'process', id: procId, title: TOOL_LABEL[tool] ?? tool, stages: [] }]);
@@ -286,12 +307,12 @@ export function EditorChat({ sceneId, text, onApplyText, onRefresh, seedMessage,
   return (
     <div className="ec-wrap">
       <div className="ec-head">
-        <span className="ec-title">责编 · 本场</span>
-        <span className="ec-sub">读：本场正文 · 角色卡 · 批注 · 审计</span>
+        <span className="ec-title">{chapterId ? '责编 · 本章' : '责编 · 本场'}</span>
+        <span className="ec-sub">{chapterId ? '读：整章正文 · 场清单 · 前情 · 记忆 · 角色档位' : '读：本场正文 · 角色卡 · 批注 · 审计'}</span>
       </div>
       {!text.trim() && (
         <div className="ec-empty-hint">
-          正文为空：先点顶栏「✍ 写手 · 初稿」，或切「✎ 编辑」手写一段 —— 体检/质检/审稿会都要读正文。
+          正文为空：先点「✍ 写这一章」让它出稿，或切「✎ 编辑」手写一段 —— 体检/质检/审稿会都要读正文。
         </div>
       )}
 

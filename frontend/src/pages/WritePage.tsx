@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Sidebar } from '../components/backoffice/Sidebar';
+import { EditorChat } from '../components/studio/EditorChat';
 import { ContextBar } from '../components/common/ContextBar';
 import { useDialog } from '../components/common/Dialog';
 import { useWorkspace } from '../context/WorkspaceContext';
 import {
   chapterDraftStream, enqueueChapterInspect, fetchBookMemoryStats, fetchChapterProse,
-  fetchChapterRecall, generateChapterSettings, listScenes, pollJob, reindexBookMemory,
-  saveChapterProse,
+  fetchChapterNotes, fetchChapterRecall, generateChapterSettings, listScenes,
+  mergeChapterScenes, pollJob, reindexBookMemory, saveChapterProse,
 } from '../api/novel';
 import {
   fetchChapterPrior, fetchChapterProductionPlan, fetchChapterRevisions,
@@ -40,6 +41,15 @@ const MEM_GROUPS: Array<[keyof Pick<ChapterRecall, 'prev' | 'knowledge' | 'chara
   ['characters', '相关角色'],
   ['world', '世界观 / 世界状态'],
   ['foreshadows', '未回收伏笔'],
+];
+
+/** 章级精修工具（v1.65）：与场级同一批引擎，作用域是整章——走右栏责编流（同一套过程卡） */
+const CHAPTER_TOOLS: Array<{ tool: string; label: string; hint: string }> = [
+  { tool: 'chapter.polish', label: '🎨 润色整章', hint: '只改写法不改事实；产出候选，采纳后才写库' },
+  { tool: 'chapter.verify', label: '🔍 质检整章', hint: '对照伏笔/信念/世界状态账本找风险' },
+  { tool: 'chapter.quality_score', label: '📊 评审整章', hint: '五维自评 + 0-token 硬信号合分' },
+  { tool: 'chapter.scan_tone', label: '🧪 AI 味（整章）', hint: '0-token 规则扫描，不花模型' },
+  { tool: 'chapter.context', label: '🔭 看本章上下文', hint: '前情 + 记忆五段 + 场清单（只读，让我先看清再动手）' },
 ];
 
 /** 检索模式标签：让作者一眼看出「这次是靠检索还是靠兜底」 */
@@ -106,6 +116,13 @@ export function WritePage() {
   const [recall, setRecall] = useState<ChapterRecall | null>(null);
   const [memStats, setMemStats] = useState<MemoryStats | null>(null);
   const [memOpen, setMemOpen] = useState(false);
+  /** v1.65：右栏 tab —— 责编（章级副驾）/ 进度与审校（原来的巡检结果） */
+  const [sideTab, setSideTab] = useState<'editor' | 'stats'>('editor');
+  /** v1.65：顶栏工具按钮 → 派给右栏责编流（与 StudioPage 的 v1.43 机制同一条路） */
+  const [pendingTool, setPendingTool] = useState('');
+  /** v1.65：章级审校记录（体检/质检/润色/AI 味/并入 的留痕） */
+  const [notes, setNotes] = useState<Array<Record<string, unknown>>>([]);
+  const [mergeBusy, setMergeBusy] = useState(false);
   const [memBusy, setMemBusy] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
 
@@ -153,6 +170,11 @@ export function WritePage() {
   const paras = useMemo(() => text.split(/\n\s*\n/).filter((p) => p.trim()), [text]);
   const dirty = text !== savedText;
   const progress = wordTarget > 0 ? Math.min(100, Math.round((words / wordTarget) * 100)) : 0;
+  /** v1.65：有多少场"已推演但还没并入章正文"（左栏一键并入的角标） */
+  const mergeable = scenes.filter((s) => {
+    const p = (s.final_prose || '').trim();
+    return !!p && !(text || '').includes(p);
+  }).length;
   /** 超目标时不能显示"100%"了事——要如实说超了多少（实测 6636/2500 显示 100% 很误导）。 */
   const overTarget = wordTarget > 0 && words > wordTarget;
   /** 场设定缺口（舞台/本场目标/内容描述任一为空）——写前该补，否则写手只能自由发挥 */
@@ -213,6 +235,46 @@ export function WritePage() {
     } finally { setInspectBusy(false); }
   };
 
+  /** v1.65：把已推演的场正文并入章正文（幂等；覆盖前旧正文自动存版本） */
+  const mergeScenes = async (sceneId = "") => {
+    if (!chapterId || mergeBusy) return;
+    const ok = await showConfirm(
+      sceneId ? '并入这一场的正文？' : '把已推演的场正文并入本章？',
+      '会追加进本章正文（章正文是唯一真源）。已并入过的会跳过；覆盖前的旧正文自动存进「🕘 稿本」。',
+      true);
+    if (!ok) return;
+    setMergeBusy(true);
+    try {
+      const r = await mergeChapterScenes(chapterId, sceneId, true);
+      if (r.merged > 0) flash(`已并入 ${r.merged} 场（本章现在 ${r.chars} 字）`);
+      else flash(r.skipped || '没有可并入的场正文');
+      await load();
+      void loadChapterNotes();
+    } catch (e) {
+      flash(`并入失败：${String(e instanceof Error ? e.message : e)}`);
+    } finally {
+      setMergeBusy(false);
+    }
+  };
+
+  /** v1.65：章级审校记录（与场级 prose_notes 同一张表，靠 chapter_id 区分） */
+  const loadChapterNotes = useCallback(async () => {
+    if (!chapterId) return;
+    try {
+      const r = await fetchChapterNotes(chapterId, 30);
+      setNotes((r.notes || []) as unknown as Array<Record<string, unknown>>);
+    } catch {
+      setNotes([]);
+    }
+  }, [chapterId]);
+
+  /** v1.65：顶栏工具按钮 → 切到副驾 tab 并派活（过程与明细都在那条流里） */
+  const askTool = (tool: string) => {
+    setSideTab('editor');
+    setPendingTool(tool);
+  };
+
+  useEffect(() => { void loadChapterNotes(); }, [loadChapterNotes, savedText]);
   /** v1.58：重算本章前情概要（后台队列；生成完点「刷新」看结果） */
   const reloadPrior = async () => {
     try { setPrior(await fetchChapterPrior(chapterId)); } catch { /* 保留现状 */ }
@@ -410,6 +472,26 @@ export function WritePage() {
                     title="稿本历史：每次保存覆盖前的正文都有一版，可恢复">
               🕘 稿本
             </button>
+            {/* v1.65：章级精修工具（原来只有场级页才有，作者发现"这章味道不对"得跳页） */}
+            <button className="ws-btn" disabled={busy || words === 0} onClick={() => askTool('chapter.review')}
+                    title="体检整章：问题清单 + 口吻发现（过程与明细在右栏责编流）">
+              🩺 体检整章
+            </button>
+            <button className="ws-btn" disabled={busy || words === 0} onClick={() => askTool('chapter.inspect')}
+                    title="章后巡检：体检 ∥ 质检 → 评分 → 裁决 → 自动记账">
+              🗂 审稿会
+            </button>
+            <details className="s2-more">
+              <summary>精修工具 ▾</summary>
+              <div className="s2-more-body">
+                {CHAPTER_TOOLS.map((t) => (
+                  <button key={t.tool} className="ws-btn" title={t.hint}
+                          disabled={busy || words === 0} onClick={() => askTool(t.tool)}>
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            </details>
             {/* v1.64：章级写作与场景精修是两个页面（以前从章页没法回到场景级） */}
             {scenes.length > 0 && (
               <button className="ws-btn" onClick={() => nav('/studio/' + scenes[0].id)}
@@ -437,6 +519,9 @@ export function WritePage() {
                   : '—'}</b>
               </div>
               <div className="s2-kv"><span>字数目标</span><b>{wordTarget > 0 ? `${wordTarget} 字` : '未设（默认 4000）'}</b></div>
+              <div className="wp-progress" title={`${progress}%`}>
+                <div className="wp-progress-bar" style={{ width: `${progress}%` }} />
+              </div>
               <div className="s2-kv"><span>基调</span><b>{tone || '未定'}</b></div>
               {/* v1.52：生产方式与"还差什么"（数据来自 /production-plan，与执行层同一份） */}
               <div className="s2-kv"><span>生产方式</span>
@@ -450,30 +535,51 @@ export function WritePage() {
               <div className="s2-kv"><span>要完成的事</span>
                 <b className="wp-summary" title={summary || '未填'}>{summary || '未填'}</b>
               </div>
+              {/* v1.65：场是章的细分 —— 状态一眼可见（未推演 / 已推演 / 已并入），可一键并入章正文 */}
               <div className="s2-info-title" style={{ marginTop: 12 }}>场 · {scenes.length}（可选细分）</div>
               {scenes.length === 0 && <div className="s2-hint">本章没拆场也能写——章就是最小单位。需要推演/细纲时再去主笔或导演台拆场。</div>}
-              {scenes.map((s) => (
-                <div className="s2-ann-mini" key={s.id}>
-                  <span className="s2-ann-no">{(s.final_prose || '').trim() ? '✓' : '·'}</span>
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    style={{ cursor: 'pointer' }}
-                    onClick={() => nav(`/studio/${s.id}`)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') nav(`/studio/${s.id}`); }}
-                  >
-                    {s.title || '（未命名场）'}
-                    {!(s.final_prose || "").trim() && <em className="wp-scene-todo">未写</em>}
-                    {(() => {
-                      const row = prod?.scenes.find((x) => x.id === s.id);
-                      if (!row || !row.required) return null;
-                      return row.turns > 0
-                        ? <em className="wp-scene-req done">已推演 {row.turns}</em>
-                        : <em className="wp-scene-req">需推演</em>;
-                    })()}
-                  </span>
-                </div>
-              ))}
+              {scenes.length > 0 && mergeable > 0 && (
+                <button className="ws-btn" style={{ marginBottom: 6 }} disabled={mergeBusy || busy}
+                        onClick={() => void mergeScenes()}
+                        title="把已推演但还没并入的场正文追加进本章（幂等；覆盖前旧正文自动存版本）">
+                  {mergeBusy ? "并入中…" : `⇥ 并入本章（${mergeable} 场待并入）`}
+                </button>
+              )}
+              {scenes.map((s) => {
+                const prose = (s.final_prose || '').trim();
+                const merged = !!prose && (text || '').includes(prose);
+                return (
+                  <div className="s2-ann-mini" key={s.id}>
+                    <span className="s2-ann-no">{merged ? '✓' : prose ? '◐' : '·'}</span>
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      style={{ cursor: 'pointer' }}
+                      title="打开这一场的精修页（写手初稿 / 精修工具 / 批注 / 选中问责编）；成文后可回来并入本章"
+                      onClick={() => nav(`/studio/${s.id}`)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') nav(`/studio/${s.id}`); }}
+                    >
+                      {s.title || '（未命名场）'}
+                      {!prose && <em className="wp-scene-todo">未推演</em>}
+                      {merged && <em className="wp-scene-req done">已并入</em>}
+                      {prose && !merged && (
+                        <button className="ws-btn" style={{ marginLeft: 6, padding: "0 8px", fontSize: 11 }}
+                                disabled={mergeBusy || busy}
+                                onClick={(e) => { e.stopPropagation(); void mergeScenes(s.id); }}>
+                          并入
+                        </button>
+                      )}
+                      {(() => {
+                        const row = prod?.scenes.find((x) => x.id === s.id);
+                        if (!row || !row.required) return null;
+                        return row.turns > 0
+                          ? <em className="wp-scene-req done">已推演 {row.turns}</em>
+                          : <em className="wp-scene-req">需推演</em>;
+                      })()}
+                    </span>
+                  </div>
+                );
+              })}
 
               {/* v1.49 · 记忆：写手这次会读到什么（前情/角色/世界观/伏笔） */}
               {/* v1.58：前情概要（分层压缩：全书 / 本卷 / 最近两章 + 冲突） */}
@@ -668,11 +774,43 @@ export function WritePage() {
             </section>
 
             <aside className="s2-side">
-              <div className="s2-side-head"><span className="ec-title">本章进度</span></div>
-              <div className="s2-quality">
-                <div className="wp-progress">
-                  <div className="wp-progress-bar" style={{ width: `${progress}%` }} />
+              {/* v1.65：合并后右栏就是「本章副驾」——责编按整章干活，不用再跳场级页面 */}
+              <div className="s2-side-head">
+                <span className="ec-title">本章副驾</span>
+                <div className="tab-switch" style={{ marginLeft: 'auto' }}>
+                  <button className={'tab ' + (sideTab === 'editor' ? 'active' : '')}
+                          onClick={() => setSideTab('editor')}>责编</button>
+                  <button className={'tab ' + (sideTab === 'stats' ? 'active' : '')}
+                          onClick={() => setSideTab('stats')}>进度 · 审校</button>
                 </div>
+              </div>
+              {sideTab === 'editor' ? (
+                <EditorChat chapterId={chapterId} text={text}
+                            onApplyText={(t) => { setText(t); setEditing(true); }}
+                            onRefresh={() => { void load(); void loadChapterNotes(); }}
+                            pendingTool={pendingTool}
+                            onPendingConsumed={() => setPendingTool('')} />
+              ) : (
+              <>
+              <div className="s2-side-head"><span className="ec-title">本章进度</span></div>
+              {/* v1.65：章级审校记录 —— 体检/质检/润色/AI 味/并入 都留痕（原来跑完就没了） */}
+              <div className="s2-side-head"><span className="ec-title">审校记录 · {notes.length}</span>
+                <button className="ws-btn" style={{ marginLeft: "auto", padding: "2px 8px", fontSize: 11 }}
+                        onClick={() => void loadChapterNotes()}>⟳ 刷新</button>
+              </div>
+              {notes.length === 0 && <div className="s2-hint">还没有章级审校记录：点顶栏「🩺 体检整章 / 🗂 审稿会 / 精修工具」都会写一条。</div>}
+              {notes.slice(0, 12).map((n) => (
+                <div className="s2-ann-mini" key={String(n.id)}>
+                  <span className="s2-ann-no">{String(n.kind || "note").slice(0, 4)}</span>
+                  <span title={String(n.suggestion || "")}>
+                    {String(n.suggestion || "").slice(0, 90)}
+                    {String(n.suggestion || "").length > 90 ? "…" : ""}
+                  </span>
+                </div>
+              ))}
+
+              <div className="s2-quality">
+                {/* v1.65：进度条移到左栏「这一章」常驻（右栏默认显示副驾，进度不该被 tab 藏起来） */}
                 <div className="s2-kv"><span>已写</span><b>{words} 字</b></div>
                 <div className="s2-kv"><span>目标</span><b>{wordTarget > 0 ? `${wordTarget} 字` : '未设'}{overTarget ? `（已超 ${words - wordTarget}）` : ''}</b></div>
                 <div className="s2-kv"><span>段落</span><b>{paras.length}</b></div>
@@ -732,6 +870,8 @@ export function WritePage() {
                   </div>
                 )}
               </div>
+              </>
+              )}
             </aside>
           </div>
         </div>

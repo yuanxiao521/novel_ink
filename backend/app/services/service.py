@@ -2419,6 +2419,180 @@ class SimulationService:
             "beats": self._chapter_beats_summary(ctx.get("scenes") or []),
         }
 
+    # ---------------------------------------------------------------- 章级审校工具（v1.65）
+    # 为什么在 service 而不是 engine：与场级 prose.* 一一对应（同一台引擎），差别只在
+    # "单位是章 + 落章级审计（prose_notes.chapter_id）"。合并进章级工作台后，责编在章级
+    # 说话要能真的动手，而不是只能"建议你去场级页面点"。
+    async def _chapter_and_body(self, chapter_id: str, text: str = "") -> tuple[dict, str, str]:
+        """章 + 章正文（唯一真源，空则回落场聚合）+ book_id。text 非空时以它为准（未保存稿）。"""
+        from app.services.text_metrics import chapter_body
+
+        chapter = await self.repo.get_chapter(chapter_id)
+        if chapter is None:
+            raise ChapterNotFoundError(f"未找到章节: {chapter_id}")
+        scenes = await self.repo.list_scenes_by_chapter(chapter_id)
+        body = (text or "").strip() or chapter_body(chapter, scenes)
+        return chapter, body, str(chapter.get("book_id") or "")
+
+    async def _save_chapter_note(self, chapter_id: str, *, kind: str, suggestion: str,
+                                 before: str = "", after: str = "", created_by: str = "editor",
+                                 payload: dict | None = None) -> str:
+        """章级审校记录（pending）——与场级 note 同一张表，靠 chapter_id 区分。"""
+        note_id = f"note-{uuid.uuid4().hex[:10]}"
+        try:
+            await self.repo.save_prose_note({
+                "id": note_id, "scene_id": None, "chapter_id": chapter_id,
+                "kind": kind, "status": "pending",
+                "suggestion": (suggestion or "")[:600],
+                "before": before, "after": after, "created_by": created_by,
+                "payload_json": json.dumps(payload or {}, ensure_ascii=False),
+                "ts": int(time.time() * 1000),
+            })
+            return note_id
+        except Exception as e:  # noqa: BLE001  审计失败不该让业务失败（T9 会记降级）
+            logger.warning("[chapter-note] 落审计失败 chapter=%s：%s", chapter_id, e)
+            return ""
+
+    async def chapter_prose_review(self, chapter_id: str, text: str = "") -> dict:
+        """体检整章（章级版 prose.review）。"""
+        from app.services.engine.prose import review_prose
+
+        chapter, body, book_id = await self._chapter_and_body(chapter_id, text)
+        if not body:
+            return {"report": {}, "note_status": "skipped", "note": "章正文为空：先写正文再体检"}
+        characters = (await self.repo.list_characters_by_book(book_id)) if book_id else []
+        prior = style_voice_prior(body, characters)
+        report = await review_prose(llm_client, chapter, body, characters=characters,
+                                    voice_prior=prior)
+        issues = report.get("issues") or []
+        voice = report.get("voice_findings") or []
+        summary = "；".join(f"[{i.get('severity')}] {i.get('text')}" for i in issues[:3]) or "（无问题）"
+        if voice:
+            summary += "；口吻：" + "；".join(
+                f"{v.get('char')}（{str(v.get('issue') or '')[:40]}）" for v in voice[:2])
+        note_id = await self._save_chapter_note(
+            chapter_id, kind="editor", created_by="editor",
+            suggestion=f"{report.get('overall') or ''}｜{summary}",
+            before=body, payload={"voice_findings": voice, "voice_prior": prior},
+        )
+        return {"report": report, "voice_prior": prior, "note_id": note_id,
+                "note_status": "pending" if note_id else "failed"}
+
+    async def chapter_prose_polish(self, chapter_id: str, text: str = "") -> dict:
+        """润色整章（候选，不自动落库；作者在章页点采纳才写 prose_md）。"""
+        from app.services.engine.prose import polish_prose
+
+        _chapter, body, _book_id = await self._chapter_and_body(chapter_id, text)
+        if not body:
+            return {"after": "", "summary": "", "note": "章正文为空"}
+        out = await polish_prose(llm_client, body)
+        after = str(out.get("after") or body)
+        note_id = await self._save_chapter_note(
+            chapter_id, kind="polisher", created_by="polisher",
+            suggestion=str(out.get("summary") or "")[:200],
+            before=body, after=after,
+        )
+        return {"after": after, "summary": out.get("summary", ""),
+                "note_id": note_id, "note_status": "pending" if note_id else "failed"}
+
+    async def chapter_prose_verify(self, chapter_id: str, text: str = "") -> dict:
+        """质检整章（伏笔/信念/因果/状态/风险）。"""
+        from app.services.engine.prose import verify_prose
+
+        _chapter, body, book_id = await self._chapter_and_body(chapter_id, text)
+        if not body:
+            return {"opinion": {}, "note": "章正文为空"}
+        foreshadows = (await self.repo.list_foreshadows(book_id)) if book_id else []
+        beliefs = (await self.repo.list_beliefs(book_id)) if book_id else []
+        world_states = (await self.repo.list_world_states(book_id)) if book_id else []
+        characters = (await self.repo.list_characters_by_book(book_id)) if book_id else []
+        opinion = await verify_prose(llm_client, body, foreshadows, beliefs, world_states,
+                                     characters=characters, skip_voice=True)
+        sug = ("伏笔推进 %d 条；信念变化 %d 条；因果 %d 条；状态变化 %d 条；风险 %d 条"
+               % (len(opinion.get("foreshadow_updates") or []), len(opinion.get("belief_deltas") or []),
+                  len(opinion.get("causal") or []), len(opinion.get("state_deltas") or []),
+                  len(opinion.get("risks") or [])))
+        note_id = await self._save_chapter_note(
+            chapter_id, kind="verifier", created_by="verifier",
+            suggestion=sug, before=body, payload=opinion)
+        return {"opinion": opinion, "note_id": note_id,
+                "note_status": "pending" if note_id else "failed"}
+
+    async def chapter_prose_scan_tone(self, chapter_id: str, text: str = "") -> dict:
+        """AI 味扫描整章（0-token，不花模型）。"""
+        from app.services.engine.style_checks import ai_tone_report
+
+        _chapter, body, book_id = await self._chapter_and_body(chapter_id, text)
+        if not body:
+            return {"report": {"rules": []}, "note": "章正文为空"}
+        characters = (await self.repo.list_characters_by_book(book_id)) if book_id else []
+        names = {str(c.get("name") or "") for c in characters if c.get("name")}
+        states = (await self.repo.list_world_states(book_id)) if book_id else []
+        terms = {str(s.get("name") or "") for s in states
+                 if str(s.get("kind") or "") in {"term", "numeric"}}
+        report = ai_tone_report(body, exclude=names | terms)
+        rules = report.get("rules") or []
+        hit = "、".join(sorted({str(r.get("rule")) for r in rules})) or "无"
+        note_id = await self._save_chapter_note(
+            chapter_id, kind="editor", created_by="ai_tone",
+            suggestion=("AI 味扫描：命中 %d 条（%s）" % (len(rules), hit))[:400],
+            before=body, payload={"source": "ai_tone", "ai_tone": report})
+        return {"report": report, "note_id": note_id,
+                "note_status": "pending" if note_id else "failed"}
+
+    async def chapter_prose_quality(self, chapter_id: str, text: str = "") -> dict:
+        """评审整章：五维自评 + 0-token 硬信号（只读）。"""
+        from app.services.engine.quality import score_text
+
+        _chapter, body, book_id = await self._chapter_and_body(chapter_id, text)
+        if not body:
+            return {"total": None, "scores": {}, "weak_points": [], "note": "章正文为空，无评分"}
+        characters = (await self.repo.list_characters_by_book(book_id)) if book_id else []
+        return await score_text(llm_client, body, characters=characters)
+
+    async def chapter_prose_context(self, chapter_id: str) -> dict:
+        """章级副驾的"我看到了什么"（前情 + 记忆五段 + 场清单），给前端面板与后端同一份口径。"""
+        from app.services.agents.chapter_perceive import build_chapter_packet, summary
+
+        packet = await build_chapter_packet(self.repo, chapter_id)
+        return {"summary": summary(packet), "packet": packet}
+
+    async def merge_scene_into_chapter(self, chapter_id: str, scene_id: str = "") -> dict:
+        """把**已推演的场正文**并入章正文（场正文只是可选项，章正文是唯一真源）。
+
+        规则（可按需再调）：
+          - 只并入有 final_prose 的场；已在章正文里出现过的跳过（幂等，重复点不会重复贴）；
+          - 按场序（cursor_pos）追加，段间空一行；
+          - 走 save_chapter_prose：覆盖前存版本 → 触发记账/索引/前情，与手写保存完全同一条路。
+        """
+        from app.services.text_metrics import chapter_body
+
+        chapter = await self.repo.get_chapter(chapter_id)
+        if chapter is None:
+            raise ChapterNotFoundError(f"未找到章节: {chapter_id}")
+        scenes = await self.repo.list_scenes_by_chapter(chapter_id)
+        targets = [s for s in scenes if not scene_id or str(s.get("id")) == scene_id]
+        # 查重必须只看**真源里已有的**（chapter.prose_md），不能拿 chapter_body 的回落结果：
+        # 章正文为空时 chapter_body 会回落到场正文，那样"一次都没并过"也会被判定成"已并入"。
+        stored = str(chapter.get("prose_md") or "").strip()
+        body = stored
+        added: list[dict] = []
+        for s in targets:
+            prose = str(s.get("final_prose") or "").strip()
+            if not prose:
+                continue
+            if prose in stored:
+                continue
+            body = (body + "\n\n" + prose).strip() if body else prose
+            added.append({"scene_id": str(s.get("id")), "title": s.get("title") or "",
+                          "chars": len(prose)})
+        if not added:
+            return {"chapter_id": chapter_id, "merged": 0, "chars": len(body),
+                    "skipped": "没有可并入的场正文（未推演 / 已并入过）"}
+        saved = await self.save_chapter_prose(chapter_id, body)
+        return {"chapter_id": chapter_id, "merged": len(added), "chars": len(body),
+                "scenes": added, "save": saved}
+
     async def prose_review(self, scene_id: str, text: str) -> dict:
         """体检员：结构化体检报告 → editor note（pending）。"""
         from app.services.engine.prose import review_prose

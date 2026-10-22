@@ -97,6 +97,20 @@ async def perceive_scene(repo, scene_id: str) -> dict:
     return await perceive(repo, "scene", scene_id=scene_id)
 
 
+async def perceive_chapter(repo, chapter_id: str) -> dict:
+    """章级责编感知包（v1.65）：章正文 + 场清单 + 前情 + 记忆五段 + 角色档位。"""
+    from app.services.agents.chapter_perceive import build_chapter_packet
+
+    return await build_chapter_packet(repo, chapter_id)
+
+
+async def _packet_for(service, scene_id: str = "", chapter_id: str = "") -> dict:
+    """按作用域取感知包（章级优先：合并后章是主线；场级保留给拆了场的精修路径）。"""
+    if chapter_id:
+        return await perceive_chapter(service.repo, chapter_id)
+    return await perceive_scene(service.repo, scene_id)
+
+
 def packet_draft(packet: dict) -> str:
     """当前正文（供工具参数回填，避免模型重复传长文本）。"""
     return draft_text(packet)
@@ -106,14 +120,29 @@ def packet_summary(packet: dict) -> dict:
     return perceive_summary(packet)
 
 
+def _tool_lines_for(scope: str) -> list[str]:
+    """按作用域列工具：章级只列 chapter.*，场级只列场级工具（避免模型选错单位）。"""
+    out = []
+    for t in TOOLS.values():
+        if scope == "chapter":
+            keep = t.group == "chapter" or t.name in ("memory.search", "book.brief", "chapter.inspect")
+        else:
+            keep = t.group != "chapter" or t.name in ("memory.search", "book.brief")
+        if not keep:
+            continue
+        out.append(f"- {t.name}（{t.side_effect}{'·需确认' if t.needs_confirm else ''}）：{t.desc}")
+    return out
+
+
 def render_editor_prompt(packet: dict, message: str, text: str) -> str:
     """感知包 → prompt（B 批：统一上下文装配器 persona=editor；工具清单与输出契约仍归责编）。"""
-    tool_lines = [
-        f"- {t.name}（{t.side_effect}{'·需确认' if t.needs_confirm else ''}）：{t.desc}"
-        for t in TOOLS.values()
-    ]
+    scope = str(packet.get("scope") or "scene")
+    tool_lines = _tool_lines_for(scope)
+    unit = "这一章" if scope == "chapter" else "这一场"
     body = render(packet, "editor")
     tail = [
+        "【你的作用域】" + ("整章（chapters.prose_md 是唯一真源；场只是可选细分）" if scope == "chapter"
+                          else "单场（scenes.final_prose）") + "，判断与建议都按" + unit + "给。",
         "【当前正文】" + (text if text.strip() else "（空）"),
         "【作者要求】" + (message.strip() or "（无，按你的判断）"),
         "【可用工具】" + chr(10) + chr(10).join(tool_lines),
@@ -124,9 +153,14 @@ def render_editor_prompt(packet: dict, message: str, text: str) -> str:
     ]
     sep = chr(10) + chr(10)
     return body + sep + sep.join(tail)
-async def editor_chat(service, scene_id: str, message: str, text: str = "", who: str = "author") -> dict:
-    """责编对话：感知 → 计划 → 执行（同一工具链）→ 汇报。"""
-    packet = await perceive_scene(service.repo, scene_id)
+async def editor_chat(service, scene_id: str = "", message: str = "", text: str = "",
+                      who: str = "author", chapter_id: str = "") -> dict:
+    """责编对话：感知 → 计划 → 执行（同一工具链）→ 汇报。
+
+    v1.65：作用域二选一 —— 传 chapter_id 即以**整章**为单位（合并后主线），
+    传 scene_id 则仍是场级（拆了场的精修路径保留）。
+    """
+    packet = await _packet_for(service, scene_id, chapter_id)
     summary = packet_summary(packet)
 
     if not getattr(llm_client, "available", False):
@@ -155,7 +189,8 @@ async def editor_chat(service, scene_id: str, message: str, text: str = "", who:
         try:
             res = await call_tool(
                 service, EDITOR.id, tool, act.get("args") or {},
-                who=f"{who}:editor" if who else "editor", confirm=False, scene_id=scene_id,
+                who=f"{who}:editor" if who else "editor", confirm=False,
+                scene_id=scene_id, chapter_id=chapter_id,
             )
             executed.append({**res.to_dict(), "why": act.get("why", "")})
         except ToolDenied as e:
@@ -221,7 +256,8 @@ def _summarize(tool: str, data: dict) -> str:
 
 
 # ---------------------------------------------------------------- 流式版（v1.39：让作者看见责编在干什么）
-async def editor_chat_stream(service, scene_id: str, message: str, text: str = "", who: str = "author"):
+async def editor_chat_stream(service, scene_id: str = "", message: str = "", text: str = "",
+                             who: str = "author", chapter_id: str = ""):
     """editor_chat 的逐阶段流式版：感知 → 计划 → 逐工具执行 → 完成。
 
     每个阶段 yield 一个 dict 事件（路由层转 SSE）——作者不再盯着
@@ -233,7 +269,7 @@ async def editor_chat_stream(service, scene_id: str, message: str, text: str = "
       done    → 收尾（含 percept 汇总）
     非 LLM 场景（未接入/计划失败）也走同一套事件，前端无需分支。
     """
-    packet = await perceive_scene(service.repo, scene_id)
+    packet = await _packet_for(service, scene_id, chapter_id)
     summary = packet_summary(packet)
     yield {"event": "percept", "data": summary}
 
@@ -269,7 +305,8 @@ async def editor_chat_stream(service, scene_id: str, message: str, text: str = "
         try:
             res = await call_tool(
                 service, EDITOR.id, tool, act.get("args") or {},
-                who=f"{who}:editor" if who else "editor", confirm=False, scene_id=scene_id,
+                who=f"{who}:editor" if who else "editor", confirm=False,
+                scene_id=scene_id, chapter_id=chapter_id,
             )
             executed.append({**res.to_dict(), "why": why})
             # v1.43：摘要按工具类型给「查了什么、结论是什么」，与按钮路径共用 _summarize
@@ -297,8 +334,8 @@ async def editor_chat_stream(service, scene_id: str, message: str, text: str = "
 _TICK_SEC = 2.0     # 心跳间隔：长工具（体检 ~50s / 质检 ~40s）也要让作者看到"还在跑、跑了多久"
 
 
-async def tool_run_stream(service, scene_id: str, tool: str, args: dict | None = None,
-                          who: str = "author", confirm: bool = False):
+async def tool_run_stream(service, scene_id: str = "", tool: str = "", args: dict | None = None,
+                          who: str = "author", confirm: bool = False, chapter_id: str = ""):
     """**按钮**直调工具的流式版（v1.43）：与责编对话同一套事件词汇。
 
     动机（用户实测反馈）："审稿会/体检/质检这些复杂按钮点了没有输出，也不知道怎么体检的"。
@@ -321,7 +358,8 @@ async def tool_run_stream(service, scene_id: str, tool: str, args: dict | None =
     t0 = time.time()
     task = asyncio.ensure_future(call_tool(
         service, EDITOR.id, tool, args or {},
-        who=f"{who}:editor" if who else "editor", confirm=confirm, scene_id=scene_id,
+        who=f"{who}:editor" if who else "editor", confirm=confirm,
+        scene_id=scene_id, chapter_id=chapter_id,
     ))
     try:
         while True:

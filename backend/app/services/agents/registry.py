@@ -171,6 +171,46 @@ TOOLS.update({
 })
 
 
+
+TOOLS.update({
+    # ---------- 章级审校（v1.65 · 两个页面合并：责编在章级要能真的动手）----------
+    # 与场级 prose.* 一一对应，差别只有两点：单位是**章正文**（chapters.prose_md，唯一真源）、
+    # 审计落 prose_notes.chapter_id。参数不再要 scene_id —— 章级不依赖拆场。
+    "chapter.review": ToolDecl(
+        "chapter.review", "体检整章：问题清单 + 口吻发现（章级）", "write",
+        params=("chapter_id",), optional=("text",), handler="chapter_prose_review", group="chapter",
+    ),
+    "chapter.verify": ToolDecl(
+        "chapter.verify", "质检整章：伏笔/信念/因果/状态变化/风险（章级）", "write",
+        params=("chapter_id",), optional=("text",), handler="chapter_prose_verify", group="chapter",
+    ),
+    "chapter.polish": ToolDecl(
+        "chapter.polish", "润色整章：只改写法不改事实（产出候选，作者采纳才落库）", "write",
+        params=("chapter_id",), optional=("text",), handler="chapter_prose_polish", group="chapter",
+    ),
+    "chapter.scan_tone": ToolDecl(
+        "chapter.scan_tone", "AI 味扫描整章（0-token 规则命中，不花模型）", "read",
+        params=("chapter_id",), optional=("text",), handler="chapter_prose_scan_tone", group="chapter",
+    ),
+    "chapter.quality_score": ToolDecl(
+        "chapter.quality_score", "评审整章：五维自评 + 0-token 硬信号合分（只读）", "read",
+        params=("chapter_id",), optional=("text",), handler="chapter_prose_quality", group="chapter",
+    ),
+    "chapter.inspect": ToolDecl(
+        "chapter.inspect", "章后巡检：体检 ∥ 质检 → 评分 → 0-token 裁决 → 自动记账（后台任务）", "read",
+        params=("chapter_id",), handler="chapter_inspect", group="chapter",
+    ),
+    "chapter.context": ToolDecl(
+        "chapter.context", "看本章的写作上下文（前情 + 记忆五段 + 场清单），只读", "read",
+        params=("chapter_id",), handler="chapter_prose_context", group="chapter",
+    ),
+    "chapter.merge_scenes": ToolDecl(
+        "chapter.merge_scenes", "把已推演的场正文并入章正文（章正文是唯一真源；幂等，已并入的跳过）", "destructive",
+        params=("chapter_id",), optional=("scene_id",), needs_confirm=True,
+        handler="merge_scene_into_chapter", group="chapter", writes="chapters:prose",
+    ),
+})
+
 def get_tool(name: str) -> ToolDecl | None:
     return TOOLS.get(name)
 

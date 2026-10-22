@@ -541,6 +541,28 @@ try {
       && !wr2.err && String(wr2.path).indexOf("/write/chapter-") === 0
       && (wr2.btns || []).some((b) => String(b).indexOf("场景精修") >= 0),
     JSON.stringify({ nav: navW, write: wr2 }));
+
+  // ⑲ 章级工作台 = 唯一写作主线（v1.65 · 两个页面合并）
+  //    作者原话：「有必要这样分两个页面吗，这样很乱」→ 合并。永久回归：
+  //    ①右栏是「本章副驾」（责编面板在场，不再只有一串进度数字）②章级精修工具在顶栏
+  //    ③场块仍可见（场是可选细分，可并入章正文）。
+  if (!proseChapter) {
+    skip("⑲ 章级工作台（副驾 + 章级工具 + 场块）", "没有「章正文非空」的章作夹具");
+  } else {
+    await goto(WEB + "/write/" + proseChapter.id + "?book=" + proseBookId, 8000);
+    const wb = JSON.parse((await ev("JSON.stringify({"
+      + "side: (document.querySelector('.s2-side-head .ec-title') || {}).textContent || '',"
+      + "tabs: Array.from(document.querySelectorAll('.s2-side .tab')).map((b) => b.textContent.trim()),"
+      + "copilot: !!document.querySelector('.ec-wrap'),"
+      + "toolbar: Array.from(document.querySelectorAll('.s2-actions .ws-btn, .s2-actions summary')).map((b) => b.textContent.trim()),"
+      + "scenes: document.querySelectorAll('.s2-info .s2-ann-mini').length })")) || "{}");
+    step("⑲ 章级工作台：右栏本章副驾（责编）+ 章级精修工具 + 场块",
+      !wb.err && String(wb.side).indexOf("本章副驾") >= 0 && wb.copilot === true
+        && (wb.tabs || []).some((t) => String(t).indexOf("责编") >= 0)
+        && (wb.toolbar || []).some((t) => String(t).indexOf("体检整章") >= 0)
+        && (wb.toolbar || []).some((t) => String(t).indexOf("精修工具") >= 0),
+      JSON.stringify(wb));
+  }
 } catch (e) {
   step("UI 剧本异常", false, String(e));
 } finally {

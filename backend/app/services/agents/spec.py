@@ -42,15 +42,20 @@ EDITOR = AgentSpec(
     reads=("scene", "characters", "annotations", "prose_notes", "ledgers"),
     writes=("final_prose", "annotations"),
     tools=(
+        # 场级（保留：拆了场的章仍可按场精修）
         "prose.draft", "prose.review", "prose.polish", "prose.verify",
         "prose.scan_tone", "prose.spot_fix", "prose.quality_loop",
         "prose.save", "annotation.list", "annotation.resolve",
         "prose.quality_score", "prose.review_meeting", "character.voices",
+        # v1.65：章级（合并进章级工作台后，责编直接以「整章」为单位干活）
+        "chapter.review", "chapter.verify", "chapter.polish", "chapter.scan_tone",
+        "chapter.quality_score", "chapter.inspect", "chapter.context",
+        "chapter.merge_scenes",
         "task.rehearsal", "task.list", "task.transition", "memory.search", "book.brief",
     ),
     emits=("action.plan", "prose.candidate", "prose.saved"),
     can_initiate_tasks=True,
-    needs_confirm=("prose.save", "annotation.resolve"),
+    needs_confirm=("prose.save", "annotation.resolve", "chapter.merge_scenes"),
 )
 
 # 角色 agent：只经黑板表达，**不允许发起任务**（硬边界）

@@ -936,6 +936,23 @@ class Repo:
             return rows[:limit]
         return await self._query_or_mem(_q, [])
 
+    async def list_chapter_notes(self, chapter_id: str, limit: int = 100) -> list[dict]:
+        """章级正文审计记录（v1.65），ts 倒序。场级审校仍走 list_prose_notes。"""
+        async def _q(session: AsyncSession):
+            stmt = (
+                select(ProseNote).where(ProseNote.chapter_id == chapter_id)
+                .order_by(ProseNote.ts.desc(), ProseNote.created_at.desc()).limit(limit)
+            )
+            rows = (await session.execute(stmt)).scalars().all()
+            return [self._prose_note_dict(r) for r in rows]
+
+        if not self.use_db:
+            rows = [v for v in self._mem.values()
+                    if isinstance(v, dict) and v.get("chapter_id") == chapter_id]
+            rows.sort(key=lambda x: x.get("ts") or 0, reverse=True)
+            return rows[:limit]
+        return await self._query_or_mem(_q, [])
+
     async def save_prose_note(self, data: dict) -> None:
         await self._upsert(ProseNote, data)
 
@@ -1101,7 +1118,9 @@ class Repo:
     @staticmethod
     def _prose_note_dict(r: ProseNote) -> dict:
         return {
-            "id": r.id, "scene_id": r.scene_id, "kind": r.kind,
+            "id": r.id, "scene_id": r.scene_id,
+            # v1.65：章级审校记录（合并后章级也要能留痕/回查）
+            "chapter_id": getattr(r, "chapter_id", None), "kind": r.kind,
             "status": r.status, "suggestion": r.suggestion,
             "before": r.before, "after": r.after, "created_by": r.created_by,
             "reviewed_at": str(r.reviewed_at) if r.reviewed_at else None,

@@ -123,6 +123,86 @@ async def agent_run_stream(scene_id: str, body: ToolRunIn, svc: SimulationServic
 async def book_rehearsal_plan(book_id: str, svc: SimulationService = Depends(get_service)):
     """C 批：彩排建议（主笔视角的"重头戏判定"，0-token）+ 每场已排演回合数。"""
     return await svc.book_rehearsal_plan(book_id)
+# ---------------------------------------------------------------- 章级副驾（v1.65 · 两个页面合并）
+# 合并后「章」是主线单位：责编在章级干活（读整章 + 前情 + 记忆五段 + 场清单），
+# 场级路由保留给拆了场的精修路径（老链接不失效，但页面上不再有第二个写作入口）。
+@router.post("/chapters/{chapter_id}/agent/chat")
+async def chapter_agent_chat(chapter_id: str, body: EditorChatIn,
+                             svc: SimulationService = Depends(get_service)):
+    """责编对话（章级）：感知整章 → 计划 → 同一套工具链执行 → 汇报。"""
+    return await editor_chat(svc, "", body.message, body.text, body.who or "author",
+                             chapter_id=chapter_id)
+
+
+@router.post("/chapters/{chapter_id}/agent/chat/stream")
+async def chapter_agent_chat_stream(chapter_id: str, body: EditorChatIn,
+                                    svc: SimulationService = Depends(get_service)):
+    """责编对话（章级 · SSE）：事件词汇与场级完全一致，前端复用同一张过程卡。"""
+    import json as _json
+
+    async def gen():
+        try:
+            async for ev in editor_chat_stream(svc, "", body.message, body.text,
+                                               body.who or "author", chapter_id=chapter_id):
+                data = _json.dumps(ev["data"], ensure_ascii=False)
+                yield "event: " + ev["event"] + chr(10) + "data: " + data + chr(10) + chr(10)
+        except Exception as e:  # noqa: BLE001  流中异常也要让前端看到，不能静默断流
+            err = _json.dumps({"error": str(e)}, ensure_ascii=False)
+            yield "event: error" + chr(10) + "data: " + err + chr(10) + chr(10)
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@router.post("/chapters/{chapter_id}/agent/run/stream")
+async def chapter_agent_run_stream(chapter_id: str, body: ToolRunIn,
+                                   svc: SimulationService = Depends(get_service)):
+    """章级按钮直调工具（SSE）：与对话路径同一事件词汇（tool_start/tick/tool_done/done）。"""
+    import json as _json
+
+    from app.services.agents.editor import tool_run_stream
+
+    async def gen():
+        try:
+            async for ev in tool_run_stream(svc, "", body.tool, body.args,
+                                            who="author", confirm=body.confirm,
+                                            chapter_id=chapter_id):
+                data = _json.dumps(ev["data"], ensure_ascii=False)
+                yield "event: " + ev["event"] + chr(10) + "data: " + data + chr(10) + chr(10)
+        except Exception as e:  # noqa: BLE001
+            err = _json.dumps({"error": str(e)}, ensure_ascii=False)
+            yield "event: error" + chr(10) + "data: " + err + chr(10) + chr(10)
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@router.get("/chapters/{chapter_id}/agent/notes")
+async def chapter_agent_notes(chapter_id: str, limit: int = 100,
+                              svc: SimulationService = Depends(get_service)):
+    """章级审校审计记录（体检/质检/润色/AI 味/工具调用留痕），ts 倒序。"""
+    rows = await svc.repo.list_chapter_notes(chapter_id, limit=limit)
+    return {"chapter_id": chapter_id, "notes": rows, "count": len(rows)}
+
+
+class MergeScenesIn(BaseModel):
+    scene_id: str = ""
+    confirm: bool = False
+
+
+@router.post("/chapters/{chapter_id}/merge-scenes")
+async def chapter_merge_scenes(chapter_id: str, body: MergeScenesIn,
+                               svc: SimulationService = Depends(get_service)):
+    """把已推演的场正文并入章正文（破坏性：需显式 confirm）。
+
+    语义（v1.65 定的真源律）：chapters.prose_md 是唯一真源；
+    scenes.final_prose 只是「可选的来源快照」，并入后不再独立承担正式保存。
+    """
+    if not body.confirm:
+        raise HTTPException(status_code=409,
+                            detail="并入会改写章正文（需 confirm=true）；覆盖前的旧正文已自动存版本")
+    return await svc.merge_scene_into_chapter(chapter_id, body.scene_id)
+
 
 
 @router.get("/books/{book_id}/material-usage")
