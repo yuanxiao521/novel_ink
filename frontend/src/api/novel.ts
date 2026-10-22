@@ -502,6 +502,8 @@ export interface CharacterCardMeta {
   scene_id?: string | null;
   name: string;
   spec_json: string;
+  /** v1.53 角色分层：主角/关键配角/反派进涌现回合，次要/背景只作在场背景 */
+  role_tier?: string;
 }
 
 export interface SceneDetail {
@@ -524,6 +526,35 @@ export async function fetchSceneDetail(sceneId: string): Promise<SceneDetail> {
 }
 
 /** 书级角色库（GET /books/{id}/characters）。 */
+export interface TierAssignment {
+  id: string;
+  name: string;
+  role_tier: string;
+  role_tier_label: string;
+  current: string;
+  why: string;
+}
+
+export interface TierInferResult {
+  book_id: string;
+  assignments: TierAssignment[];
+  counts: Record<string, number>;
+  applied?: number;
+  total?: number;
+  skipped?: string;
+  error?: string;
+}
+
+/** 让主笔给存量角色卡分档（apply=false 只出预览；apply=true 才落库）。 */
+export async function inferCharacterTiers(bookId: string, apply = false): Promise<TierInferResult> {
+  const res = await fetch(
+    `${API_BASE}/api/v1/books/${bookId}/characters/tiers/infer?apply=${apply ? "true" : "false"}`,
+    { method: "POST" },
+  );
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return (await res.json()) as TierInferResult;
+}
+
 export async function listBookCharacters(bookId: string): Promise<CharacterCardMeta[]> {
   return getJson<CharacterCardMeta[]>(`${API_BASE}/api/v1/books/${bookId}/characters`);
 }
@@ -538,7 +569,7 @@ export async function createCharacter(bookId: string, data: { name: string; spec
   return createBookCharacter(bookId, data);
 }
 
-export async function updateCharacter(id: string, data: { name?: string; spec_json?: string }): Promise<{ id: string }> {
+export async function updateCharacter(id: string, data: { name?: string; spec_json?: string; role_tier?: string }): Promise<{ id: string }> {
   return send('PUT', `/api/v1/characters/${id}`, data);
 }
 

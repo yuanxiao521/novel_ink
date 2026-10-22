@@ -232,6 +232,7 @@ CHARACTERS_SCHEMA = [{
     "core_beliefs": ["str 核心信条 1-2 条"],
     "bottom_lines": ["str 性格底线 1-2 条（护栏依据）"],
     "goals": ["str 本阶段目标（可被导演调权）"],
+    "role_tier": "str 档位：protagonist 主角 / major 关键配角 / antagonist 反派 / minor 次要 / extra 背景",
 }]
 
 _CHARACTERS_PROMPT = """你是小说主笔。为这本书设计 3-5 个**主要角色卡**（供角色引擎演绎）。
@@ -239,7 +240,9 @@ _CHARACTERS_PROMPT = """你是小说主笔。为这本书设计 3-5 个**主要�
 1. 每个角色必须有**可区分的腔调**（voice 要具体：句长、口头禅、用词层级；禁止"性格开朗"这类套话）；
 2. bottom_lines 是硬底线（护栏会据此拦 OOC 行为）；
 3. goals 是本阶段的可调权目标（会随剧情调整）；
-4. 角色之间要有张力（立场/利益/误解），不要一团和气。
+4. 角色之间要有张力（立场/利益/误解），不要一团和气；
+5. 必须给 role_tier：主角 1~2 个（protagonist）、反派 0~2 个（antagonist）、
+   关键配角 2~4 个（major）、其余按 minor/extra —— 只有前三档会进涌现回合，别把龙套写成主角。
 已有信息：{context}
 方向：{direction}
 请严格按给定 JSON schema 输出数组。"""

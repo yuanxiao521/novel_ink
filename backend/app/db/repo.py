@@ -1056,12 +1056,15 @@ class Repo:
     @staticmethod
     def _char_dict(r: Character) -> dict:
         return {"id": r.id, "book_id": r.book_id, "scene_id": r.scene_id,
-                "name": r.name, "spec_json": r.spec_json}
+                "name": r.name, "spec_json": r.spec_json,
+                # v1.53：角色分层（默认 minor，缺列/旧数据也兜住）
+                "role_tier": getattr(r, "role_tier", "") or "minor"}
 
     @staticmethod
     def _char_mem(v: dict) -> dict:
         return {"id": v.get("id"), "book_id": v.get("book_id"), "scene_id": v.get("scene_id"),
-                "name": v.get("name"), "spec_json": v.get("spec_json", "{}")}
+                "name": v.get("name"), "spec_json": v.get("spec_json", "{}"),
+                "role_tier": v.get("role_tier") or "minor"}
 
     # ------------------------------------------------------------------
     # 树（书 → 章 → 场景 → 角色 一次拉全，防客户端 N+1）

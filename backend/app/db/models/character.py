@@ -30,6 +30,9 @@ class Character(TimestampMixin, Base):
     scene_id: Mapped[Optional[str]] = mapped_column(ForeignKey("scenes.id"), index=True, nullable=True)  # 特设角色才有值
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     spec_json: Mapped[str] = mapped_column(Text, default="{}")  # CharacterCard 全字段
+    # v1.53 角色分层：protagonist 主角 / major 关键配角 / antagonist 反派 / minor 次要 / extra 背景。
+    # 涌现阶段只有前三档进回合；后两档只在写手素材里作"在场背景"（见 engine/cast_roles.py）。
+    role_tier: Mapped[str] = mapped_column(String(16), default="minor")
     embedding: Mapped[Optional[list[float]]] = mapped_column(Vector(1536), nullable=True)  # RAG 预留
 
     book: Mapped["Book"] = relationship(back_populates="characters")

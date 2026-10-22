@@ -470,6 +470,37 @@ curl -s -X PUT ".../chapters/$CH/production" -d '{"mode":"draft","production":{"
 hybrid 只看关键场（未指定则如实说"等同直写"）· 无场 + emerge → `manual`（先去拆场）· mode 非法按直写兜底。
 **写手素材**："已推演的场"块来自场摘要/定稿正文节选/回合数，空则整块不出现（不给写手塞空标题）。
 
+### 3.19 角色分层（v1.53 · 5 档 + 默认选角 + 补档位）
+
+```bash
+B=book-0938c02c
+
+# ① 补档位（先预览，apply=false 不落库）
+curl -s -X POST "http://127.0.0.1:8001/api/v1/books/$B/characters/tiers/infer?apply=false"
+# 期望 {counts:{protagonist,major,antagonist,minor,extra}, assignments:[{name,role_tier_label,why}], applied:0}
+
+# ② 确认后落库
+curl -s -X POST "http://127.0.0.1:8001/api/v1/books/$B/characters/tiers/infer?apply=true"
+# 期望 {applied:N, total:M}
+
+# ③ 角色库回读应带 role_tier
+curl -s "http://127.0.0.1:8001/api/v1/books/$B/characters"
+
+# ④ 新开一个 sim：默认 cast 只含主角/反派/关键配角（上限 5），并如实说明谁只作背景
+cat > /tmp/sim.json <<JSON
+{"book_id": "book-0938c02c", "scene_id": "scene-85bc6bfe", "resume": false}
+JSON
+curl -s -X POST "http://127.0.0.1:8001/api/v1/sims" \
+  -H "Content-Type: application/json" --data-binary @/tmp/sim.json
+# 期望返回含 cast:{cast_names:[4 位], background_names:[1 位], notes:["背景角色（1 位，不进回合）：…"]}
+```
+
+**分层规则（单测钉死）**：`protagonist` 主角 / `major` 关键配角 / `antagonist` 反派 → **进回合**；
+`minor` 次要 / `extra` 背景 → **不进回合**，只作为写手素材「在场背景角色」。
+选角优先级：档位 → 本章/本场文本相关度 → 名字；超出上限（5）的可演角色**降级为背景并如实列名**。
+**存量兜底**：迁移默认 `minor`（不猜谁是主角），没分档时按相关度取前 5 并提示"建议补档位"，
+**绝不给空 cast**（导演台会空转）。前端：人物页名后带档位徽标、详情页「档位」下拉可改、「⚖ 补档位」预览→应用。
+
 ## 4. 存量验收（S1–S4 / A2 / A3，仍在跑）
 
 ```powershell

@@ -18,7 +18,20 @@ import {
   updateBelief,
   deleteBelief,
 } from '../api/novel';
-import type { BeliefChannel, BeliefMeta, CharacterCardMeta, CharacterSpec } from '../api/novel';
+import { inferCharacterTiers } from '../api/novel';
+import type {
+  BeliefChannel, BeliefMeta, CharacterCardMeta, CharacterSpec, TierInferResult,
+} from '../api/novel';
+
+/** v1.53 角色分层：只有前三档进涌现回合（见 backend engine/cast_roles.py） */
+const TIER_LABEL: Record<string, string> = {
+  protagonist: "主角",
+  antagonist: "反派",
+  major: "关键配角",
+  minor: "次要",
+  extra: "背景",
+};
+const TIER_ORDER = ["protagonist", "antagonist", "major", "minor", "extra"];
 import { useWorkspace } from '../context/WorkspaceContext';
 
 type Tab = 'basic' | 'belief' | 'memory' | 'relation';
@@ -112,6 +125,9 @@ export function CharactersPage() {
   const [draft, setDraft] = useState<CharacterSpec | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  /** v1.53：补档位（一次 LLM 出预览 → 作者确认才落库） */
+  const [tierPreview, setTierPreview] = useState<TierInferResult | null>(null);
+  const [tierBusy, setTierBusy] = useState(false);
 
   /** 让主笔生成角色卡（空 cast 一键补齐）→ 重新拉角色库。 */
   const genChars = async () => {
@@ -127,6 +143,33 @@ export function CharactersPage() {
       setBusy(false);
     }
   };
+  /** v1.53：让主笔给存量角色卡分档（apply=false 出预览，true 落库）。
+   *  为什么需要：迁移把 role_tier 默认成 minor（不猜谁是主角），存量书要补一次，
+   *  否则导演台默认 cast 只能"取最相关前 5 位"（退化成旧行为）。 */
+  const inferTiers = async (apply: boolean) => {
+    if (!bookId || tierBusy) return;
+    setTierBusy(true);
+    try {
+      const r = await inferCharacterTiers(bookId, apply);
+      if (r.skipped) { flash("err", r.skipped); return; }
+      if (r.error) { flash("err", r.error); return; }
+      if (apply) {
+        setTierPreview(null);
+        setChars(await listBookCharacters(bookId));
+        flash("ok", `已按分档更新 ${r.applied ?? 0} 位角色（只有主角/关键配角/反派会进回合）`);
+        return;
+      }
+      setTierPreview(r);
+      const c = r.counts || {};
+      flash("ok", "分档预览：主角 " + (c.protagonist ?? 0) + " · 反派 " + (c.antagonist ?? 0)
+        + " · 关键配角 " + (c.major ?? 0) + " · 次要/背景 " + ((c.minor ?? 0) + (c.extra ?? 0)));
+    } catch (e) {
+      flash("err", "补档位失败：" + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setTierBusy(false);
+    }
+  };
+
   const { showConfirm } = useDialog();
   // ---- 信念账本（v1.5 接真）----
   const [beliefs, setBeliefs] = useState<BeliefMeta[]>([]);
@@ -342,7 +385,34 @@ export function CharactersPage() {
                 title="让主笔按书名/方向生成 3-5 张角色卡（腔调可辨，生成后可再编辑）">
                 {busy ? '生成中…' : '✨ 主笔生成'}
               </button>
+              <button className="gen-char-btn" onClick={() => void inferTiers(false)}
+                disabled={!bookId || tierBusy || chars.length === 0}
+                title="v1.53：让主笔给现有角色分档（主角/关键配角/反派/次要/背景）——只有前三档会进涌现回合；先出预览，确认才写入">
+                {tierBusy ? '分档中…' : '⚖ 补档位'}
+              </button>
             </div>
+            {tierPreview && (
+              <div className="char-tier-preview">
+                <div className="char-tier-preview-head">
+                  <span>分档预览（{tierPreview.assignments.length} 位）——只有主角/关键配角/反派会进涌现回合</span>
+                  <span className="char-tier-preview-actions">
+                    <button onClick={() => void inferTiers(true)} disabled={tierBusy}>
+                      {tierBusy ? "写入中…" : "✓ 应用"}
+                    </button>
+                    <button onClick={() => setTierPreview(null)}>取消</button>
+                  </span>
+                </div>
+                <div className="char-tier-preview-list">
+                  {tierPreview.assignments.map((a) => (
+                    <div className="char-tier-preview-row" key={a.id}>
+                      <span className="nm">{a.name}</span>
+                      <span className={`char-tier-badge ${a.role_tier}`}>{a.role_tier_label}</span>
+                      {a.why && <span className="why">{a.why}</span>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             {chars.length === 0 ? (
               <EmptyState
                 compact
@@ -372,7 +442,13 @@ export function CharactersPage() {
                         <div className="char-list-avatar placeholder">{c.name.slice(0, 1)}</div>
                       )}
                       <div className="char-list-info">
-                        <div className="char-list-name">{c.name}</div>
+                        <div className="char-list-name">
+                          {c.name}
+                          <span className={`char-tier-badge ${c.role_tier || "minor"}`}
+                                title="角色分层：只有主角/关键配角/反派会进涌现回合">
+                            {TIER_LABEL[c.role_tier || "minor"]}
+                          </span>
+                        </div>
                         <div className="char-list-role">{spec.summary || '未填人设'}</div>
                       </div>
                       <span className="char-list-count">{stats(c)}</span>
@@ -406,6 +482,29 @@ export function CharactersPage() {
                     <div className="char-meta-row">
                       <span className="char-meta-item">
                         <strong>身份：</strong>{draft.summary || '未填写'}
+                      </span>
+                      {/* v1.53：档位可在详情里直接改（决定谁进涌现回合） */}
+                      <span className="char-meta-item">
+                        <strong>档位：</strong>
+                        <select
+                          className="char-tier-select"
+                          value={cur.role_tier || "minor"}
+                          disabled={busy}
+                          onChange={async (ev) => {
+                            const tier = ev.target.value;
+                            try {
+                              await updateCharacter(cur.id, { role_tier: tier });
+                              setChars(await listBookCharacters(bookId));
+                              flash("ok", `已改为「${TIER_LABEL[tier] || tier}」`);
+                            } catch (err) {
+                              flash("err", "改档位失败：" + (err instanceof Error ? err.message : String(err)));
+                            }
+                          }}
+                        >
+                          {TIER_ORDER.map((t) => (
+                            <option key={t} value={t}>{TIER_LABEL[t]}</option>
+                          ))}
+                        </select>
                       </span>
                     </div>
                   </div>

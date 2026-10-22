@@ -141,11 +141,69 @@ class SimulationService:
                                   for g in c["goals"]],
                 "system_prompt": "", "think_schema": "", "decide_schema": "", "static_world": "",
             }
+            from app.services.engine.cast_roles import clean_tier
+
             data = {"id": cid, "book_id": book_id, "name": c["name"], "scene_id": None,
-                    "spec_json": json.dumps(spec, ensure_ascii=False)}
+                    "spec_json": json.dumps(spec, ensure_ascii=False),
+                    # v1.53：主笔生成时就给档位（只有主角/关键/反派会进涌现回合）
+                    "role_tier": clean_tier(c.get("role_tier"))}
             await self.repo.save_character(data)
             created.append(data)
         return {"book_id": book_id, "created": len(created), "characters": created}
+
+    async def infer_book_role_tiers(self, book_id: str, *, apply: bool = False) -> dict:
+        """让主笔给存量角色卡**分档**（一次 LLM）；apply=False 只出预览，作者确认再落库。
+
+        v1.53：迁移把 role_tier 默认成 minor（不猜谁是主角）→ 存量书默认 cast 会退化成
+        "取最相关的前 5 位"。这个一次性动作把档位补齐，之后导演台默认选角就有依据。
+        """
+        from app.services.engine.cast_roles import TIER_LABEL, infer_role_tiers, tier_of
+
+        book = await self.repo.get_book(book_id)
+        if book is None:
+            raise BookNotFoundError(f"未找到书籍: {book_id}")
+        chars = await self.repo.list_characters_by_book(book_id)
+        if not chars:
+            return {"book_id": book_id, "assignments": [], "counts": {},
+                    "skipped": "这本书还没有角色卡（先让主笔生成角色）"}
+        if not llm_client.available:
+            return {"book_id": book_id, "assignments": [], "counts": {},
+                    "skipped": "LLM 未接入（未补档位）"}
+
+        rows = []
+        for c in chars:
+            spec = _parse_json_obj(c.get("spec_json"))
+            rows.append({"id": str(c.get("id") or ""), "name": c.get("name") or "",
+                         "summary": str(spec.get("summary") or "")})
+        context = "书名：%s；类型：%s；方向：%s" % (
+            book.get("title") or "", book.get("genre") or "",
+            str(book.get("synopsis") or "")[:120] or "（未填）")
+        got = await infer_role_tiers(llm_client, rows, context=context)
+        if not got:
+            return {"book_id": book_id, "assignments": [], "counts": {},
+                    "error": "模型没返回可用分档（已重试，未改动任何角色）"}
+
+        by_id = {str(c.get("id")): c for c in chars}
+        preview: list[dict] = []
+        counts: dict[str, int] = {}
+        for a in got:
+            row = by_id.get(a["id"]) or {}
+            preview.append({"id": a["id"], "name": row.get("name") or "",
+                            "role_tier": a["role_tier"],
+                            "role_tier_label": TIER_LABEL[a["role_tier"]],
+                            "current": tier_of(row), "why": a.get("why") or ""})
+            counts[a["role_tier"]] = counts.get(a["role_tier"], 0) + 1
+
+        applied = 0
+        if apply:
+            for p in preview:
+                row = by_id.get(p["id"])
+                if not row or tier_of(row) == p["role_tier"]:
+                    continue
+                await self.repo.save_character({**row, "role_tier": p["role_tier"]})
+                applied += 1
+        return {"book_id": book_id, "assignments": preview, "counts": counts,
+                "applied": applied, "total": len(chars)}
 
     async def get_book_characters(self, book_id: str) -> list[dict]:
         """书级角色库（人物页数据源）。"""
@@ -722,6 +780,15 @@ class SimulationService:
     async def update_character(self, char_id: str, data: dict) -> dict:
         if data.get("spec_json"):
             models.CharacterCard.model_validate_json(data["spec_json"])
+        # v1.53：档位归一（作者可能在 UI 选中文档位），非法值按 minor 兜底，不静默存脏值
+        if "role_tier" in data:
+            from app.services.engine.cast_roles import clean_tier
+
+            tier = str(data.get("role_tier") or "").strip()
+            if tier:
+                data = {**data, "role_tier": clean_tier(tier)}
+            else:
+                data = {k: v for k, v in data.items() if k != "role_tier"}
         await self.repo.save_character({**data, "id": char_id})
         return {"id": char_id}
 
@@ -1425,6 +1492,15 @@ class SimulationService:
         except Exception as e:  # noqa: BLE001  检索失败不能挡住写作
             logger.warning("[recall] 装配失败 chapter=%s：%s", chapter_id, e)
 
+        # v1.53 · 角色分层：次要/背景角色不进回合，但写手要知道"他们在场"（一笔带过，不抢戏）。
+        background_text = ""
+        try:
+            from app.services.engine.cast_roles import background_block
+
+            background_text = background_block(characters)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[cast] 背景角色装配失败 chapter=%s：%s", chapter_id, e)
+
         # v1.52 · 生产方式：emerge/hybrid 章要把「已推演的场」成果喂给写手（据成果渲染，不重演）。
         rehearsal_text = ""
         try:
@@ -1439,6 +1515,8 @@ class SimulationService:
         return {"chapter": chapter, "book_id": book_id, "characters": characters,
                 # v1.52：已推演的场（emerge/hybrid 拿来渲染的依据）
                 "rehearsed_text": rehearsal_text,
+                # v1.53：在场背景角色（不进回合，写手可一笔带过）
+                "background_text": background_text,
                 "memory": memory, "constraints": constraints, "world_states": world_states,
                 "existing": existing, "scenes_text": scenes_text, "word_target": target,
                 # v1.47：把场清单原样带出，供分段编排按"场功能"推进
@@ -1550,6 +1628,7 @@ class SimulationService:
                 memory=ctx["memory"], scenes=ctx["scenes_text"], written=written,
                 recall=ctx.get("recall_text") or "",
                 rehearsed=ctx.get("rehearsed_text") or "",
+                background=ctx.get("background_text") or "",
                 seg_no=i, seg_total=len(goals), seg_goal=goal, seg_target=seg_target)
             seg: list[str] = []
             if i > 1:
@@ -2474,15 +2553,31 @@ class SimulationService:
         plan_cfg = _scene_plan_cfg(scene.get("plan_cfg_json") or "", static_cfg)
 
         char_rows = await self.repo.list_characters_for_scene(scene_id)
-        characters: dict[str, models.CharacterCard] = {}
+        # ---- v1.53 默认选角分层：涌现只演"能改变局面的人"（主角/关键配角/反派，上限 5） ----
+        # 背景/次要角色**不进回合**（他们只作为"在场背景"进写手素材）：
+        # 这样既不会群像开会、摊薄张力，也不会把成本花在龙套上。作者仍可手工改 cast。
+        from app.services.engine.cast_roles import default_cast
+
+        related_text = " ".join(str(x) for x in (
+            scene.get("title"), scene.get("goal"), scene.get("content_desc"),
+            scene.get("stage_desc")) if str(x or "").strip())
+        cards_by_id: dict[str, models.CharacterCard] = {}
+        roster: list[dict] = []
         for row in char_rows:
             try:
                 card = models.CharacterCard.model_validate_json(row["spec_json"])
             except Exception:  # noqa: BLE001
                 continue
-            if not card.id or card.id in characters:  # 防御：spec 未回填 id 的坏卡不装配
+            if not card.id or card.id in cards_by_id:  # 防御：spec 未回填 id 的坏卡不装配
                 continue
-            characters[card.id] = card
+            cards_by_id[card.id] = card
+            roster.append({"id": card.id, "name": card.name,
+                           "role_tier": row.get("role_tier") or "minor",
+                           "summary": _parse_json_obj(row.get("spec_json")).get("summary") or ""})
+        cast_info = default_cast(roster, related_text=related_text)
+        keep = set(cast_info["cast"])
+        characters: dict[str, models.CharacterCard] = {
+            cid: card for cid, card in cards_by_id.items() if not keep or cid in keep}
         # 空黑板：书级/特设均无角色卡 → 保持空（不再注入静态剧情角色，见导演台空态引导）
 
         sim = models.SimulationState(
@@ -2508,7 +2603,9 @@ class SimulationService:
 
         sid = f"sim-{uuid.uuid4().hex[:8]}"
         await self.repo.save(sid, sim)
-        return {"sim_id": sid, "resumed": False}
+        return {"sim_id": sid, "resumed": False,
+                # v1.53：默认选角的分层结果（谁进回合 / 谁只作背景 / 为什么）
+                "cast": cast_info}
 
     async def _load_sim(self, sim_id: str) -> models.SimulationState:
         """统一取 sim，缺失抛 SimNotFoundError（全局 handler 转 404）。"""

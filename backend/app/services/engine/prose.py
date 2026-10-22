@@ -644,6 +644,9 @@ _CHAPTER_PROMPT = """你是小说正文【写手】。这次不是写一段，�
 【角色卡】
 {characters}
 
+【在场背景角色（可以写他们在场/一个动作，但不要抢戏、不要给重要台词）】
+{background}
+
 【世界状态（与本章相关）】
 {world_states}
 
@@ -718,7 +721,7 @@ def chapter_segment_goals(word_target: int | None, seg_chars: int = SEG_CHARS,
 def chapter_prompt(*, chapter: dict, characters: list[dict] | None = None,
                    world_states: list[dict] | None = None, constraints: str = "",
                    memory: str = "", scenes: str = "", written: str = "",
-                   recall: str = "", rehearsed: str = "",
+                   recall: str = "", rehearsed: str = "", background: str = "",
                    seg_no: int = 1, seg_total: int = 1, seg_goal: str = "",
                    seg_target: int = SEG_CHARS) -> str:
     """装配「第 N 段」的写手 prompt。
@@ -738,6 +741,7 @@ def chapter_prompt(*, chapter: dict, characters: list[dict] | None = None,
         seg_goal=seg_goal or "（按本章任务自然推进）",
         seg_target=seg_target,
         characters=_characters_block(characters or []),
+        background=background or "（无背景角色）",
         world_states=_world_states_block(world_states or []),
         constraints=constraints or "（无）",
         memory=memory or "（无）",

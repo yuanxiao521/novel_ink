@@ -244,6 +244,8 @@ class SceneBatchIn(models.BaseModel):
 class CharacterBody(models.BaseModel):
     name: str = ""
     spec_json: str = "{}"
+    # v1.53 角色分层（主角/关键配角/反派/次要/背景）；空 = 不改（exclude_unset 语义）
+    role_tier: str = ""
 
 
 @router.post("/books", status_code=status.HTTP_201_CREATED)
@@ -519,6 +521,16 @@ async def generate_book_characters(book_id: str, body: CharacterGenIn,
 async def list_book_characters(book_id: str, svc: SimulationService = Depends(get_service)):
     """书级角色库（全书共享，一次编辑到处生效）。"""
     return await svc.get_book_characters(book_id)
+
+
+@router.post("/books/{book_id}/characters/tiers/infer")
+async def infer_character_tiers(book_id: str, apply: bool = False,
+                                svc: SimulationService = Depends(get_service)):
+    """让主笔给存量角色卡分档（主角/关键配角/反派/次要/背景）。
+
+    apply=false（默认）只出预览；apply=true 才落库。v1.53：只有前三档会进涌现回合。
+    """
+    return await svc.infer_book_role_tiers(book_id, apply=apply)
 
 
 @router.post("/books/{book_id}/characters", status_code=status.HTTP_201_CREATED)
