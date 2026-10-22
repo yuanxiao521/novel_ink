@@ -32,7 +32,9 @@ CHIEF = AgentSpec(
     tools=("outline.plan", "outline.commit", "characters.generate", "memory.write",
             "memory.search", "book.brief", "chapter.production",
             # v1.67：主笔能看到正文（只读审计），但**不能改字** —— 边界由 side_effect=read 保证
-            "prose.audit"),
+            "prose.audit",
+            # v1.69：主笔可以「按建议产候选」——候选不落库，采纳仍由作者点（写权限仍归 editor/作者）
+            "chapter.rewrite"),
     emits=("plan.preview", "outline.committed"),
     can_initiate_tasks=True,
     needs_confirm=("outline.commit",),
@@ -50,6 +52,7 @@ EDITOR = AgentSpec(
         "prose.save", "annotation.list", "annotation.resolve",
         "prose.quality_score", "prose.review_meeting", "character.voices",
         # v1.65：章级（合并进章级工作台后，责编直接以「整章」为单位干活）
+        "chapter.rewrite",   # v1.69：按建议产候选（采纳仍由作者点）
         "chapter.review", "chapter.verify", "chapter.polish", "chapter.scan_tone",
         "chapter.quality_score", "chapter.inspect", "chapter.context",
         "chapter.merge_scenes",

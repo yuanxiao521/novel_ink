@@ -1107,3 +1107,47 @@
   border-color: var(--accent-gold);
 }
 
+
+/* v1.69（方案②）：按建议改稿的候选卡 + 建议/记录上的小按钮 */
+.wp-fix-btn {
+  flex: none;
+  font-family: var(--font-ui);
+  font-size: 10.5px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+  color: var(--accent-gold);
+  background: rgba(232, 184, 96, 0.08);
+  border: 1px solid rgba(232, 184, 96, 0.45);
+}
+
+.wp-fix-btn:hover:not(:disabled) { background: rgba(232, 184, 96, 0.2); }
+.wp-fix-btn:disabled { opacity: 0.5; cursor: default; }
+
+.wp-note-actions { display: flex; gap: 4px; margin-left: auto; flex-wrap: wrap; }
+
+.wp-cand {
+  border: 1px solid var(--accent-gold);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  background: rgba(232, 184, 96, 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.wp-cand-head { display: flex; flex-direction: column; gap: 2px; font-size: 11.5px; color: var(--accent-gold); }
+.wp-cand-body {
+  font-family: var(--font-reader);
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-primary);
+  max-height: 180px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+}
+
+.wp-cand-actions { display: flex; gap: 6px; }
+

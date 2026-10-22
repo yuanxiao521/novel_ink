@@ -1987,3 +1987,48 @@ export interface ChapterAudit {
 export async function auditChapter(chapterId: string): Promise<ChapterAudit> {
   return send("POST", `/api/v1/chapters/${chapterId}/audit`, {});
 }
+
+
+/* ---------- 方案②：按建议改稿（候选）→ 采纳（写库+留版本）（v1.69） ---------- */
+
+export interface ChapterRewriteDiff {
+  scope: string;
+  para_index?: number;
+  before_chars: number;
+  after_chars: number;
+  changed_ratio: number;
+  wide_change?: boolean;
+  total_chars: number;
+}
+
+export interface ChapterRewriteResult {
+  chapter_id?: string;
+  note_id?: string;
+  summary?: string;
+  kept?: string[];
+  after?: string;
+  diff?: ChapterRewriteDiff;
+  based_on?: string;
+  cache?: { key: string; hit: boolean; ttl: number };
+  error?: string;
+}
+
+/** 按一条审校建议产候选（不落库；采纳才写正文）。 */
+export async function rewriteChapter(
+  chapterId: string, instruction: string, scope = "chapter",
+): Promise<ChapterRewriteResult> {
+  return send("POST", `/api/v1/chapters/${chapterId}/rewrite`, { instruction, scope });
+}
+
+export interface ApplyNoteResult {
+  note_id: string;
+  target?: string;
+  prev_revision?: number;
+  chars?: number;
+  already_applied?: boolean;
+}
+
+/** 采纳候选：写进正文并自动存版本（需 confirm；based_on 过期会被拒）。 */
+export async function applyProseNote(noteId: string, basedOn = ""): Promise<ApplyNoteResult> {
+  return send("POST", `/api/v1/prose-notes/${noteId}/apply`, { confirm: true, based_on: basedOn });
+}

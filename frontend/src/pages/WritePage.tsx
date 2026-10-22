@@ -7,7 +7,8 @@ import { useDialog } from '../components/common/Dialog';
 import { useWorkspace } from '../context/WorkspaceContext';
 import {
   chapterDraftStream, enqueueChapterInspect, fetchBookMemoryStats, fetchChapterProse,
-  auditChapter, fetchChapterNotes, fetchChapterRecall, generateChapterSettings, listScenes,
+  applyProseNote, approveProseNote, auditChapter, fetchChapterNotes, fetchChapterRecall,
+  generateChapterSettings, listScenes, rejectProseNote, rewriteChapter,
   mergeChapterScenes, pollJob, reindexBookMemory, saveChapterProse,
 } from '../api/novel';
 import {
@@ -121,6 +122,14 @@ export function WritePage() {
   /** v1.67：骨架遵循度审计（只读；主笔能力，作者在章页直接能跑） */
   const [audit, setAudit] = useState<ChapterAudit | null>(null);
   const [auditBusy, setAuditBusy] = useState(false);
+  /** v1.69（方案②）：按建议产出的候选（未落库）+ 采纳状态 */
+  const [cand, setCand] = useState<{
+    note_id: string; summary: string; kept: string[]; after: string;
+    diff?: { before_chars: number; after_chars: number; changed_ratio: number; scope: string };
+    based_on?: string; hit?: boolean;
+  } | null>(null);
+  const [candBusy, setCandBusy] = useState(false);
+  const [applyBusy, setApplyBusy] = useState(false);
   /** v1.65：顶栏工具按钮 → 派给右栏责编流（与 StudioPage 的 v1.43 机制同一条路） */
   const [pendingTool, setPendingTool] = useState('');
   /** v1.65：章级审校记录（体检/质检/润色/AI 味/并入 的留痕） */
@@ -271,6 +280,82 @@ export function WritePage() {
     }
   }, [chapterId]);
 
+  /** v1.69：按一条审校建议产候选（不落库；采纳才写正文） */
+  const rewriteBy = async (instruction: string) => {
+    if (!chapterId || candBusy) return;
+    setSideTab("audit");
+    setCandBusy(true);
+    try {
+      const r = await rewriteChapter(chapterId, instruction, "chapter");
+      if (r.error) {
+        flash(`按建议改失败：${r.error}`);
+      } else if (r.note_id && r.after) {
+        setCand({
+          note_id: r.note_id, summary: r.summary || "", kept: r.kept || [], after: r.after,
+          diff: r.diff as unknown as { before_chars: number; after_chars: number; changed_ratio: number; scope: string },
+          based_on: r.based_on, hit: r.cache?.hit,
+        });
+        flash(r.cache?.hit ? "候选已就绪（缓存命中，没花模型）" : "候选已就绪，看一眼再采纳");
+      }
+    } catch (e) {
+      flash(`按建议改失败：${String(e instanceof Error ? e.message : e)}`);
+    } finally {
+      setCandBusy(false);
+    }
+  };
+
+  /** v1.69：采纳候选 → 写正文 + 自动存版本（正文若在生成后被改过，后端会拒绝覆盖） */
+  const adoptCandidate = async () => {
+    if (!cand || applyBusy) return;
+    const ok = await showConfirm(
+      "采纳这条候选？",
+      "会写进本章正文；覆盖前的旧正文自动存进「🕘 稿本」，不满意可以一键恢复。",
+      true);
+    if (!ok) return;
+    setApplyBusy(true);
+    try {
+      const r = await applyProseNote(cand.note_id, cand.based_on || "");
+      setCand(null);
+      flash(r.already_applied ? "这条候选之前已采纳过"
+        : `已采纳：${r.chars ?? 0} 字` + ((r.prev_revision ?? 0) > 0 ? ` · 旧正文已存第 ${r.prev_revision} 版（可回退）` : " · 首次写入"));
+      await load();
+      void loadChapterNotes();
+    } catch (e) {
+      flash(`采纳失败：${String(e instanceof Error ? e.message : e)}`);
+    } finally {
+      setApplyBusy(false);
+    }
+  };
+
+  /** v1.69：审校记录处置（应用候选 / 批准 / 驳回） */
+  const applyNote = async (noteId: string) => {
+    if (applyBusy) return;
+    const ok = await showConfirm("应用这条记录的候选稿？",
+      "会写进正文并自动存版本（正文若在生成候选后改过，会被拒绝以防覆盖）。", true);
+    if (!ok) return;
+    setApplyBusy(true);
+    try {
+      const r = await applyProseNote(noteId);
+      flash(r.already_applied ? "这条已应用过"
+        : `已应用：${r.chars ?? 0} 字` + ((r.prev_revision ?? 0) > 0 ? ` · 旧正文已存第 ${r.prev_revision} 版（可回退）` : " · 首次写入"));
+      await load();
+      void loadChapterNotes();
+    } catch (e) {
+      flash(`应用失败：${String(e instanceof Error ? e.message : e)}`);
+    } finally {
+      setApplyBusy(false);
+    }
+  };
+
+  const reviewNote = async (noteId: string, approve: boolean) => {
+    try {
+      if (approve) await approveProseNote(noteId); else await rejectProseNote(noteId);
+      flash(approve ? "已批准" : "已驳回");
+      void loadChapterNotes();
+    } catch (e) {
+      flash(`操作失败：${String(e instanceof Error ? e.message : e)}`);
+    }
+  };
   /** v1.67：跑一次骨架遵循度审计（只读：对照章目标/张力曲线/卷目标，输出偏离+建议） */
   const runAudit = async () => {
     if (!chapterId || auditBusy) return;
@@ -830,6 +915,28 @@ export function WritePage() {
                       + 模型判定（偏离项与改法）。**只出意见，不改一个字**。
                     </div>
                   )}
+                  {cand && (
+                    <div className="wp-cand">
+                      <div className="wp-cand-head">
+                        <b>候选（未落库）</b>
+                        <span>{cand.summary}{cand.hit ? " · 缓存命中" : ""}</span>
+                      </div>
+                      {cand.diff && (
+                        <div className="s2-hint">
+                          范围 {cand.diff.scope} · {cand.diff.before_chars} → {cand.diff.after_chars} 字
+                          （改动 {Math.round((cand.diff.changed_ratio || 0) * 100)}%）
+                        </div>
+                      )}
+                      {cand.kept.length > 0 && <div className="s2-hint">刻意保留：{cand.kept.join("；")}</div>}
+                      <div className="wp-cand-body">{cand.after.slice(0, 360)}{cand.after.length > 360 ? "…" : ""}</div>
+                      <div className="wp-cand-actions">
+                        <button className="ws-btn ws-btn-primary" disabled={applyBusy} onClick={() => void adoptCandidate()}>
+                          {applyBusy ? "采纳中…" : "✓ 采纳并保存"}
+                        </button>
+                        <button className="ws-btn" disabled={applyBusy} onClick={() => setCand(null)}>放弃</button>
+                      </div>
+                    </div>
+                  )}
                   {audit && (
                     <>
                       {audit.deviation?.verdict && (
@@ -847,6 +954,10 @@ export function WritePage() {
                           <span title={c.suggest || ""}>{c.detail}
                             {c.suggest ? <em style={{ display: "block", fontStyle: "normal", color: "var(--text-muted)" }}>→ {c.suggest}</em> : null}
                           </span>
+                          <button className="wp-fix-btn" disabled={candBusy || busy} title="按这条建议让主笔改一版（候选，不落库）"
+                                  onClick={() => void rewriteBy([c.detail, c.suggest].filter(Boolean).join("；"))}>
+                            {candBusy ? "改中…" : "✍ 按这条改"}
+                          </button>
                         </div>
                       ))}
                       {(audit.deviation?.items ?? []).map((it, i) => (
@@ -855,6 +966,10 @@ export function WritePage() {
                           <span>{it.detail}
                             {it.suggest ? <em style={{ display: "block", fontStyle: "normal", color: "var(--text-muted)" }}>→ {it.suggest}</em> : null}
                           </span>
+                          <button className="wp-fix-btn" disabled={candBusy || busy} title="按这条建议让主笔改一版（候选，不落库）"
+                                  onClick={() => void rewriteBy([it.detail, it.suggest].filter(Boolean).join("；"))}>
+                            {candBusy ? "改中…" : "✍ 按这条改"}
+                          </button>
                         </div>
                       ))}
                       {(audit.deviation?.keep?.length ?? 0) > 0 && (
@@ -875,15 +990,33 @@ export function WritePage() {
                         onClick={() => void loadChapterNotes()}>⟳ 刷新</button>
               </div>
               {notes.length === 0 && <div className="s2-hint">还没有章级审校记录：点顶栏「🩺 体检整章 / 🗂 审稿会 / 精修工具」都会写一条。</div>}
-              {notes.slice(0, 12).map((n) => (
-                <div className="s2-ann-mini" key={String(n.id)}>
-                  <span className="s2-ann-no">{String(n.kind || "note").slice(0, 4)}</span>
-                  <span title={String(n.suggestion || "")}>
-                    {String(n.suggestion || "").slice(0, 90)}
-                    {String(n.suggestion || "").length > 90 ? "…" : ""}
-                  </span>
-                </div>
-              ))}
+              {notes.slice(0, 12).map((n) => {
+                const hasAfter = String(n.after || "").trim().length > 0;
+                const pending = String(n.status || "pending") === "pending";
+                return (
+                  <div className="s2-ann-mini" key={String(n.id)}>
+                    <span className="s2-ann-no">{String(n.kind || "note").slice(0, 4)}</span>
+                    <span title={String(n.suggestion || "")}>
+                      {String(n.suggestion || "").slice(0, 90)}
+                      {String(n.suggestion || "").length > 90 ? "…" : ""}
+                    </span>
+                    <span className="wp-note-actions">
+                      {hasAfter && (
+                        <button className="wp-fix-btn" disabled={applyBusy} title="把这条记录的候选稿写进正文（自动存版本）"
+                                onClick={() => void applyNote(String(n.id))}>
+                          应用
+                        </button>
+                      )}
+                      {pending && (
+                        <>
+                          <button className="wp-fix-btn" onClick={() => void reviewNote(String(n.id), true)}>批准</button>
+                          <button className="wp-fix-btn" onClick={() => void reviewNote(String(n.id), false)}>驳回</button>
+                        </>
+                      )}
+                    </span>
+                  </div>
+                );
+              })}
 
               <div className="s2-quality">
                 {/* v1.65：进度条移到左栏「这一章」常驻（右栏默认显示副驾，进度不该被 tab 藏起来） */}

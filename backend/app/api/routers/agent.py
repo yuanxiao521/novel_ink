@@ -27,6 +27,21 @@ class EditorChatIn(BaseModel):
     who: str = "author"
 
 
+class RewriteIn(BaseModel):
+    """按建议改稿（v1.69）：候选不落库，作者采纳才写正文。"""
+    instruction: str = ""
+    scope: str = "chapter"            # chapter | para | scene
+    para_index: int = 0
+    scene_id: str = ""
+    text: str = ""
+
+
+class ApplyNoteIn(BaseModel):
+    """采纳候选（v1.69）：必须 confirm；based_on 用于"候选过期"校验。"""
+    confirm: bool = False
+    based_on: str = ""
+
+
 class AnnotationIn(BaseModel):
     note: str = Field(min_length=1)
     para_index: int = 0
@@ -190,6 +205,23 @@ class MergeScenesIn(BaseModel):
     confirm: bool = False
 
 
+@router.post("/chapters/{chapter_id}/rewrite")
+async def chapter_rewrite(chapter_id: str, body: RewriteIn,
+                          svc: SimulationService = Depends(get_service)):
+    """按一条审校建议产候选（v1.69 · 只出候选不落库）。"""
+    return await svc.chapter_rewrite(
+        chapter_id=chapter_id, instruction=body.instruction, scope=body.scope,
+        para_index=body.para_index, scene_id=body.scene_id, text=body.text)
+
+
+@router.post("/prose-notes/{note_id}/apply")
+async def apply_prose_note(note_id: str, body: ApplyNoteIn,
+                           svc: SimulationService = Depends(get_service)):
+    """采纳候选：把 note.after 写进正文并自动存版本（v1.69 · 需 confirm）。"""
+    if not body.confirm:
+        raise HTTPException(status_code=409,
+                            detail="采纳会改写正文（需 confirm=true）；覆盖前的旧正文会自动存版本")
+    return await svc.apply_prose_note(note_id, confirm=True, based_on=body.based_on)
 @router.post("/chapters/{chapter_id}/audit")
 async def chapter_audit(chapter_id: str, svc: SimulationService = Depends(get_service)):
     """骨架遵循度审计（v1.67 · 只读）：0-token 判定 + LLM 语义判定 → 偏离项 + 建议，不改正文。"""

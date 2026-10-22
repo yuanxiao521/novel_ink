@@ -186,6 +186,13 @@ TOOLS.update({
         optional=("chapter_id", "chapter_no", "book_id", "text"),
         handler="chapter_prose_audit", group="chief",
     ),
+    # v1.69（方案②）：按一条审校建议产候选（**不落库**，作者采纳才写正文并存版本）
+    "chapter.rewrite": ToolDecl(
+        "chapter.rewrite", "按一条审校建议改稿：产出候选（不落库），作者「采纳并保存」后才写正文并存版本",
+        "write", params=("chapter_id",),
+        optional=("instruction", "scope", "para_index", "scene_id", "text", "chapter_no", "book_id"),
+        handler="chapter_rewrite", group="chapter",
+    ),
     "chapter.review": ToolDecl(
         "chapter.review", "体检整章：问题清单 + 口吻发现（章级）", "write",
         params=("chapter_id",), optional=("text",), handler="chapter_prose_review", group="chapter",

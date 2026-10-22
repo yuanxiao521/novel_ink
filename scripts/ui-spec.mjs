@@ -643,6 +643,44 @@ try {
         && /遵循度|骨架遵循/.test(String(ca.reply || "")),
       JSON.stringify(ca));
   }
+
+  // ㉓ 方案② UI 闭环（v1.69）：遵循度 tab → 「按这条改」→ 出现候选卡（未落库，带采纳按钮）。
+  //    刻意**不点采纳**：L3 不该改夹具正文（采纳逻辑由 pytest + live 覆盖）。
+  if (!proseChapter) {
+    skip("㉓ 按建议改稿的候选闭环", "没有「章正文非空」的章作夹具");
+  } else {
+    await goto(WEB + "/write/" + proseChapter.id + "?book=" + proseBookId, 8000);
+    const rw = JSON.parse((await ev("(async () => {"
+      + "const out = {};"
+      + "const auditBtn = Array.from(document.querySelectorAll('.s2-actions .ws-btn')).find((b) => b.textContent.indexOf('遵循度') >= 0);"
+      + "if (auditBtn) auditBtn.click();"
+      + "const t0 = Date.now();"
+      + "while (Date.now() - t0 < 45000) {"
+      + "  await new Promise((r) => setTimeout(r, 500));"
+      + "  if (document.querySelector('.wp-fix-btn')) break;"
+      + "}"
+      + "out.fixBtns = document.querySelectorAll('.wp-fix-btn').length;"
+      + "const fix = document.querySelector('.wp-fix-btn');"
+      + "if (!fix) return JSON.stringify({ ...out, err: 'no fix button' });"
+      + "fix.click();"
+      + "const t1 = Date.now();"
+      + "while (Date.now() - t1 < 70000) {"
+      + "  await new Promise((r) => setTimeout(r, 600));"
+      + "  if (document.querySelector('.wp-cand')) break;"
+      + "}"
+      + "const card = document.querySelector('.wp-cand');"
+      + "out.hasCard = !!card;"
+      + "out.head = card ? (card.querySelector('.wp-cand-head') || {}).textContent || '' : '';"
+      + "out.bodyLen = card ? ((card.querySelector('.wp-cand-body') || {}).textContent || '').length : 0;"
+      + "out.actions = card ? Array.from(card.querySelectorAll('.wp-cand-actions button')).map((b) => b.textContent.trim()) : [];"
+      + "return JSON.stringify(out);"
+      + "})()")) || "{}");
+    step("㉓ 方案②闭环：建议→候选（未落库，带「采纳并保存」）",
+      !rw.err && Number(rw.fixBtns) >= 1 && rw.hasCard === true
+        && String(rw.head).indexOf("候选") >= 0
+        && (rw.actions || []).some((a) => String(a).indexOf("采纳") >= 0),
+      JSON.stringify(rw));
+  }
 } catch (e) {
   step("UI 剧本异常", false, String(e));
 } finally {

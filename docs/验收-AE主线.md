@@ -895,6 +895,42 @@ curl -s "http://127.0.0.1:8001/api/v1/chapters/chapter-f89891c8/prose" | head -c
 
 **为什么不是「让模型自己选工具」**：模型不知道内部 chapter_id；LLM 不可用时也必须给结论；行为要可测。
 所以对话层做意图识别 + 快速路径，模型路径同时保留（提示词里带章清单，模型可用 chapter_no 调 `prose.audit`）。
+
+### 3.34 方案②：建议→候选→采纳→版本 + 两级缓存（v1.69）
+
+**缓存键（作者规格，逐条）**
+
+```
+audit   novel_ink:cache:audit:{chapter_id}:{body_hash}:{plan_hash}      TTL 24h
+rewrite novel_ink:cache:rewrite:{chapter_id}:{body_hash}:{sha1(instruction|scope)[:12]}  TTL 10min
+lock    <上面两个键>:lock                                            SET NX PX 30s
+body_hash = sha256(全文)；plan_hash = sha256(章摘要/张力曲线/字数目标/卷目标/0-token 检查码)
+```
+
+```bash
+CH=chapter-c08f2b6b
+
+# ① 审校缓存：第一次 miss（打 LLM），第二次应 hit 且极快
+curl -s -X POST "http://127.0.0.1:8001/api/v1/chapters/$CH/audit" | python -c "import sys,json;print(json.load(sys.stdin)['cache'])"
+# 期望第 1 次 {"hit": false}、第 2 次 {"hit": true}（实测 11.1s → 0.03s）
+
+# ② 候选缓存：同一 instruction 第二次命中（实测 12.1s → 0.02s）
+curl -s -X POST "http://127.0.0.1:8001/api/v1/chapters/$CH/rewrite" \
+  -H "Content-Type: application/json" -d '{"instruction":"合并重复查验","scope":"chapter"}'
+
+# ③ 采纳：无 confirm → 409；有 confirm → 写库 + 旧文存版本（prev_revision）
+curl -s -X POST "http://127.0.0.1:8001/api/v1/prose-notes/<note_id>/apply" \
+  -H "Content-Type: application/json" -d '{"confirm":false}'      # 409
+```
+
+**缓存用例（pytest `test_rewrite_cache.py`）**：命中/不命中 · 正文变更必然失效（`body_hash` 变）·
+sha256 与「长度+首尾」的区别 · single-flight 并发只跑一次 · **Redis 不可用降级直算不报错且不卡 45s**。
+
+**安全三件套**：候选**永不自动落库**；采纳必须 `confirm`；`based_on`（候选生成时的 body_hash）与当前正文不符 → 拒绝覆盖。
+采纳走 `save_chapter_prose`，因此自动获得：版本链（`prev_revision` 可回退）+ 记账 + 索引 + 前情重算。
+
+**L3 永久回归**：㉓ 遵循度 tab →「✍ 按这条改」→ 候选卡（未落库）出现且带「✓ 采纳并保存」（L3 刻意不点采纳，避免改夹具正文）。
+**截图**：`docs/mockups/p3/ink/49-write-suggestion-candidate.png`
 ## 4. 存量验收（S1–S4 / A2 / A3，仍在跑）
 
 ```powershell
