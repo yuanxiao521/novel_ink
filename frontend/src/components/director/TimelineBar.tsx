@@ -13,6 +13,7 @@ export function TimelineBar({
   onViewTurn,
   onRewind,
   onExitView,
+  onPrune,
 }: {
   state: SimUIState;
   playing: boolean;
@@ -22,6 +23,8 @@ export function TimelineBar({
   onViewTurn: (turn: number) => void;
   onRewind: (turn: number) => void;
   onExitView: () => void;
+  /** v1.72：清理历史遗留的空壳回合（存量数据；正常推演已自愈） */
+  onPrune?: () => void;
 }) {
   // 点击节点 → 查看该回合；再次点击 → 退出查看
   const handleNodeClick = (turn: number) => {
@@ -87,7 +90,18 @@ export function TimelineBar({
         </div>
         <div className="tl-meta">
           <span>速度 1x</span>
-          <span>共 {state.turn ?? 0} 回合 / {state.eventCards.length} 事件</span>
+          {/* v1.72：显示**已归档回合数**而不是 world.turn——老数据里 turn 走到 20、
+              真正有内容的回合只有 1 个，之前写"共 20 回合"是假的 */}
+          <span>共 {state.archives.length} 回合 / {state.eventCards.length} 事件</span>
+          {state.filteredEmpty > 0 && onPrune && (
+            <button
+              className="tl-prune"
+              title="物理清掉历史遗留的空壳回合（无角色行动、无成文的假回合）"
+              onClick={onPrune}
+            >
+              🧹 清理空壳 {state.filteredEmpty}
+            </button>
+          )}
         </div>
         <div className="tl-legend">
           <span className="legend-item">

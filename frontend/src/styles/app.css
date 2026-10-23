@@ -47,10 +47,12 @@ body {
 
 /* 视图切换浮层（应用级，不在设计稿内，仅供演示两个视图） */
 .view-switcher {
+  /* v1.72：原本居中贴底（left:50%; bottom:0）→ 正好压住导演台底部时间线的
+     回合节点（截图实测 T-20 节点被「剧本台/作者工作台/读者阅读台」盖住，
+     点不到、也看不清）。时间线是导演台最核心的控件，浮层让位到右下角。 */
   position: fixed;
-  left: 50%;
-  bottom: 0;
-  transform: translateX(-50%);
+  right: 18px;
+  bottom: 8px;
   z-index: 999;
   display: flex;
   gap: 4px;
@@ -1213,6 +1215,24 @@ body {
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-secondary);
+}
+
+/* v1.72：空壳回合清理入口（存量数据；有假回合时才出现，清完即消失） */
+.tl-prune {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--accent-gold);
+  background: transparent;
+  border: 1px dashed var(--accent-gold);
+  border-radius: 6px;
+  padding: 2px 8px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.tl-prune:hover {
+  background: var(--accent-gold);
+  color: var(--bg-base);
 }
 
 .tl-track {

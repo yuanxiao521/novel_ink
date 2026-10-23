@@ -19,7 +19,7 @@ from app.api.deps import get_service
 from app.config import settings
 from app.schemas import chief, models
 from app.services.agents.editor import chief_chat_with_tools
-from app.services.service import SimulationService
+from app.services.service import SimulationService, _archive_is_empty
 
 logger = logging.getLogger(__name__)
 
@@ -1034,8 +1034,8 @@ async def history(sim_id: str, svc: SimulationService = Depends(get_service)):
     """
     sim = await svc.get_state(sim_id)
     archives = [a.model_dump() for a in sim.turn_archives]
-    valid = [a for a in archives
-             if (a.get("events") or []) or (a.get("prose") or "").strip()]
+    # v1.72：口径统一走 service._archive_is_empty（与 prune 端点/归档清理同一判据）
+    valid = [a for a, raw in zip(archives, sim.turn_archives) if not _archive_is_empty(raw)]
     return {
         "sim_id": sim_id,
         "turn": sim.world.turn,
@@ -1043,6 +1043,17 @@ async def history(sim_id: str, svc: SimulationService = Depends(get_service)):
         "total_archived": len(archives),
         "filtered_empty": len(archives) - len(valid),
     }
+
+
+@router.post("/sims/{sim_id}/prune-archives")
+async def prune_archives(sim_id: str, svc: SimulationService = Depends(get_service)):
+    """清理空壳回合归档（v1.72 物理清理，幂等）。
+
+    v1.70 只在 /history 展示层过滤空壳，DB 里一直留着（实测某 sim 19 条空壳 →
+    total_archived 恒为 20）。此端点把**存量的**空壳从 state_json 里真正删掉；
+    新的 step/rewind 已自动清理，所以正常使用不需要手动点。
+    """
+    return await svc.prune_archives(sim_id)
 
 
 @router.post("/sims/{sim_id}/rewind")

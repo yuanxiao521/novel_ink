@@ -955,6 +955,43 @@ L1 章清单缓存真正接线（`_chapters_cached` + 章 CRUD 即时失效；�
 临时脚本已清；`WorkspaceContext.stepLink`/主笔页/设定页三处旧入口统一到 `/write`。
 
 **验收（v1.70）**：pytest **468** · tsc 0 · build ok · L2 **25/25** · L3 **24/24**（㉓ 现同时覆盖「限流时错误持久可见」）。
+### 3.36 导演台闭环实测 + 5 个缺陷修复（v1.72）
+
+> 作者要求：「你去测试一下，导演台选主角/配角/反派、既定场景/旁白由谁定？我有没有回退、有没有 checkpoint？我看看整个闭环能力。」
+> 做法：**先跑真 E2E（真 HTTP + 真 LLM，不 mock）拿证据，再按暴露的问题修**。
+
+**闭环 20/20（脚本 `scripts/e2e_director_loop.py`，可复跑；本批实测输出）**
+
+| # | 动作 | 断言 | 实测 |
+| --- | --- | --- | --- |
+| 1 | `POST /sims`（resume=false） | 建新实例 | sim-15dcebeb · resumed=false |
+| 2 | `PUT /sims/{id}/cast` | 3 人上场（主角+配角+反派） | char-41329f1d / char-2c7372cb / char-8a8774cd |
+| 3 | `POST /sims/{id}/step?n=1` | turn 前进 + 归档有行动/成文 | T-1 · events=3 · prose=287 字 · 40.9s |
+| 4 | `step?n=2` | 时间线累积 | turn=3 · archives=[1,2,3] · 144.7s |
+| 5 | `GET /history` | total_archived == 有效条数 | total=3 · filtered_empty=0 |
+| 6 | 归档字段（checkpoint） | turn/tension/cls/summary/prose/events/thoughts | T-1 · tension=36.0 · type-action · prose 287 字 · thoughts=3 |
+| 7 | `POST /sims/{id}/rewind?turn=1` | 截断到目标回合 | turn=1 · archives=[1] |
+| 8 | `rewind?turn=999` | 不存在的回合必须报错 | 400（不许静默成功） |
+| 9 | 回退后继续 `step` | 可重演 | turn=2 · archives=[1,2] · 52.4s |
+| 10 | `POST /sims/{id}/finalize` | 聚合成文 → `scenes.final_prose` | word_count=619 · 635 字（测后已还原作者原正文 288 字） |
+| 11 | `POST /sims/{id}/prune-archives` | 存量空壳物理清理 | sim-d58495ab：removed=19 · kept=1 |
+| 12 | 再 prune 一次 | 幂等 | removed=0 · kept=1 |
+
+**本批修复的 5 个缺陷（B73–B77）**
+
+| # | 缺陷 | 证据 | 修复 |
+| --- | --- | --- | --- |
+| B73 | 空壳回合只过滤、不清理（`total_archived` 恒 20，导出/张力曲线仍算进去） | DB：20 条归档里 19 条 `events=[] prose=""` | `_archive_is_empty` 唯一判据 + `prune_empty_archives`（step/stream_step/rewind 自愈）+ `POST /prune-archives` + 时间线「🧹 清理空壳 N」 |
+| B74 | 单步推进不刷新时间线（新回合不进时间线，重放目标还是旧的） | 代码链路：只有 SSE `turn_end` 才 refreshHistory | 单步后 refreshHistory + 「已步进 T-XX」 |
+| B75 | arq 队列活性恒 `unknown`（zset 用 LLEN → WRONGTYPE） | `/health.queue.error=WRONGTYPE`；Redis `TYPE arq:queue`=zset | 按 TYPE 取 `zcard`/`llen` → 实测 `status:no-worker, queued:40` |
+| B76 | 恢复进度后舞台三栏全空（看起来像没演过） | 截图：共 1 回合却在空黑板 | 恢复时把最后一个回合影到舞台（auto VIEW），开播/单步退出查看态 |
+| B77 | 视图切换浮层压住时间线回合节点 | 截图：T-20 节点被三个按钮盖住 | `.view-switcher` 移到右下角 |
+
+**验收（v1.72）**：pytest **476**（+6 `test_archive_prune.py`；删掉 v1.70 重复追加的两例）· tsc 0 · build ok · E2E **20/20** · L3 **24/24**。
+**截图**：`docs/mockups/v172/01-resume-snapshot.png`（恢复即快照）· `02-after-prune-click.png`（🧹 清理空壳 3 → 已清理）· `03-live-playing.png`（播放中 T-21）· `05-two-turns-timeline.png`（时间线 T-20/T-21 + 快照）· `06-queue-ok-no-banner.png`（worker 起来后红色横幅消失）。
+
+**环境提示（非代码）**：L3 ⑪ 断言 `/health.queue.alive === true`，需要 **arq worker 进程在跑**（`bash scripts/worker-supervise.sh` 或 `python -m arq app.services.tasks_worker.WorkerSettings`）。本批实测时 worker 未启动 → 横幅如实报「后台队列没有消费者」、⑪ 红；启动 worker 后 `status:ok, alive:true`、⑪ 转绿。另外 Redis db1 里积了 **78 条测试残留任务 + 1628 个 `novel_ink:job:*` 状态键**（payload 里 chapter_id=c-a，来自 pytest 夹具）→ 已清空。
+
 ## 4. 存量验收（S1–S4 / A2 / A3，仍在跑）
 
 ```powershell

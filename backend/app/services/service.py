@@ -86,6 +86,16 @@ def _ensure_cast(sim: models.SimulationState) -> None:
             "或到人物页点『✨ 让主笔生成角色』一键补齐角色卡")
 
 
+def _archive_is_empty(a: models.TurnArchive) -> bool:
+    """回合归档是不是"空壳"（无角色行动、也无成文）。
+
+    v1.72：**唯一口径** —— GET /sims/{id}/history 的过滤、cleaning 端点、归档时顺手
+    清理，三处都调这里。此前只有 history 过滤（DB 里空壳一直留着，total_archived
+    带着 19 条历史包袱，作者看到的"共 N 回合"和真实回合数不一致）。
+    """
+    return not (getattr(a, "events", None) or []) and not str(getattr(a, "prose", "") or "").strip()
+
+
 def _preview(text: str, n: int = 60) -> str:
     """正文预览：压平空白后截前 n 字（校对视图用，不参与字数统计）。"""
     flat = " ".join(str(text or "").split())
@@ -3839,6 +3849,9 @@ class SimulationService:
                 sim.last_main_actor = state["last_main_actor"]
             # 回合归档：回退/查看任意回合
             self._archive_turn(sim, prev_events)
+            # v1.72：顺手清掉历史遗留空壳归档（老数据/LLM 挂掉期间产生的），
+            # 作者推进任意一回合即自愈，不必等手动清理
+            self.prune_empty_archives(sim)
             await self.repo.save(sim_id, sim)
             await self._sync_beliefs(sim)  # 信念账本草稿 → 书级 Belief 表（幂等）
             # 单回合内举手 → 暂停等作者拍板（外层 SSE 循环会因 pending 停止）
@@ -3871,6 +3884,7 @@ class SimulationService:
                 yield event
         # 回合结束：主戏角色写回 + 归档 + 落库
         self._archive_turn(sim, prev_events)
+        self.prune_empty_archives(sim)   # v1.72：SSE 同样自愈
         await self.repo.save(sim_id, sim)
         await self._sync_beliefs(sim)  # 信念账本草稿 → 书级 Belief 表（幂等）
         if sim.ended:
@@ -3890,6 +3904,19 @@ class SimulationService:
                     "channel": b.channel.value if hasattr(b.channel, "value") else str(b.channel),
                     "text": b.text, "confidence": b.confidence, "edited": False, "ts": b.ts,
                 })
+
+    @staticmethod
+    def prune_empty_archives(sim: models.SimulationState) -> int:
+        """清掉时间线里的**空壳回合**（无角色行动、无成文），返回删除条数。
+
+        v1.72：v1.70 只做到"新回合不再归档空壳 + history 展示层过滤"，DB 里老的空壳
+        一直留着：作者看到 /history 的 total_archived=20 而真实只有 1 个回合，
+        归档里也留着 19 条假数据（导出剧本/张力曲线也算进去）。这里做**物理清理**，
+        口径与 _archive_is_empty 一致；幂等，随时可调。
+        """
+        before = len(sim.turn_archives or [])
+        sim.turn_archives = [a for a in (sim.turn_archives or []) if not _archive_is_empty(a)]
+        return before - len(sim.turn_archives)
 
     @staticmethod
     def _archive_turn(sim: models.SimulationState, prev_events: int) -> None:
@@ -4253,9 +4280,27 @@ class SimulationService:
         sim.ended = False
         sim.paused = False
         sim.turn_archives = [a for a in sim.turn_archives if a.turn <= cut_turn]
+        # v1.72：回退后连带清掉空壳（否则回退完时间线里还留着一串假回合，
+        # "回退到 T-02"之后仍显示 T-19 —— 实测出现过）
+        self.prune_empty_archives(sim)
 
         await self.repo.save(sim_id, sim)
         return sim
+
+    async def prune_archives(self, sim_id: str) -> dict:
+        """维护入口：物理清理某 sim 的空壳回合归档（v1.72，给存量数据与前端按钮用）。"""
+        sim = await self._load_sim(sim_id)
+        before = len(sim.turn_archives or [])
+        removed = self.prune_empty_archives(sim)
+        if removed:
+            await self.repo.save(sim_id, sim)
+        return {
+            "sim_id": sim_id,
+            "turn": sim.world.turn,
+            "total_archived": before,     # 清理前
+            "removed": removed,           # 删掉的空壳条数
+            "kept": len(sim.turn_archives or []),  # 清理后
+        }
 
     # ---------------------------------------------------------------- 事件暂停（回合边界）
     async def pause(self, sim_id: str) -> models.SimulationState:

@@ -233,7 +233,17 @@ async def _queue_probe(r: "aredis.Redis") -> dict:
 
     queued = 0
     try:
-        queued = int(await r.llen("arq:queue") or 0)
+        # arq 0.26+ 的队列是 **zset**（score=入队时间戳），旧版才是 list。
+        # v1.72 修：此前无脑 LLEN → arq 0.28 上恒抛 WRONGTYPE，于是 /health 的 queue
+        # 永远是 status=unknown（"状态查询失败"），作者永远看不到真实结论
+        # "没有消费者/积压 40 个" —— 实测 /health?queue.error=WRONGTYPE。按类型取长度。
+        kind = await r.type("arq:queue")
+        kind = kind.decode() if isinstance(kind, bytes) else str(kind or "none")
+        if kind == "list":
+            queued = int(await r.llen("arq:queue") or 0)
+        elif kind == "zset":
+            queued = int(await r.zcard("arq:queue") or 0)
+        # none / 其它类型：键不存在或被占用，按 0 处理，不断言故障
     except Exception as e:  # noqa: BLE001
         errors.append(f"queue_len: {type(e).__name__}: {e}"[:120])
 

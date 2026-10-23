@@ -55,7 +55,7 @@ export function DirectorPage() {
   // 选角用书 id：书树未到（空黑板场景）时回落到上下文里的书
   const bookIdForCast = selTree?.id ?? bookId;
 
-  const { state, playing, simId, play, pause, step, viewTurn, exitView, rewindTo, agreeRaise, rejectRaise, refresh } = useDirectorSim(
+  const { state, playing, simId, play, pause, step, viewTurn, exitView, rewindTo, agreeRaise, rejectRaise, refresh, pruneArchives } = useDirectorSim(
     sceneId || undefined,
     bookId || undefined,
     curChapterId,
@@ -184,7 +184,7 @@ export function DirectorPage() {
         </div>
 
         {sceneId && (
-          <TimelineBar state={state} playing={playing} onPlay={play} onPause={pause} onStep={step} onViewTurn={viewTurn} onRewind={rewindTo} onExitView={exitView} />
+          <TimelineBar state={state} playing={playing} onPlay={play} onPause={pause} onStep={step} onViewTurn={viewTurn} onRewind={rewindTo} onExitView={exitView} onPrune={pruneArchives} />
         )}
       </div>
 

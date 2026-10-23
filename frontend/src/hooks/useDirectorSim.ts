@@ -85,6 +85,7 @@ export interface SimUIState {
   archives: TurnArchive[]; // 回合归档（历史）
   viewing: TurnArchive | null; // 当前正在查看的历史回合（null=实时）
   closeReport: DirectorCloseReport | null; // 场景收束长程汇报（S3）
+  filteredEmpty: number; // v1.72：后端/历史里还留着的空壳回合条数（>0 时时间线给「清理」入口）
   emptyWorld: boolean; // 空黑板：无角色且无 facts（引导选角）
   charIds: string[]; // 当前上场角色 id 列表
   // v1.63：真实书角色信息（名字/档位/目标）。此前角色栏只认 3 个写死的演示角色，
@@ -116,6 +117,7 @@ const initState: SimUIState = {
   archives: [],
   viewing: null,
   closeReport: null,
+  filteredEmpty: 0,
   emptyWorld: false,
   charIds: [],
   chars: {},
@@ -138,7 +140,7 @@ type Action =
   | { type: 'DONE'; raisePending?: boolean; paused?: boolean }
   | { type: 'DIRECTOR_CLOSE'; report: DirectorCloseReport }
   | { type: 'RAISE_HIDE' }
-  | { type: 'HISTORY'; archives: TurnArchive[] }
+  | { type: 'HISTORY'; archives: TurnArchive[]; filteredEmpty?: number }
   | { type: 'VIEW'; archive: TurnArchive | null }
   | { type: 'RESET_AFTER_REWIND'; turn?: number }
   | { type: 'CHARS'; chars: Record<string, CharInfo> };
@@ -366,6 +368,7 @@ function reducer(s: SimUIState, a: Action): SimUIState {
       return {
         ...s,
         archives: a.archives,
+        filteredEmpty: a.filteredEmpty ?? 0,
         finishedTurns: a.archives.map((arc) => ({
           turn: arc.turn, cls: arc.cls, summary: arc.summary,
         })),
@@ -524,7 +527,9 @@ export function useDirectorSim(sceneId?: string, bookId?: string, chapterId?: st
     if (!sid) return;
     try {
       const hist = await fetch(`${API_BASE}/api/v1/sims/${sid}/history`).then((h) => h.json());
-      if (Array.isArray(hist.archives)) dispatch({ type: 'HISTORY', archives: hist.archives });
+      if (Array.isArray(hist.archives)) {
+        dispatch({ type: 'HISTORY', archives: hist.archives, filteredEmpty: Number(hist.filtered_empty || 0) });
+      }
     } catch {
       /* history 可选，失败不阻塞 */
     }
@@ -674,14 +679,27 @@ export function useDirectorSim(sceneId?: string, bookId?: string, chapterId?: st
         if (!cancelled) dispatch({ type: 'STATE', st });
         // 拉回合归档（时间线回退查看）
         try {
-          const hist = await fetchJson(`${API_BASE}/api/v1/sims/${started.sim_id}/history`) as { archives: TurnArchive[] };
-          if (!cancelled && Array.isArray(hist.archives)) dispatch({ type: 'HISTORY', archives: hist.archives });
+          const hist = await fetchJson(`${API_BASE}/api/v1/sims/${started.sim_id}/history`) as {
+            archives: TurnArchive[]; filtered_empty?: number;
+          };
+          if (!cancelled && Array.isArray(hist.archives)) {
+            dispatch({ type: 'HISTORY', archives: hist.archives, filteredEmpty: Number(hist.filtered_empty || 0) });
+            // v1.72：恢复进度时**直接把最后一个回合影到舞台上**。
+            // 此前恢复只拉 /state（不含回合事件/成文）→ 舞台三栏全"暂无…"，
+            // 明明时间线上有回合，作者看到的是一块空黑板（实测截图）。
+            const last = hist.archives[hist.archives.length - 1];
+            if (started.resumed && last) dispatch({ type: 'VIEW', archive: last });
+          }
         } catch {
           /* history 可选，失败不阻塞 */
         }
         if (!cancelled) {
           // 恢复上次（resumed=true）→ 显示已推进内容 + 待播放；新 sim → 就绪
-          dispatch({ type: 'RUN', text: started.resumed ? '已恢复（上次进度）' : '就绪', ok: true });
+          dispatch({
+            type: 'RUN',
+            text: started.resumed ? '已恢复（上次进度）· 舞台上显示最后回合快照' : '就绪',
+            ok: true,
+          });
         }
       } catch (e) {
         console.warn('[导演台] 后端连接失败，回退为静态展示：', e);
@@ -698,6 +716,7 @@ export function useDirectorSim(sceneId?: string, bookId?: string, chapterId?: st
     if (playingRef.current) return;
     const sid = simIdRef.current;
     if (!sid) return;
+    dispatch({ type: 'VIEW', archive: null });   // v1.72：开播即退出历史查看态（否则舞台一直定格在旧回合）
     fetch(`${API_BASE}/api/v1/sims/${sid}/resume`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -741,6 +760,7 @@ export function useDirectorSim(sceneId?: string, bookId?: string, chapterId?: st
   const step = () => {
     const sid = simIdRef.current;
     if (!sid) return;
+    dispatch({ type: 'VIEW', archive: null });   // v1.72：单步也退出历史查看态
     if (state.raise?.pending) {
       dispatch({ type: 'RUN', text: '请先处理导演举手', ok: false });
       return;
@@ -749,9 +769,34 @@ export function useDirectorSim(sceneId?: string, bookId?: string, chapterId?: st
       .then((r) => r.json())
       .then((st: SimState) => {
         dispatch({ type: 'STATE', st });
-        dispatch({ type: 'RUN', text: '已步进', ok: true });
+        // v1.72：单步后**必须刷新时间线**。此前只有 SSE 的 turn_end 才 refreshHistory，
+        // 单步走的是一次性 POST → 新回合不进时间线：作者点「单步」看不到刚演的这一回合，
+        // 而「重放」按钮的回退目标还停在旧回合（实测：单步 3 次，时间线仍是 1 个节点）。
+        void refreshHistory();
+        dispatch({
+          type: 'RUN',
+          text: typeof st.turn === 'number' ? `已步进 T-${pad(st.turn)}` : '已步进',
+          ok: true,
+        });
       })
       .catch((e) => console.warn('[导演台] step 失败：', e));
+  };
+
+  // v1.72：物理清理历史遗留的空壳回合（老数据里 LLM 挂掉期间产生的假回合），
+  // 清完刷新时间线；后端 prune-archives 幂等，多点几次也不会删掉真实回合。
+  const pruneArchives = () => {
+    const sid = simIdRef.current;
+    if (!sid) return;
+    fetch(`${API_BASE}/api/v1/sims/${sid}/prune-archives`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((res: { removed?: number; kept?: number } | null) => {
+        if (res) dispatch({ type: 'RUN', text: `已清理空壳回合 ${res.removed ?? 0} 条`, ok: true });
+        void refreshHistory();
+      })
+      .catch((e) => console.warn('[导演台] 清理空壳回合失败：', e));
   };
 
   const resolveRaise = (action: 'accept' | 'reject') => {
@@ -828,6 +873,7 @@ export function useDirectorSim(sceneId?: string, bookId?: string, chapterId?: st
     viewTurn,
     exitView,
     rewindTo,
+    pruneArchives,
     agreeRaise: () => resolveRaise('accept'),
     rejectRaise: () => resolveRaise('reject'),
     refresh,
