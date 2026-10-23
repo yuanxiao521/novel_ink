@@ -3931,35 +3931,28 @@ class SimulationService:
         new_events = sim.events[prev_events:]
         if not new_events:
             return
-        # 本回合角色行动（作为事件展示）
-        acted = []
-        for e in new_events:
-            if e.source.value == "character" and e.payload.get("text"):
-                acted.append({
-                    "id": e.id, "actor": e.actor,
-                    "kind": e.payload.get("kind", "action"),
-                    "text": e.payload.get("text", ""),
-                })
         prose = ""
         for e in new_events:
             if e.type.value == "text" and e.payload.get("text"):
                 prose = e.payload["text"]
-        # 空回合拦截：没有角色行动、也没有成文 → 时间线不收（避免"空壳回合"假象）
-        if not acted and not prose:
-            return
-        # 回合类型：从本回合事件推断（冲突优先）
-        cls = "type-info"
+        # v1.73 连拍：事件按 payload.exchange 分组（graph 里 character_act 带 exchange 号；
+        # 旧路径/无标记的事件一律算第 1 个来回）。**每个来回独立归档** → 时间线一个节点，
+        # 回退可精确到"第 N 个来回"。旁白（拍末整段成文）挂在最后一个来回的归档上。
+        groups: dict[int, list] = {}
+        cur = 1
         for e in new_events:
-            k = e.payload.get("kind")
-            if k == "conflict":
-                cls = "type-conflict"
-                break
-            if k == "dialogue" and cls == "type-info":
-                cls = "type-dialogue"
-            elif k == "action" and cls == "type-info":
-                cls = "type-action"
-        # 回合摘要：优先导演产物（短、有方向感；如"舞台提示：让 李文 先接话…"），
-        # 没有则用本回合正文/末条行动截断 —— 不必 LLM 重新生成长摘要
+            if e.source.value == "character":
+                try:
+                    cur = max(1, int((e.payload or {}).get("exchange") or 1))
+                except (TypeError, ValueError):
+                    cur = 1
+            # 非角色事件（成文/导演/环境）拍末产生 → 跟随**当前最大来回**组，
+            # 否则成文落进组 1 → last_event_id 指到整拍末尾，"回退到来回 1"就废了（实测踩过）
+            groups.setdefault(cur, []).append(e)
+        if not groups:
+            return
+
+        # 回合摘要：优先导演产物（短、有方向感），本拍 volley 过场用 volley 摘要
         briefing = ""
         if sim.director.hint and sim.director.hint.stage_prompt:
             briefing = sim.director.hint.stage_prompt
@@ -3967,12 +3960,10 @@ class SimulationService:
             briefing = sim.director.injected_events[0]
         if briefing.startswith("舞台提示："):
             briefing = briefing[len("舞台提示："):]
-        summary = (briefing or prose or (acted[-1]["text"] if acted else "")).strip()
-        if not summary:
-            summary = f"回合 T-{turn:02d}"
-        # S4：把本回合各角色的"思考"归入归档，并**清空 scratch**。
-        # scratch["thoughts"] 按 char_id 覆盖，若不归集清空，第二回合就把上一回合的
-        # 思考冲掉了（时间线/回放/导出查不到当时的思考）。
+        volley_sum = str(sim.scratch.get("volley_summary") or "")
+
+        # S4：把本回合各角色的"思考"归入**第一个来回**的归档（拍内思考只发生一次），
+        # 并清空 scratch（否则第二回合冲掉）。scratch["thoughts"] 按 char_id 覆盖。
         thoughts: list[dict] = []
         for cid, data in (sim.scratch.get("thoughts") or {}).items():
             d = data if isinstance(data, dict) else {"thought": str(data)}
@@ -3986,17 +3977,48 @@ class SimulationService:
                 "raw": d,
             })
         sim.scratch["thoughts"] = {}
+
+        # 先清掉本回合旧归档（重跑/归档重放幂等），再按来回追加
         sim.turn_archives = [a for a in sim.turn_archives if a.turn != turn]
-        sim.turn_archives.append(models.TurnArchive(
-            turn=turn,
-            tension=sim.director.tension,
-            tension_trend=sim.director.tension_trend,
-            cls=cls,
-            summary=summary[:18] or f"回合 T-{turn:02d}",
-            prose=prose,
-            events=acted,
-            thoughts=thoughts,
-        ))
+        last_ex = max(groups)
+        for ex in sorted(groups):
+            acted = []
+            cls = "type-info"
+            for e in groups[ex]:
+                if e.source.value == "character" and e.payload.get("text"):
+                    acted.append({
+                        "id": e.id, "actor": e.actor,
+                        "kind": e.payload.get("kind", "action"),
+                        "text": e.payload.get("text", ""),
+                    })
+                    k = e.payload.get("kind")
+                    if k == "conflict":
+                        cls = "type-conflict"
+                    elif k == "dialogue" and cls == "type-info":
+                        cls = "type-dialogue"
+                    elif k == "action" and cls == "type-info":
+                        cls = "type-action"
+            # 空来回拦截：本来回无行动、无成文 → 不收（同 v1.70 空壳口径）
+            ex_prose = prose if ex == last_ex else ""
+            if not acted and not ex_prose:
+                continue
+            label = f"回合 T-{turn:02d}" if ex == 1 else f"回合 T-{turn:02d}·来回{ex}"
+            summary = (volley_sum or briefing or ex_prose
+                       or (acted[-1]["text"] if acted else "")).strip()
+            if not summary:
+                summary = label
+            sim.turn_archives.append(models.TurnArchive(
+                turn=turn,
+                exchange=ex,
+                last_event_id=(groups[ex][-1].id or ""),
+                tension=sim.director.tension,
+                tension_trend=sim.director.tension_trend,
+                cls=cls,
+                summary=summary[:18] or label,
+                prose=ex_prose,
+                events=acted,
+                thoughts=thoughts if ex == 1 else [],
+            ))
 
     # ---------------------------------------------------------------- S4 涌现产物（剧本）
     async def _archives_by_scene(self, book_id: str) -> dict[str, list[dict]]:
@@ -4261,15 +4283,25 @@ class SimulationService:
         if target is None:
             raise InvalidActionError(f"无回合 {turn} 的归档（当前至 T-{sim.world.turn}）")
 
-        # 截断事件：保留到该回合最后一个角色事件
+        # 截断事件：保留到该回合（目标来回）最后一个角色事件
+        # v1.73 连拍：archive 带 last_event_id → 精确截到**该来回**末尾（而不是整拍末尾），
+        # 否则"回退到来回 1"却保留了来回 2 的行为，重演会叠戏。旧档无 last_event_id →
+        # 回退按"该回合最后一个角色事件"（与旧行为一致）。
         cut_turn = target.turn
-        last_char_ev_idx = -1
-        for i, e in enumerate(sim.events):
-            if e.source.value == "character":
-                last_char_ev_idx = i
-            elif e.turn > cut_turn:
-                break
-        sim.events = sim.events[: last_char_ev_idx + 1]
+        cut_event_id = str(getattr(target, "last_event_id", "") or "")
+        last_idx = -1
+        if cut_event_id:
+            for i, e in enumerate(sim.events):
+                if e.id == cut_event_id:
+                    last_idx = i
+                    break
+        if last_idx < 0:
+            for i, e in enumerate(sim.events):
+                if e.source.value == "character":
+                    last_idx = i
+                elif e.turn > cut_turn:
+                    break
+        sim.events = sim.events[: last_idx + 1]
         sim.world.turn = cut_turn
         sim.world.timeline = [e.id for e in sim.events]
         sim.director.tension = target.tension
@@ -4279,7 +4311,12 @@ class SimulationService:
         sim.director.ending_selected = ""
         sim.ended = False
         sim.paused = False
-        sim.turn_archives = [a for a in sim.turn_archives if a.turn <= cut_turn]
+        # v1.73 连拍：同回合多个来回归档时，只保留 <= 目标来回的（回退到来回 1，
+        # 来回 2 的归档必须截掉——事件已截，留着就是"有档无实"的假节点）
+        sim.turn_archives = [
+            a for a in sim.turn_archives
+            if a.turn < cut_turn or (a.turn == cut_turn and a.exchange <= target.exchange)
+        ]
         # v1.72：回退后连带清掉空壳（否则回退完时间线里还留着一串假回合，
         # "回退到 T-02"之后仍显示 T-19 —— 实测出现过）
         self.prune_empty_archives(sim)

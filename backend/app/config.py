@@ -47,6 +47,7 @@ class Settings(BaseSettings):
 
     # ---- 涌现与护栏参数 ----
     max_turns: int = 60                      # 微场景回合上限（防死循环）
+    max_actors_per_turn: int = 3             # 每回合行动人数上限（v1.73 进配置，预留动态调整）
     guard_retry_max: int = 2                 # 护栏打回重演上限（熔断，§7）
     hand_raise_auto_pause: bool = False      # 举手时是否自动暂停
     scenario_name: str = "betrayal_night"    # 默认微场景

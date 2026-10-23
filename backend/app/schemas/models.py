@@ -166,6 +166,10 @@ class TurnArchive(BaseModel):
     """单回合归档：回退查看任意回合所需的最小快照。"""
 
     turn: int
+    # v1.73 连拍：一拍可含多个来回（exchange），每个来回独立归档成一条（时间线一个节点），
+    # 回退可精确到"第 N 个来回"。单来回拍 exchange=1（与旧行为一致）。
+    exchange: int = 1
+    last_event_id: str = ""   # 本来回最后一条事件 id（rewind 精确截断点）
     tension: float = 0.0
     tension_trend: str = "flat"
     cls: str = "type-info"

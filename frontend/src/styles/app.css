@@ -1217,6 +1217,18 @@ body {
   color: var(--text-secondary);
 }
 
+/* v1.73：时间线"回合 N·来回 M"标签（连拍）比普通节点略窄 */
+.turn-node .turn-label .ex-tag {
+  font-size: 9px;
+  color: var(--accent-gold);
+} 
+
+/* v1.73：本拍节奏一行（导演面板） */
+.director-panel .hint.pace {
+  color: var(--accent-gold);
+  font-size: 11px;
+}
+
 /* v1.72：空壳回合清理入口（存量数据；有假回合时才出现，清完即消失） */
 .tl-prune {
   font-family: var(--font-mono);

@@ -26,8 +26,8 @@ _DEFAULT_THINK_SCHEMA = (
     '"reasoning":"对眼前局势的推理"}'
 )
 _DEFAULT_DECIDE_SCHEMA = (
-    '{"kind":"dialogue|action|conflict","text":"一句话行动或台词",'
-    '"new_fact":"若产生新世界事实则为一句事实陈述，否则为空字符串"}'
+    '{"behaviors":[{"kind":"dialogue|action|conflict","text":"一句话行动或台词",'
+    '"new_fact":"若产生新世界事实则为一句事实陈述，否则为空字符串"}]}'
 )
 
 
@@ -76,6 +76,74 @@ class CharacterEngine:
     # ------------------------------------------------------------ 涌现决策
     async def propose_action(self, char_id: str, decide_fn: Callable[[str], Optional[dict]]) -> Optional[dict]:
         return await self.decide(char_id, decide_fn)
+
+    async def decide_multi(
+        self, char_id: str, decide_fn: Callable[[str], Optional[dict]],
+        behaviors_max: int = 1,
+    ) -> list[dict]:
+        """决策层·多行为（v1.73）：一次 decide 可出 1..behaviors_max 条行为。
+
+        每条仍是 {kind, text, new_fact}——护栏逐条判、事件逐条落（护栏/回退粒度不变，
+        变厚的只是行为密度）。behaviors_max=1 时与旧 decide() 行为完全一致。
+        旧格式兼容：模型返回 {"kind":...}（无 behaviors）→ 当作单条。
+        超出上限截断（闸门说了算，模型说了不算）。
+        """
+        card = self.sim.characters[char_id]
+        context = self.perceive_context(char_id)
+        schema = card.decide_schema or _DEFAULT_DECIDE_SCHEMA
+        prompt = self._compose_prompt(card, context, "decide")
+        if behaviors_max > 1:
+            prompt += (
+                f"\n【节奏要求】本回合你最多可以输出 {behaviors_max} 条连续行为（behaviors 数组，"
+                "按发生顺序排列）：比如一句台词紧跟一个动作。每条都要独立成立；"
+                f"不需要凑满 {behaviors_max} 条，一条就够时只给一条。"
+            )
+
+        actions: list[dict] = []
+        result = await llm.call_strong(prompt, json_schema=schema)
+        if isinstance(result, dict):
+            raw_list = result.get("behaviors")
+            if isinstance(raw_list, list) and raw_list:
+                for item in raw_list[: max(1, behaviors_max)]:
+                    if not isinstance(item, dict):
+                        continue
+                    text = str(item.get("text") or "").strip()
+                    if not text:
+                        continue
+                    kind = str(item.get("kind") or "dialogue").strip()
+                    if kind not in ("dialogue", "action", "conflict"):
+                        kind = "dialogue"
+                    actions.append({
+                        "actor": char_id, "kind": kind, "text": text,
+                        "new_fact": str(item.get("new_fact") or ""),
+                    })
+            elif str(result.get("text") or "").strip():
+                # 旧单行为格式兼容
+                actions.append({
+                    "actor": char_id,
+                    "kind": str(result.get("kind") or "dialogue"),
+                    "text": str(result.get("text") or ""),
+                    "new_fact": str(result.get("new_fact") or ""),
+                })
+            if actions:
+                self.sim.scratch.setdefault("decisions", {})[char_id] = {"llm": result}
+                logger.info("[decide] %s → %d 条行为: %s", card.name, len(actions),
+                            [a["text"][:24] for a in actions])
+        if not actions:
+            # LLM 不可用/产出空 → 确定性回退脚本（一次一条，与旧行为一致）
+            try:
+                action = decide_fn(context)
+            except Exception as e:  # noqa: BLE001
+                logger.exception("[decide] %s 回退脚本异常: %s", card.name, e)
+                action = None
+            self.sim.scratch.setdefault("decisions", {})[char_id] = {"fallback": True}
+            logger.info("[decide] %s → 回退脚本: %s", card.name, action)
+            if action:
+                action.setdefault("actor", char_id)
+                action.setdefault("kind", "dialogue")
+                action.setdefault("text", "")
+                actions = [action]
+        return actions
 
     # ------------------------------------------------------------ 思考层（Task 3）
     def _compose_prompt(self, card: CharacterCard, context: str, stage: str) -> str:

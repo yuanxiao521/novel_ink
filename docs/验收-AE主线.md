@@ -992,6 +992,29 @@ L1 章清单缓存真正接线（`_chapters_cached` + 章 CRUD 即时失效；�
 
 **环境提示（非代码）**：L3 ⑪ 断言 `/health.queue.alive === true`，需要 **arq worker 进程在跑**（`bash scripts/worker-supervise.sh` 或 `python -m arq app.services.tasks_worker.WorkerSettings`）。本批实测时 worker 未启动 → 横幅如实报「后台队列没有消费者」、⑪ 红；启动 worker 后 `status:ok, alive:true`、⑪ 转绿。另外 Redis db1 里积了 **78 条测试残留任务 + 1628 个 `novel_ink:job:*` 状态键**（payload 里 chapter_id=c-a，来自 pytest 夹具）→ 已清空。
 
+### 3.37 拍内加厚：连拍 + 多行为 + 对话快速通道（v1.73）
+
+> 作者质疑：「为什么每轮只有一次来回、每个 turn 每个角色只有一个行动？」
+> 拍板：**方案一（连拍+多行为）+ 方案三（对话快速通道），默认 1 来回（信号加厚），人数先 3、预留动态。**
+
+**闸门语义（0-token，`engine/pacing.py::decide_pace`）**
+
+| 信号 | 效果 |
+| --- | --- |
+| 默认（无信号） | 1 来回 × 1 行为（= v1.72 行为，成本不涨） |
+| hard beat 未达成 / 近 6 事件有冲突 / 张力上行 | 加厚（exchanges≥2 / behaviors≥2，上限 3×3） |
+| 护栏拦截 / 举手待批 / 已收束 | **一票压薄**（1×1，加厚信号不能再抬回） |
+| 导演建议 volley 且无硬节拍无冲突 | 对话快速通道（1 次调用整段交锋，逐行过护栏） |
+
+**回归（12 例）**：`test_pacing.py`（闸门 8：默认薄 / 信号加厚 / 一票否决 / volley 只给过场）
+· `test_volley.py`（拆行 4：非法行丢弃 / kind 归一 / 摘要兜底）
+· `test_exchanges.py`（归档拆条 6：2 来回 → 2 节点 / 旧事件兼容 / **rewind 精确截到来回 1 末尾** / decide_multi 拆分·旧格式·回退）
+· `test_graph_burst.py`（graph 集成 2：闸门加厚一拍 4 行为 2 节点 / 无信号默认 1 来回）。
+
+**诚实标注**：本批终验时上游 LLM 池冷却（daily token limit），live 只跑了回退分支
+（`scripts/e2e_director_burst.py` 5/5，exchange=1）；加厚分支由 graph 级集成测试钉死
+（伪回退脚本 + 真闸门，2 来回 → 4 行为 → 2 归档节点），池恢复后重跑 live 补录。
+
 ## 4. 存量验收（S1–S4 / A2 / A3，仍在跑）
 
 ```powershell

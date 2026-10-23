@@ -106,6 +106,7 @@ export function DirectorPanel({
 
       <div className="console-panel director-panel">
         <div className="panel-title">本回合导演提示</div>
+        {state.paceText && <div className="hint gold" title="v1.73 节奏闸门：为什么这一拍厚/薄">{state.paceText}</div>}
         {state.hints.length ? (
           state.hints.map((h, i) => (
             <div className={i === 1 ? 'hint gold' : 'hint'} key={`hint-${i}`}>

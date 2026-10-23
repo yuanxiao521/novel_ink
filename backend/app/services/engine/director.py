@@ -179,6 +179,11 @@ class DirectorEngine:
             # v1.57：从【还没发生的必然事件】里挑一条作为本回合目标（没有就返回空对象）
             "beat_target": {"beat_id": "str 事件 id（如 b1），或空串",
                             "how": "str 这回合你打算怎么逼它发生（≤20 字）"},
+            # v1.73 节奏建议（最终由 pacing.decide_pace 的确定性信号拍板，这里只是建议）
+            "pace": {"exchanges": "int 1-3：这一拍打几个来回（默认 1）",
+                     "behaviors_max": "int 1-3：每个角色一次决策最多几条行为（默认 1）",
+                     "mode": "normal 或 volley（纯对话过场可用 volley 快速通道）",
+                     "reason": "str ≤20 字：为什么这么安排"},
         }
         raw = await llm_client.call_cheap(self._llm_plan_prompt(), schema)
         if not isinstance(raw, dict):
@@ -227,6 +232,14 @@ class DirectorEngine:
             )
         except Exception:  # noqa: BLE001  目标选错不影响软引导本身
             self.sim.scratch["beat_target"] = {}
+
+        # v1.73：节奏建议原样带给 pacing 闸门（闸门最终拍板，这里只是底稿）
+        try:
+            pace_raw = raw.get("pace")
+            if isinstance(pace_raw, dict) and (pace_raw.get("exchanges") or pace_raw.get("mode")):
+                setattr(self.cfg, "_llm_pace_raw", pace_raw)
+        except Exception:  # noqa: BLE001
+            pass
 
         if not (hint.info_exposures or hint.goal_adjusts or inj or self.sim.scratch.get("beat_target")):
             return False  # 空引导等同失败，交给确定性回退

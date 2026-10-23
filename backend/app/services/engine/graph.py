@@ -138,13 +138,30 @@ def build_graph(plan_cfg: PlanCfg, decide_fn: DecideFn, converge_fn: ConvergeFn,
         # 放在 director_plan 里算：character_phase 只读 round_order，其它逻辑仍拿完整 action_order。
         from app.services.engine.cast_roles import throttle_order
 
+        from app.config import settings as _settings
+
         roster = list(sim.scratch.get("cast_all") or sim.action_order)
         sim.scratch["round_order"] = throttle_order(
             roster,
             tiers=sim.scratch.get("cast_tiers") or {},
             protagonists=sim.scratch.get("protagonists") or [],
             priority=list(sim.action_order),
+            limit=_settings.max_actors_per_turn,   # v1.73：人数上限进配置，可动态调
         )
+        # v1.73 节奏闸门：LLM 只给建议（llm_plan 的 pace 字段），最终由 0-token 信号
+        # 拍板（默认 1 来回 × 1 行为；hard beat 未达成/冲突/张力上行加厚；
+        # 护栏拦截/举手/收束一票压薄）。行动人数上限进 settings，预留动态调整。
+        from app.config import settings as _settings
+        from app.services.engine.pacing import decide_pace
+
+        pace = decide_pace(
+            sim,
+            list(getattr(plan_cfg, "beats", []) or []),
+            llm_pace=getattr(plan_cfg, "_llm_pace_raw", None),
+            max_actors=_settings.max_actors_per_turn,
+        )
+        sim.scratch["pace"] = pace.as_dict()
+        sim.scratch["turn_event_start"] = len(sim.events) + 1   # 本拍第一条事件将落在这里
         director.measure_tension()
         await director.plan()  # LLM 软引导；LLM 不可用/返回空时内部回退确定性 fallback_plan
         _apply_guidance(sim, world)
@@ -159,6 +176,8 @@ def build_graph(plan_cfg: PlanCfg, decide_fn: DecideFn, converge_fn: ConvergeFn,
             "raise_request": sim.director.raise_request.model_dump(),
             # v1.57：本回合导演显式要逼的那条必然事件（作者在导演台能看到它在追什么）
             "beat_target": sim.scratch.get("beat_target") or {},
+            # v1.73：本拍节奏（连拍几个来回 × 每人几条行为）+ 为什么（作者可见"为什么这拍厚"）
+            "pace": sim.scratch.get("pace") or {},
         })
         return {}
 
@@ -201,23 +220,70 @@ def build_graph(plan_cfg: PlanCfg, decide_fn: DecideFn, converge_fn: ConvergeFn,
                     writer({"kind": "character_think", "turn": sim.world.turn,
                             "char_id": cid, "thought": t_val})
 
-        # 决策层·串行（顺序固定）：每个角色 decide 前，前一人行动已写入 events →
-        # perceive_context 的【近况】能看到上文，保持"角色互相影响"的涌现
-        last_main = None
-        for char_id in order:
-            action = await char_eng.decide(char_id, decide_fn)  # LLM 或 decide_fn 回退
-            if not action:
-                continue
-            ev = _guard_and_record(sim, char_id, action, char_eng, world, guard_retry)
-            if ev:
-                last_main = char_id
-                writer({
-                    "kind": "character_act",
-                    "turn": sim.world.turn,
-                    "char_id": char_id,
-                    "events": [ev.model_dump()],
-                    "guard_flags": ev.guard_flags,
-                })
+        # v1.73 连拍：一个拍（turn）内跑 pace.exchanges 个来回，角色真正你来我往。
+        # 每个来回独立归档（时间线一个节点）→ 回退可以精确到"第 N 个来回"。
+        # 决策层·串行不变：每个角色 decide 前，前面所有行为（含本拍前几个来回的）
+        # 都已写入 events → perceive_context 的【近况】能看到上文。
+        pace = sim.scratch.get("pace") or {}
+        exchanges = max(1, min(3, int(pace.get("exchanges") or 1)))
+        behaviors_max = max(1, min(3, int(pace.get("behaviors_max") or 1)))
+
+        async def _one_exchange(ex_idx: int) -> Optional[str]:
+            """一个来回：在场角色按序各出一次手（每人至多 behaviors_max 条行为）。"""
+            last_main = None
+            for char_id in order:
+                actions = await char_eng.decide_multi(char_id, decide_fn, behaviors_max)
+                evs = []
+                for act in actions:   # 逐条过护栏、逐条落事件（护栏/回退粒度不变）
+                    act["exchange"] = ex_idx   # 归档分组依据（service._archive_turn 按 exchange 拆条）
+                    ev = _guard_and_record(sim, char_id, act, char_eng, world, guard_retry)
+                    if ev:
+                        evs.append(ev)
+                        last_main = char_id
+                if evs:
+                    writer({
+                        "kind": "character_act",
+                        "turn": sim.world.turn,
+                        "char_id": char_id,
+                        "exchange": ex_idx,
+                        "events": [ev.model_dump() for ev in evs],
+                        "guard_flags": evs[-1].guard_flags,
+                    })
+            return last_main
+
+        last_main: Optional[str] = None
+        if pace.get("mode") == "volley" and llm_client.available:
+            # —— 方案三：对话快速通道（过场专用，1 次调用出整段交锋）——
+            from app.services.engine.volley import parse_volley, volley_prompt, volley_summary
+
+            raw = await llm_client.call_cheap(
+                volley_prompt(sim, order), json_schema=(
+                    '{"lines":[{"actor":"str","kind":"dialogue|action","text":"str"}],'
+                    '"summary":"str"}'))
+            acts = parse_volley(raw, sim, order)
+            if acts:
+                ex_evs: list[models.Event] = []
+                for act in acts:   # 逐行过同一套护栏
+                    ev = _guard_and_record(sim, act["actor"], act, char_eng, world, guard_retry)
+                    if ev:
+                        ex_evs.append(ev)
+                        last_main = act["actor"]
+                if ex_evs:
+                    writer({
+                        "kind": "character_act", "turn": sim.world.turn,
+                        "char_id": ex_evs[-1].actor, "exchange": 1, "volley": True,
+                        "events": [ev.model_dump() for ev in ex_evs],
+                        "guard_flags": ex_evs[-1].guard_flags,
+                    })
+                    sim.scratch["volley_summary"] = volley_summary(raw)
+            else:
+                logger.warning("[volley] 模型产出清洗后为空 → 回退逐角色涌现")
+                for ex in range(exchanges):
+                    last_main = await _one_exchange(ex + 1) or last_main
+        else:
+            for ex in range(exchanges):
+                last_main = await _one_exchange(ex + 1) or last_main
+
         # 主戏角色写回 sim（黑板模式；astream 不返回最终 state，故节点内直接落 sim）
         sim.last_main_actor = last_main or sim.last_main_actor
         return {"last_main_actor": last_main}
@@ -234,7 +300,10 @@ def build_graph(plan_cfg: PlanCfg, decide_fn: DecideFn, converge_fn: ConvergeFn,
         sim = state["sim"]
         world = WorldEngine(sim)
         writer = get_stream_writer()
-        acts = [e for e in sim.events[-6:] if e.source.value == "character"]
+        # v1.73 连拍：本拍可能有 exchanges×人数 条行为，只取最近 6 条会丢前几个来回。
+        # 从【本拍第一条角色行为】起取（director_plan 落库时记下拍起点）。
+        start = max(0, int(sim.scratch.get("turn_event_start") or 0) - 1)
+        acts = [e for e in sim.events[start:] if e.source.value == "character"]
         if not acts:
             return {}
         full_text = ""

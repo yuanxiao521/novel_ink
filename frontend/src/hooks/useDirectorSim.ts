@@ -72,6 +72,7 @@ export interface SimUIState {
   lastFin: Record<number, { cls: string; summary: string }>;
   tension: { val: number; trend: string } | null;
   hints: string[];
+  paceText: string; // v1.73：本拍节奏（连拍 N 来回 × 每人 M 行为 · 原因），来自导演 SSE 帧
   raise: RaiseRequest | null;
   guard: { blocks: number; fuse: number } | null;
   prose: string[];
@@ -104,6 +105,7 @@ const initState: SimUIState = {
   lastFin: {},
   tension: null,
   hints: [],
+  paceText: '',
   raise: null,
   guard: null,
   prose: [],
@@ -132,7 +134,7 @@ type Action =
   | { type: 'THINK'; charId: string; thought: string }
   | { type: 'THINK_DELTA'; charId: string; delta: string }
   | { type: 'ACT'; charId: string; events: StoryEvent[] }
-  | { type: 'DIRECTOR'; d: { tension?: number; trend?: string; hint?: string; injected?: string[]; raise?: RaiseRequest } }
+  | { type: 'DIRECTOR'; d: { tension?: number; trend?: string; hint?: string; injected?: string[]; raise?: RaiseRequest; pace?: { exchanges?: number; behaviors_max?: number; mode?: string; reason?: string } } }
   | { type: 'GUARD'; guard: GuardState }
   | { type: 'PROSE'; text: string }
   | { type: 'PROSE_DELTA'; delta: string }
@@ -303,6 +305,15 @@ function reducer(s: SimUIState, a: Action): SimUIState {
     }
     case 'DIRECTOR': {
       const next: SimUIState = { ...s };
+      // v1.73：本拍节奏一行（连拍 N 来回 × 每人 M 行为 + 为什么）——作者能看到"这拍为什么厚"
+      if (a.d.pace && typeof a.d.pace === 'object') {
+        const ex = Number(a.d.pace.exchanges || 1);
+        const bh = Number(a.d.pace.behaviors_max || 1);
+        const mode = a.d.pace.mode === 'volley' ? ' · 对话快速通道' : '';
+        next.paceText = ex > 1 || bh > 1 || mode
+          ? '连拍 ' + ex + ' 来回 × 每人至多 ' + bh + ' 条行为' + mode + (a.d.pace.reason ? '（' + a.d.pace.reason + '）' : '')
+          : '';
+      }
       if (typeof a.d.tension === 'number') {
         next.tension = { val: a.d.tension, trend: a.d.trend || 'flat' };
       }
@@ -576,6 +587,7 @@ export function useDirectorSim(sceneId?: string, bookId?: string, chapterId?: st
         hint?: string;
         injected?: string[];
         raise_request?: RaiseRequest;
+        pace?: { exchanges?: number; behaviors_max?: number; mode?: string; reason?: string };
       };
       dispatch({
         type: 'DIRECTOR',
@@ -585,6 +597,7 @@ export function useDirectorSim(sceneId?: string, bookId?: string, chapterId?: st
           hint: d.hint,
           injected: Array.isArray(d.injected) ? d.injected : undefined,
           raise: d.raise_request,
+          pace: d.pace,
         },
       });
     });
