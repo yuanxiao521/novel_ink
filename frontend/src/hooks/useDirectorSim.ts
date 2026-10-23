@@ -183,8 +183,12 @@ function detectMood(text: string): string | null {
 }
 
 const SPEAKER = { chenmo: '陈默', liwen: '李文', zhoushen: '周婶' } as Record<string, string>;
-function speakerName(charId: string, ev: StoryEvent): string {
+function speakerName(charId: string, ev: StoryEvent, chars?: Record<string, CharInfo>): string {
   const actor = ev.payload?.actor || '';
+  // v1.73d：真实书角色名优先（char-xxx 这类库 id 查 chars 映射）——此前事件卡源行
+  // 直接显示 "char-2c7372cb · 展开行动"（作者实测截图），原因即 speakerName 不认 chars。
+  const real = chars?.[charId]?.name?.trim();
+  if (real) return real;
   return (actor ? SPEAKER[actor] : undefined) || SPEAKER[charId] || actor || charId;
 }
 
@@ -299,7 +303,7 @@ function reducer(s: SimUIState, a: Action): SimUIState {
         const o = { ...(next.overrides[a.charId] || {}) };
         o.action =
           lastKind === 'dialogue'
-            ? `『${speakerName(a.charId, last)}』　${lastTxt}`
+            ? `『${speakerName(a.charId, last, next.chars)}』　${lastTxt}`
             : lastTxt || undefined;
         next = { ...next, overrides: { ...next.overrides, [a.charId]: o } };
       }
@@ -430,12 +434,14 @@ function renderEventCard(s: SimUIState, charId: string, ev: StoryEvent, kind: st
     environment: { label: '环境', cls: 'type-info' },
   };
   const m = map[kind] || { label: '信息', cls: 'type-info' };
-  const who = speakerName(charId, ev);
+  const who = speakerName(charId, ev, s.chars);
   const source =
     (kind === 'dialogue' ? `${who} 说` : `${who} · 展开行动`) +
     (ev.guard_flags?.length ? `　护栏: ${ev.guard_flags.join('、')}` : '');
   const card: EventCard = {
-    id: ev.id || '',
+    // v1.73d：event-id 位置显示**角色名**（此前显示 E-009 这类事件 id，对人没意义；
+    // 事件 id 仍在归档里，回放/回退不受影响）
+    id: who,
     cls: m.cls,
     label: m.label,
     quote: kind === 'dialogue' ? `「${txt}」` : txt,
