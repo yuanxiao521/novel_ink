@@ -133,7 +133,8 @@ export function TimelineBar({
                   onClick={() => handleNodeClick(arc.turn)}
                 >
                   <span className="turn-dot"></span>
-                  <span className="turn-label">T-{pad(arc.turn)}</span>
+                  {/* v1.73 连拍：同拍多来回时节点标签带来回号（T-01·2） */}
+                  <span className="turn-label">{'T-' + pad(arc.turn)}{(arc.exchange ?? 1) > 1 ? '·' + arc.exchange : ''}</span>
                   <span className="turn-desc">{arc.summary}</span>
                 </div>
               );

@@ -38,6 +38,8 @@ export interface CharOverride {
 /** 回合归档（后端 TurnArchive 对应） */
 export interface TurnArchive {
   turn: number;
+  /** v1.73 连拍：一拍内第几个来回（单来回拍恒为 1） */
+  exchange?: number;
   tension: number;
   tension_trend: string;
   cls: string;

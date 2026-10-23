@@ -4003,8 +4003,14 @@ class SimulationService:
             if not acted and not ex_prose:
                 continue
             label = f"回合 T-{turn:02d}" if ex == 1 else f"回合 T-{turn:02d}·来回{ex}"
-            summary = (volley_sum or briefing or ex_prose
-                       or (acted[-1]["text"] if acted else "")).strip()
+            summary = (volley_sum if ex == 1 else (volley_sum or briefing)
+                       or ex_prose or (acted[-1]["text"] if acted else "")).strip()
+            # 连拍：各来回的摘要必须可区分——来回 N>1 用本来回末条行为/旁白截断，
+            # 且都带「来回N」前缀（时间线上两个 T-01 节点摘要想同就分不清了，实测踩过）
+            if last_ex > 1:
+                if not summary or (ex > 1 and summary == (volley_sum or briefing or "").strip()):
+                    summary = ex_prose or (acted[-1]["text"] if acted else "") or label
+                summary = f"来回{ex}｜{summary}"
             if not summary:
                 summary = label
             sim.turn_archives.append(models.TurnArchive(

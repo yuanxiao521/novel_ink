@@ -148,12 +148,16 @@ def build_graph(plan_cfg: PlanCfg, decide_fn: DecideFn, converge_fn: ConvergeFn,
             priority=list(sim.action_order),
             limit=_settings.max_actors_per_turn,   # v1.73：人数上限进配置，可动态调
         )
-        # v1.73 节奏闸门：LLM 只给建议（llm_plan 的 pace 字段），最终由 0-token 信号
-        # 拍板（默认 1 来回 × 1 行为；hard beat 未达成/冲突/张力上行加厚；
-        # 护栏拦截/举手/收束一票压薄）。行动人数上限进 settings，预留动态调整。
+        # v1.73 节奏闸门：**先跑 director.plan()**（LLM pace 建议落在 plan_cfg._llm_pace_raw），
+        # 再 decide_pace 拍板 —— 顺序错了闸门永远读到上一拍的旧建议（首拍 None），
+        # 加厚整批失效（实测踩过：闸门在 plan 前 → 一拍恒 1×1）。
         from app.config import settings as _settings
         from app.services.engine.pacing import decide_pace
 
+        sim.scratch["turn_event_start"] = len(sim.events) + 1   # 本拍第一条事件将落在这里
+        director.measure_tension()
+        await director.plan()  # LLM 软引导；LLM 不可用/返回空时内部回退确定性 fallback_plan
+        _apply_guidance(sim, world)
         pace = decide_pace(
             sim,
             list(getattr(plan_cfg, "beats", []) or []),
@@ -161,10 +165,6 @@ def build_graph(plan_cfg: PlanCfg, decide_fn: DecideFn, converge_fn: ConvergeFn,
             max_actors=_settings.max_actors_per_turn,
         )
         sim.scratch["pace"] = pace.as_dict()
-        sim.scratch["turn_event_start"] = len(sim.events) + 1   # 本拍第一条事件将落在这里
-        director.measure_tension()
-        await director.plan()  # LLM 软引导；LLM 不可用/返回空时内部回退确定性 fallback_plan
-        _apply_guidance(sim, world)
         # 即时事件：导演决策完成（张力/提示/注入列表/举手）
         writer({
             "kind": "director",

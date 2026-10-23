@@ -36,10 +36,31 @@ def check(name, ok, detail=""):
     print(("PASS  " if ok else "FAIL  ") + name + ("  :: " + str(detail) if detail else ""))
 
 
-st, h = req("GET", "", timeout=5) if False else (0, {})
-health = json.loads(urllib.request.urlopen("http://127.0.0.1:8001/health", timeout=10).read())
-llm_ok = bool(health.get("llm", {}).get("ok"))
-check("LLM 池可用（挂了会走确定性回退，脚本如实标注）", True, "llm_ok=%s" % llm_ok)
+# v1.73b：/health 的 llm.ok 是"最近一次调用"的状态缓存（可能残留旧失败），
+# 分支判断必须用**真实探测**：直接打一次最小调用。
+def _llm_reachable() -> bool:
+    import re
+    key = ""
+    for line in open(r"E:\novel_desk-agent\.env", encoding="utf-8"):
+        m = re.match(r"NOVEL_OPENAI_API_KEY=(.+)", line.strip())
+        if m:
+            key = m.group(1).strip()
+            break
+    body = json.dumps({"model": "deepseek-v4.1-flash",
+                       "messages": [{"role": "user", "content": "回复一个字：好"}],
+                       "max_tokens": 8}).encode()
+    r2 = urllib.request.Request("http://127.0.0.1:8788/v1/chat/completions", data=body, method="POST",
+                                headers={"Content-Type": "application/json",
+                                         "Authorization": "Bearer " + key})
+    try:
+        with urllib.request.urlopen(r2, timeout=60) as resp:
+            return bool(json.loads(resp.read()).get("choices"))
+    except Exception:
+        return False
+
+
+llm_ok = _llm_reachable()
+check("LLM 池真实可达（挂了会走确定性回退，脚本如实标注）", True, "llm_ok=%s" % llm_ok)
 
 st, started = req("POST", "/sims", {"book_id": BOOK, "chapter_id": CHAPTER,
                                     "scene_id": SCENE, "resume": False})
