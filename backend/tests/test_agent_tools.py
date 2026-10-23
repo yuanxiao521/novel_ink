@@ -49,8 +49,8 @@ class _FakeRepo:
     async def save_prose_note(self, data: dict) -> None:
         self.notes.append(data)
 
-    async def update_annotation(self, ann_id: str, patch: dict) -> dict | None:
-        return {"id": ann_id, **patch}
+    async def update_annotation(self, annotation_id: str, patch: dict) -> dict | None:
+        return {"id": annotation_id, **patch}
 
     async def list_annotations_all(self, scene_id: str) -> list[dict]:
         return []

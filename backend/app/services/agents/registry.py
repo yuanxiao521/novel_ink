@@ -80,7 +80,7 @@ TOOLS: dict[str, ToolDecl] = {
     "annotation.resolve": ToolDecl(
         "annotation.resolve", "把批注标记为已处理 / 撤销", "destructive",
         params=("annotation_id",), optional=("status", "handled_by_note_id"),
-        needs_confirm=True, handler="repo.update_annotation", group="annotation",
+        needs_confirm=True, handler="resolve_annotation", group="annotation",
         writes="prose_annotations",
     ),
 }

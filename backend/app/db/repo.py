@@ -1004,19 +1004,37 @@ class Repo:
 
         return await self._query_or_mem(_q, None)
 
-    async def update_annotation(self, ann_id: str, patch: dict) -> Optional[dict]:
-        """部分更新（状态机 open→handled/dismissed）。读-合并-upsert，幂等。"""
-        cur = await self.get_annotation(ann_id)
+    async def update_annotation(self, annotation_id: str, patch: dict) -> Optional[dict]:
+        """部分更新（状态机 open→handled/dismissed）。读-合并-upsert，幂等。
+
+        v1.73g 两处修：
+        ①形参 ann_id → annotation_id —— 工具 annotation.resolve 的 params 叫
+          annotation_id，执行器 fn(**kwargs) 按形参名传参 → 此前每次「标记已处理/撤销」
+          都炸 TypeError（作者实测截图）。
+        ②get_annotation 读回的 dict 里 handled_at 是**字符串**（get 的序列化产物），
+          原样 merged 进 upsert → asyncpg 拒收 str 当 TIMESTAMP → **静默降级内存态**，
+          之后任何状态改回都不落库（第二次实测：撤销永远不生效）。时间字段解析回 datetime。
+        """
+        cur = await self.get_annotation(annotation_id)
         if cur is None:
             return None
-        merged = {**cur, **patch, "id": ann_id}
+        merged = {**cur, **patch, "id": annotation_id}
         merged.pop("created_at", None)
         merged.pop("updated_at", None)
-        await self._upsert(ProseAnnotation, merged)
-        return await self.get_annotation(ann_id)
+        from datetime import datetime as _dt
 
-    async def delete_annotation(self, ann_id: str) -> None:
-        await self._delete_row(ProseAnnotation, ann_id)
+        for key in ("handled_at",):
+            v = merged.get(key)
+            if isinstance(v, str):
+                try:
+                    merged[key] = _dt.fromisoformat(v)
+                except ValueError:
+                    merged.pop(key, None)
+        await self._upsert(ProseAnnotation, merged)
+        return await self.get_annotation(annotation_id)
+
+    async def delete_annotation(self, annotation_id: str) -> None:
+        await self._delete_row(ProseAnnotation, annotation_id)
 
     # ------------------------------------------------------------------
     # agent tasks / messages（任务总线 · L3 消息层 · A+ 批）

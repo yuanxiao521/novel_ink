@@ -4291,6 +4291,20 @@ class SimulationService:
             payload={"hints": [text]},
         )
 
+    # ---------------------------------------------------------------- 批注工具（annotation.resolve）
+    async def resolve_annotation(self, annotation_id: str, status: str = "handled",
+                                 handled_by_note_id: str = "") -> dict:
+        """annotation.resolve 的落点（v1.73g）：把工具链 kwargs（status/handled_by_note_id）
+        收进 patch 再走 repo —— 此前 handler 直指 repo.update_annotation(annotation_id, patch)，
+        执行器把 status 当形参传 → 「标记已处理/撤销」必炸 TypeError（作者实测）。"""
+        patch: dict = {"status": str(status or "handled")}
+        if handled_by_note_id:
+            patch["handled_by_note_id"] = handled_by_note_id
+        out = await self.repo.update_annotation(annotation_id, patch)
+        if out is None:
+            raise InvalidActionError(f"批注不存在: {annotation_id}")
+        return out
+
     # ---------------------------------------------------------------- 回退（时间线）
     async def rewind(self, sim_id: str, turn: int) -> models.SimulationState:
         """回退到指定回合：截断事件/归档/张力，可从此重演。
