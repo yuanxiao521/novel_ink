@@ -177,3 +177,19 @@ async def test_decide_multi_falls_back_when_llm_empty(monkeypatch):
     acts = await eng.decide_multi("a", lambda ctx: {"kind": "action", "text": "回退行为"},
                                   behaviors_max=2)
     assert len(acts) == 1 and acts[0]["text"] == "回退行为"
+
+
+@pytest.mark.asyncio
+async def test_decide_multi_prompt_keeps_beat_intact(monkeypatch):
+    """节奏要求必须引导"动作与台词织在一条里"，不得教模型把同一瞬间拆碎（作者实测踩过）。"""
+    import app.services.engine.character as char_mod
+    from app.services.engine.character import CharacterEngine
+
+    llm = _LLMMulti({"behaviors": []})
+    monkeypatch.setattr(char_mod, "llm", llm)
+    eng = CharacterEngine(_sim())
+    await eng.decide_multi("a", lambda ctx: None, behaviors_max=3)
+    prompt = llm.prompts[-1]
+    assert "一句台词紧跟一个动作" not in prompt, "旧示例（拆碎教唆）必须删掉"
+    assert "不要把同一瞬间的动作和台词拆成两条" in prompt
+    assert "织在同一条里" in prompt
