@@ -52,6 +52,12 @@ export function ScriptView({ sceneId, onClose }: { sceneId: string; onClose: () 
 
   const turns: ScriptTurn[] = data?.json?.turns ?? [];
   const sceneTitle = String((data?.json?.scene as Record<string, unknown> | undefined)?.title ?? '');
+  // v1.73d：角色 id → 名字映射（后端随剧本返回；作者不该看到 char-xxx）
+  const charNames = (data?.chars ?? {}) as Record<string, string>;
+  const actorName = (id: unknown): string => {
+    const key = String(id ?? '');
+    return charNames[key] || key;
+  };
 
   return (
     <div className="studio-overlay">
@@ -91,11 +97,13 @@ export function ScriptView({ sceneId, onClose }: { sceneId: string; onClose: () 
         )}
 
         <div className="script-body">
-          {turns.map((t) => (
-            <div className="script-turn" key={t.turn}>
+          {turns.map((t, ti) => (
+            <div className="script-turn" key={t.turn + '-' + (t.exchange ?? 1) + '-' + ti}>
               <div className="script-turn-head">
                 <span className="script-turn-no">
-                  〔回合 {t.turn} · {CLS_LABEL[t.cls] ?? t.cls}〕
+                  {(t.exchange ?? 1) > 1
+                    ? `〔回合 ${t.turn} · 来回${t.exchange} · ${CLS_LABEL[t.cls] ?? t.cls}〕`
+                    : `〔回合 ${t.turn} · ${CLS_LABEL[t.cls] ?? t.cls}〕`}
                 </span>
                 {tension && (
                   <span className="studio-metric">
@@ -128,8 +136,8 @@ export function ScriptView({ sceneId, onClose }: { sceneId: string; onClose: () 
               {(t.events ?? []).map((e, i) => (
                 <div className="script-line" key={i}>
                   {e.kind === 'dialogue'
-                    ? (e.actor ?? '') + '：' + (e.text ?? '')
-                    : '（' + (e.actor ?? '') + ' ' + (e.text ?? '') + '）'}
+                    ? actorName(e.actor) + '：' + (e.text ?? '')
+                    : '（' + actorName(e.actor) + ' ' + (e.text ?? '') + '）'}
                 </div>
               ))}
 

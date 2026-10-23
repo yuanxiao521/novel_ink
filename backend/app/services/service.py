@@ -4064,11 +4064,27 @@ class SimulationService:
 
         scene, book_id = await self._scene_and_book(scene_id)
         archives = (await self._archives_by_scene(book_id)).get(scene_id, []) if book_id else []
+        # v1.73d：把"角色 id → 名字"映射带给剧本台（events[].actor 是库 id，
+        # 前端没有书上下文，翻译只能在这做——作者不该看到 char-2c7372cb）
+        chars_map: dict[str, str] = {}
+        if book_id:
+            for s in await self.repo.list_sims_by_book(book_id):
+                if str(s.get("scene_id") or "") != scene_id:
+                    continue
+                sim = await self.repo.load(str(s.get("id")))
+                if sim is None:
+                    continue
+                for cid, card in (sim.characters or {}).items():
+                    if card is not None and card.name.strip():
+                        chars_map[cid] = card.name.strip()
+                if chars_map:
+                    break
         return {
             "scene_id": scene_id, "turns": len(archives),
             "markdown": render_script_md(scene, archives, with_thoughts=with_thoughts,
                                          with_tension=with_tension),
             "json": render_script_json(scene, archives),
+            "chars": chars_map,
             "hits": extract_hits(scene, archives),   # S4 step2：确定性高光（供采纳为素材）
         }
 

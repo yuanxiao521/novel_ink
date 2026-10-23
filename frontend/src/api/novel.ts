@@ -1147,6 +1147,8 @@ export interface ScriptThought {
 
 export interface ScriptTurn {
   turn: number;
+  /** v1.73 连拍：一拍内第几个来回（单来回拍恒为 1） */
+  exchange?: number;
   cls: string;
   summary: string;
   /** 本回合成文段落（TurnArchive.prose）—— 以前只落在库里，界面看不到（已补渲染）。 */
@@ -1174,6 +1176,8 @@ export interface SceneScriptResult {
   turns: number;
   markdown: string;
   json: { scene: Record<string, unknown>; turns: ScriptTurn[] };
+  /** v1.73d：角色 id → 名字映射（剧本行翻译用） */
+  chars?: Record<string, string>;
   hits?: ScriptHit[];
 }
 

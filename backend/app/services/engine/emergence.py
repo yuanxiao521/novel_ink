@@ -19,8 +19,11 @@ CLS_LABEL = {
 
 def _turn_lines(archive: dict, with_thoughts: bool, with_tension: bool) -> list[str]:
     turn = archive.get("turn")
+    exchange = int(archive.get("exchange") or 1)
     cls = CLS_LABEL.get(str(archive.get("cls") or ""), "信息")
-    head = "〔回合 %s · %s〕" % (turn, cls)
+    # v1.73 连拍：同一回合可有多个来回归档，标题带来回号（回合 2 · 来回2 · 行动）
+    head = ("〔回合 %s · %s〕" % (turn, cls) if exchange <= 1
+            else "〔回合 %s · 来回%s · %s〕" % (turn, exchange, cls))
     if with_tension:
         head += "  ［张力 %s %s］" % (archive.get("tension"), archive.get("tension_trend") or "")
     lines = [head]
@@ -59,7 +62,7 @@ def render_script_md(scene: dict, archives: list[dict], *,
         lines.append("【场景】%s" % stage)
     if goal:
         lines.append("【本场目标】%s" % goal)
-    ordered = sorted(archives or [], key=lambda a: a.get("turn") or 0)
+    ordered = sorted(archives or [], key=lambda a: (a.get("turn") or 0, a.get("exchange") or 1))
     if not ordered:
         lines.append("")
         lines.append("（本场景尚无推演回合）")
@@ -83,7 +86,7 @@ def extract_hits(scene: dict, archives: list[dict], *, peak_ratio: float = 0.8,
     - 单回合场景不算"收束回合"（没有起承转合可言）；
     - 刻意**不用 LLM**：先要可复现、免费；LLM 提炼留作后续增强。
     """
-    ordered = sorted(archives or [], key=lambda a: a.get("turn") or 0)
+    ordered = sorted(archives or [], key=lambda a: (a.get("turn") or 0, a.get("exchange") or 1))
     if not ordered:
         return []
     tensions = [float(a.get("tension") or 0) for a in ordered]
@@ -131,10 +134,11 @@ def render_script_json(scene: dict, archives: list[dict]) -> dict:
                   "stage_desc": scene.get("stage_desc"), "goal": scene.get("goal"),
                   "content_desc": scene.get("content_desc")},
         "turns": [
-            {"turn": a.get("turn"), "cls": a.get("cls"), "summary": a.get("summary"),
+            {"turn": a.get("turn"), "exchange": int(a.get("exchange") or 1),
+             "cls": a.get("cls"), "summary": a.get("summary"),
              "tension": a.get("tension"), "tension_trend": a.get("tension_trend"),
              "prose": a.get("prose") or "",
              "events": a.get("events") or [], "thoughts": a.get("thoughts") or []}
-            for a in sorted(archives or [], key=lambda a: a.get("turn") or 0)
+            for a in sorted(archives or [], key=lambda a: (a.get("turn") or 0, a.get("exchange") or 1))
         ],
     }
