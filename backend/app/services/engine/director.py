@@ -100,8 +100,8 @@ class DirectorEngine:
             hint.info_exposures.append(InfoExposure(
                 fact_id=fid, target_char_id=target, channel=channel,
             ))
-            name = self.sim.characters[target].name if target in self.sim.characters else target
-            injected.append(f"信息曝光：{name} 得知「{self._fact_text(fid)}」")
+            name = self._char_name(target)
+            injected.append(self._friendly_expose(name, fid))
             break
 
         # 2) 权重调整（带因果律）
@@ -112,7 +112,7 @@ class DirectorEngine:
                         char_id=p["char"], goal_id=p["goal"],
                         delta=p["delta"], reason=p["reason"],
                     ))
-                    injected.append(f"目标权重：{p['char']}·{p['goal']} {p['delta']:+g}（因：{p['reason']}）")
+                    injected.append(self._friendly_adjust(p["char"], p["goal"], p["delta"], p["reason"]))
                     break
 
         # 3) 环境压
@@ -200,7 +200,7 @@ class DirectorEngine:
                     else (BeliefChannel.told if e.get("channel") == "told" else BeliefChannel.perceived)
                 hint.info_exposures.append(InfoExposure(fact_id=fid, target_char_id=tgt, channel=channel))
                 name = self.sim.characters[tgt].name
-                injected.append(f"信息曝光：{name} 得知「{self._fact_text(fid)}」")
+                injected.append(self._friendly_expose(name, fid))
             for a in raw.get("goal_adjusts") or []:
                 # 因果律硬约束：无剧情内因的调权一律丢弃
                 if not a.get("reason") or not a.get("char_id") or not a.get("goal_id"):
@@ -209,7 +209,8 @@ class DirectorEngine:
                     char_id=a["char_id"], goal_id=a["goal_id"],
                     delta=float(a.get("delta", 0.0)), reason=a["reason"],
                 ))
-                injected.append(f"目标权重：{a['char_id']}·{a['goal_id']} {float(a.get('delta', 0.0)):+g}（因：{a['reason']}）")
+                injected.append(self._friendly_adjust(a["char_id"], a["goal_id"],
+                                                       float(a.get("delta", 0.0)), a["reason"]))
             inj = str(raw.get("injected_event") or "").strip()
             if inj:
                 injected.append(f"事件注入：{inj}")
@@ -486,6 +487,34 @@ class DirectorEngine:
             if f.id == fact_id:
                 return f.text
         return fact_id
+
+    def _char_name(self, char_id: str) -> str:
+        """角色 id → 名字（查不到回落原 id）。作者面板所有文案统一走这里。"""
+        card = self.sim.characters.get(char_id)
+        return card.name if card is not None and card.name.strip() else char_id
+
+    def _goal_text(self, char_id: str, goal_id: str) -> str:
+        """目标 id → 目标文本（查不到回落原 id；作者不该看到 g-362b6b 这种内部键）。"""
+        card = self.sim.characters.get(char_id)
+        for g in (card.dynamic_goals if card is not None else []):
+            if g.id == goal_id:
+                return g.text
+        return goal_id
+
+    def _friendly_expose(self, name: str, fact_id: str) -> str:
+        """信息曝光文案：fact 查得到给文本；查不到（LLM 编的 key）也别裸示 snake_case。"""
+        text = self._fact_text(fact_id)
+        if text != fact_id:
+            return f"信息曝光：{name} 得知「{text}」"
+        # LLM 编的 key（reviewer_id_adjacent_to_cheng_badge）→ 转成人话短语兜底
+        words = fact_id.replace("-", "_").split("_")
+        pretty = " ".join(w for w in words if w).strip()
+        return f"信息曝光：{name} 得知一条新线索（{pretty}）"
+
+    def _friendly_adjust(self, char_id: str, goal_id: str, delta: float, reason: str) -> str:
+        """目标权重文案：角色名 + 目标文本，不露内部 id。"""
+        return (f"目标权重：{self._char_name(char_id)}「{self._goal_text(char_id, goal_id)}」"
+                f" {delta:+g}（因：{reason}）")
 
     def _goal_increase_due(self, p: dict) -> bool:
         card = self.sim.characters.get(p["char"])
